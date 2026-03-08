@@ -1,0 +1,255 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// System Configuration
+model SystemConfig {
+  id                    String   @id @default(cuid())
+  pythonPath            String?
+  paddleDetectionPath   String?
+  paddleClasPath        String?
+  defaultGpu            Int      @default(0)
+  defaultFramework      String   @default("PaddleDetection")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// Project
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  framework   String   @default("PaddleDetection") // PaddleDetection or PaddleClas
+  status      String   @default("active") // active, archived
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  datasets      Dataset[]
+  models        Model[]
+  trainingJobs  TrainingJob[]
+  validationJobs ValidationJob[]
+}
+
+// Dataset
+model Dataset {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  projectId   String
+  format      String   @default("COCO") // COCO, VOC, etc.
+  
+  // Paths
+  trainImagePath  String?
+  trainAnnoPath   String?
+  evalImagePath   String?
+  evalAnnoPath    String?
+  datasetDir      String?
+  
+  // Statistics
+  numClasses      Int      @default(0)
+  numAnnotations  Int      @default(0)
+  numTrainImages  Int      @default(0)
+  numEvalImages   Int      @default(0)
+  classStats      String?  // JSON string for class statistics
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  trainingJobs  TrainingJob[]
+}
+
+// Model Configuration
+model Model {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  projectId   String
+  
+  // Model Architecture
+  architecture  String  @default("YOLOv3")
+  backbone      String  @default("CSPResNet")
+  neck          String  @default("CustomCSPPAN")
+  head          String  @default("PPYOLOEHead")
+  
+  // Model Parameters
+  numClasses    Int     @default(1)
+  normType      String  @default("sync_bn")
+  useEma        Boolean @default(true)
+  emaDecay      Float   @default(0.9998)
+  depthMult     Float   @default(0.33)
+  widthMult     Float   @default(0.50)
+  
+  // Pretrained weights
+  pretrainWeights String?
+  
+  // Full YAML config (for advanced editing)
+  yamlConfig    String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  trainingJobs  TrainingJob[]
+}
+
+// Training Configuration
+model TrainingConfig {
+  id          String   @id @default(cuid())
+  name        String
+  
+  // Training parameters
+  epoch       Int      @default(100)
+  batchSize   Int      @default(8)
+  baseLr      Float    @default(0.001)
+  momentum    Float    @default(0.9)
+  weightDecay Float    @default(0.0005)
+  
+  // Scheduler
+  scheduler   String   @default("CosineDecay")
+  warmupEpochs Int     @default(5)
+  maxEpochs   Int      @default(100)
+  
+  // Reader settings
+  workerNum   Int      @default(4)
+  evalHeight  Int      @default(640)
+  evalWidth   Int      @default(640)
+  
+  // Output
+  saveDir     String?
+  snapshotEpoch Int    @default(1)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  trainingJobs TrainingJob[]
+}
+
+// Training Job
+model TrainingJob {
+  id          String   @id @default(cuid())
+  projectId   String
+  datasetId   String
+  modelId     String
+  configId    String?
+  
+  name        String
+  status      String   @default("pending") // pending, running, completed, failed, stopped
+  command     String?  // Generated command
+  
+  // Progress
+  currentEpoch  Int    @default(0)
+  totalEpochs   Int    @default(100)
+  currentLoss   Float?
+  currentLr     Float?
+  
+  // Paths
+  outputDir     String?
+  weightsPath   String?
+  vdlLogDir     String?
+  
+  // Training parameters (JSON string)
+  trainingParams String?
+  
+  // YAML configuration
+  yamlConfig   String?
+  
+  // Timing
+  startedAt     DateTime?
+  completedAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dataset       Dataset         @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  model         Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  config        TrainingConfig? @relation(fields: [configId], references: [id], onDelete: SetNull)
+  
+  logs        TrainingLog[]
+}
+
+// Training Log
+model TrainingLog {
+  id          String   @id @default(cuid())
+  jobId       String
+  
+  epoch       Int
+  iteration   Int
+  totalIter   Int
+  
+  loss        Float?
+  lossCls     Float?
+  lossIou     Float?
+  lossDfl     Float?
+  lossL1      Float?
+  learningRate Float?
+  
+  eta         String?
+  batchCost   Float?
+  dataCost    Float?
+  ips         Float?
+  memReserved Int?    // MB
+  memAllocated Int?   // MB
+  
+  rawLog      String?  // Original log line
+  
+  timestamp   DateTime @default(now())
+  
+  job         TrainingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+// Validation Job
+model ValidationJob {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  
+  type        String   @default("eval") // eval, infer_single, infer_batch, export_trt
+  
+  // For eval
+  datasetPath String?
+  
+  // For inference
+  inferPath   String?  // Single image or folder
+  weightsPath String?
+  
+  // For export
+  outputDir   String?
+  
+  status      String   @default("pending") // pending, running, completed, failed
+  command     String?
+  
+  // Results
+  mapResult   Float?   // mAP result
+  resultPath  String?  // Path to results
+  
+  startedAt   DateTime?
+  completedAt DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// GPU Monitor Data (for history)
+model GpuMetric {
+  id          String   @id @default(cuid())
+  gpuId       Int
+  
+  utilization Float   // GPU utilization percentage
+  memoryUsed  Int     // MB used
+  memoryTotal Int     // MB total
+  temperature Int     // Celsius
+  
+  timestamp   DateTime @default(now())
+}
