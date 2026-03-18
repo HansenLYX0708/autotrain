@@ -14,6 +14,8 @@ datasource db {
 model SystemConfig {
   id                    String   @id @default(cuid())
   pythonPath            String?
+  condaEnv              String?  // Conda environment name (e.g., "paddle", "paddle_env")
+  condaPath             String?  // Path to conda executable (e.g., "C:\\Users\\name\\anaconda3\\Scripts\\conda.exe")
   paddleDetectionPath   String?
   paddleClasPath        String?
   defaultGpu            Int      @default(0)
@@ -60,6 +62,9 @@ model Dataset {
   numEvalImages   Int      @default(0)
   classStats      String?  // JSON string for class statistics
   
+  // Full YAML config (for dataset configuration)
+  yamlConfig    String?
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
@@ -105,31 +110,43 @@ model Model {
 model TrainingConfig {
   id          String   @id @default(cuid())
   name        String
-  
+
   // Training parameters
   epoch       Int      @default(100)
   batchSize   Int      @default(8)
   baseLr      Float    @default(0.001)
   momentum    Float    @default(0.9)
   weightDecay Float    @default(0.0005)
-  
+
   // Scheduler
   scheduler   String   @default("CosineDecay")
   warmupEpochs Int     @default(5)
   maxEpochs   Int      @default(100)
-  
+
   // Reader settings
   workerNum   Int      @default(4)
   evalHeight  Int      @default(640)
   evalWidth   Int      @default(640)
-  
-  // Output
+
+  // Runtime settings
+  useGpu      Boolean  @default(true)
+  logIter     Int      @default(20)
   saveDir     String?
   snapshotEpoch Int    @default(1)
-  
+
+  // Output paths
+  outputDir   String?
+  weights     String?
+
+  // Pretrained weights
+  pretrainWeights String?
+
+  // YAML config (for imported configs)
+  yamlConfig  String?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
+
   trainingJobs TrainingJob[]
 }
 
@@ -143,7 +160,17 @@ model TrainingJob {
   
   name        String
   status      String   @default("pending") // pending, running, completed, failed, stopped
-  command     String?  // Generated command
+  command     String?  // Generated training command
+  
+  // Eval and Infer commands
+  evalCommand  String?  // Generated eval command
+  inferCommand String?  // Generated infer command
+  
+  // Config file path
+  configPath  String?  // Path to merged config YAML file
+  
+  // Error information
+  errorMessage  String? // Error message if training failed
   
   // Progress
   currentEpoch  Int    @default(0)
@@ -211,26 +238,32 @@ model TrainingLog {
 model ValidationJob {
   id          String   @id @default(cuid())
   projectId   String
+  trainingJobId String?  // Link to training job
+  
   name        String
   
-  type        String   @default("eval") // eval, infer_single, infer_batch, export_trt
+  type        String   @default("eval") // eval, infer
+  
+  // Config and weights
+  configPath  String?  // Path to config YAML
+  weightsPath String?  // Path to model weights
   
   // For eval
   datasetPath String?
   
   // For inference
-  inferPath   String?  // Single image or folder
-  weightsPath String?
-  
-  // For export
-  outputDir   String?
+  inferInputPath  String?  // Single image or folder path
+  inferOutputPath String?  // Output folder for inference results
   
   status      String   @default("pending") // pending, running, completed, failed
-  command     String?
+  command     String?  // Generated command
   
   // Results
-  mapResult   Float?   // mAP result
-  resultPath  String?  // Path to results
+  resultJson  String?  // JSON string of metrics (mAP, etc.)
+  resultPath  String?  // Path to results file/folder
+  
+  // Logs
+  outputLog   String?  // Captured stdout/stderr
   
   startedAt   DateTime?
   completedAt DateTime?

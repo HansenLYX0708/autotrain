@@ -19,6 +19,7 @@ import {
   Bot,
   ChevronLeft,
   ChevronRight,
+  PencilRuler,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,6 +46,7 @@ import { JobsPage } from '@/components/pages/jobs'
 import { MonitoringPage } from '@/components/pages/monitoring'
 import { ValidationPage } from '@/components/pages/validation'
 import { SettingsPage } from '@/components/pages/settings'
+import { AnnotationPage } from '@/components/pages/annotation'
 
 const navigation = [
   {
@@ -87,6 +89,11 @@ const navigation = [
     name: 'Validation',
     icon: CheckCircle2,
   },
+  {
+    id: 'annotation',
+    name: 'Annotation',
+    icon: PencilRuler,
+  },
 ]
 
 const pageComponents: Record<string, React.ComponentType> = {
@@ -98,6 +105,7 @@ const pageComponents: Record<string, React.ComponentType> = {
   jobs: JobsPage,
   monitoring: MonitoringPage,
   validation: ValidationPage,
+  annotation: AnnotationPage,
 }
 
 export default function Home() {

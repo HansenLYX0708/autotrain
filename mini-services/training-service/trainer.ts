@@ -40,6 +40,7 @@ export interface TrainingState {
   startTime: Date | null
   endTime: Date | null
   error: string | null
+  stderr: string[]  // Collect stderr output
 }
 
 /**

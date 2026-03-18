@@ -88,6 +88,8 @@ interface TrainingJob {
   name: string
   status: string
   command: string | null
+  configPath: string | null
+  errorMessage: string | null
   currentEpoch: number
   totalEpochs: number
   currentLoss: number | null
@@ -212,33 +214,25 @@ export function JobsPage() {
   }
 
   const generateCommand = () => {
-    const model = models.find(m => m.id === formData.modelId)
-    if (!model || !formData.projectId) return ''
-
-    const project = projects.find(p => p.id === formData.projectId)
-    const config = configs.find(c => c.id === formData.configId)
+    if (!formData.name || !formData.projectId) return ''
+    
+    const jobName = formData.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase()
+    const configPath = `configs/autotrain/jobs/${jobName}.yml`
     
     const parts: string[] = []
     
-    // Base command with distributed launch for multi-GPU
-    if (formData.gpuIds.includes(',')) {
-      parts.push(`python -m paddle.distributed.launch --gpus ${formData.gpuIds}`)
+    // GPU selection
+    const gpuIds = formData.gpuIds || '0'
+    if (gpuIds.includes(',')) {
+      // Multi-GPU: use distributed launch
+      parts.push(`python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py`)
     } else {
-      parts.push('python')
+      // Single GPU: CUDA_VISIBLE_DEVICES set via environment variable
+      parts.push(`python tools/train.py`)
     }
 
-    // Train script
-    parts.push('tools/train.py')
-
-    // Config file - use model's yaml config path
-    if (model.yamlConfig) {
-      // Extract config path from yamlConfig or use model name
-      const configName = model.name.replace(/\s+/g, '_').toLowerCase()
-      parts.push(`-c configs/${project?.name || 'default'}/${configName}.yml`)
-    } else {
-      const configName = model.name.replace(/\s+/g, '_').toLowerCase()
-      parts.push(`-c configs/${project?.name || 'default'}/${configName}.yml`)
-    }
+    // Config file - use merged job config
+    parts.push(`-c ${configPath}`)
 
     // AMP
     if (formData.useAmp) {
@@ -248,11 +242,24 @@ export function JobsPage() {
     // VDL
     if (formData.useVdl) {
       parts.push('--use_vdl=true')
-      const outputDir = `output/${project?.name || 'default'}/${model.name.replace(/\s+/g, '_')}`
-      parts.push(`--vdl_log_dir=${outputDir}/vdl`)
+      const project = projects.find(p => p.id === formData.projectId)
+      parts.push(`--vdl_log_dir=output/${project?.name || 'default'}/${jobName}/vdl`)
     }
 
     return parts.join(' ')
+  }
+  
+  const generateCommandDisplay = () => {
+    const cmd = generateCommand()
+    if (!cmd) return ''
+    
+    const gpuIds = formData.gpuIds || '0'
+    if (gpuIds.includes(',')) {
+      return cmd
+    } else {
+      // Single GPU - show environment variable setup
+      return `# GPU: ${gpuIds} (set via CUDA_VISIBLE_DEVICES)\n${cmd}`
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -267,11 +274,6 @@ export function JobsPage() {
       return
     }
 
-    const command = generateCommand()
-    const model = models.find(m => m.id === formData.modelId)
-    const config = formData.configId !== '__none__' ? configs.find(c => c.id === formData.configId) : null
-    const project = projects.find(p => p.id === formData.projectId)
-
     setSubmitting(true)
     try {
       const response = await fetch('/api/training-jobs', {
@@ -283,23 +285,18 @@ export function JobsPage() {
           modelId: formData.modelId,
           configId: formData.configId === '__none__' ? null : formData.configId,
           name: formData.name,
-          status: 'pending',
-          command: command,
-          totalEpochs: config?.epoch || 100,
-          outputDir: `output/${project?.name || 'default'}/${model?.name || 'model'}`,
-          trainingParams: {
-            gpuIds: formData.gpuIds,
-            useAmp: formData.useAmp,
-            useVdl: formData.useVdl,
-            epochs: config?.epoch,
-            batchSize: config?.batchSize,
-            baseLr: config?.baseLr,
-          },
+          gpuIds: formData.gpuIds,
+          useAmp: formData.useAmp,
+          useVdl: formData.useVdl,
         }),
       })
 
       if (response.ok) {
-        toast({ title: 'Job created successfully' })
+        const result = await response.json()
+        toast({ 
+          title: 'Job created successfully',
+          description: `Config saved to ${result.configPath}`,
+        })
         setDialogOpen(false)
         resetForm()
         fetchJobs()
@@ -345,13 +342,27 @@ export function JobsPage() {
         body: JSON.stringify({ status }),
       })
       if (response.ok) {
-        toast({ title: `Job ${status}` })
+        const result = await response.json()
+        // Show the actual status from server response
+        const actualStatus = result.status || status
+        toast({ 
+          title: `Job ${actualStatus}`,
+          description: actualStatus === 'failed' && result.errorMessage 
+            ? result.errorMessage.slice(0, 100) 
+            : undefined,
+          variant: actualStatus === 'failed' ? 'destructive' : 'default'
+        })
         fetchJobs()
       } else {
-        throw new Error('Failed to update job')
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to update job')
       }
     } catch (error) {
-      toast({ title: 'Error updating job', variant: 'destructive' })
+      toast({ 
+        title: 'Error updating job', 
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive' 
+      })
     }
   }
 
@@ -396,6 +407,7 @@ export function JobsPage() {
   }
 
   const command = generateCommand()
+  const commandDisplay = generateCommandDisplay()
 
   return (
     <div className="space-y-6">
@@ -572,14 +584,14 @@ export function JobsPage() {
                   </div>
 
                   {/* Command Preview */}
-                  {command && (
+                  {commandDisplay && (
                     <div className="space-y-2 pt-4 border-t">
                       <Label className="flex items-center gap-2">
                         <Terminal className="w-4 h-4" />
                         Generated Command
                       </Label>
                       <pre className="p-3 rounded-lg bg-muted/50 text-xs overflow-auto max-h-[150px] font-mono whitespace-pre-wrap break-all">
-                        {command}
+                        {commandDisplay}
                       </pre>
                     </div>
                   )}
@@ -678,6 +690,17 @@ export function JobsPage() {
                               Loss: {job.currentLoss.toFixed(4)}
                               {job.currentLr && ` | LR: ${job.currentLr.toFixed(6)}`}
                             </div>
+                          )}
+                          {job.status === 'failed' && job.errorMessage && (
+                            <div className="mt-2 p-2 rounded bg-destructive/10 border border-destructive/20">
+                              <div className="flex items-start gap-2">
+                                  <AlertCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-medium text-destructive">Error</p>
+                                      <p className="text-xs text-destructive/80 mt-0.5 break-words">{job.errorMessage}</p>
+                                  </div>
+                              </div>
+                          </div>
                           )}
                         </div>
                       </div>
@@ -798,9 +821,14 @@ export function JobsPage() {
                         </div>
 
                         {/* Output Information */}
-                        {(job.outputDir || job.weightsPath || job.startedAt || job.completedAt) && (
+                        {(job.configPath || job.outputDir || job.weightsPath || job.startedAt || job.completedAt) && (
                           <div className="mt-4 pt-4 border-t">
                             <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                              {job.configPath && (
+                                <div>
+                                  <span className="font-medium">Config:</span> {job.configPath}
+                                </div>
+                              )}
                               {job.outputDir && (
                                 <div>
                                   <span className="font-medium">Output:</span> {job.outputDir}

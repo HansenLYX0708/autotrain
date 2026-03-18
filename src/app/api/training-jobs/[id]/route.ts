@@ -131,6 +131,16 @@ export async function PUT(
         project: { select: { framework: true } },
       },
     });
+    
+    // Parse training params for GPU info
+    let trainingParams: Record<string, unknown> = {};
+    try {
+      trainingParams = existingJob?.trainingParams 
+        ? JSON.parse(existingJob.trainingParams as string) 
+        : {};
+    } catch {
+      // Ignore parse errors
+    }
 
     if (!existingJob) {
       return NextResponse.json(
@@ -146,6 +156,9 @@ export async function PUT(
     if (body.name !== undefined) updateData.name = body.name;
     if (body.status !== undefined) updateData.status = body.status;
     if (body.command !== undefined) updateData.command = body.command;
+    
+    // Error message
+    if (body.errorMessage !== undefined) updateData.errorMessage = body.errorMessage;
 
     // Progress fields
     if (body.currentEpoch !== undefined) updateData.currentEpoch = body.currentEpoch;
@@ -173,15 +186,56 @@ export async function PUT(
       // Get system config for paths
       const systemConfig = await db.systemConfig.findFirst();
       
-      if (existingJob.command && systemConfig) {
+      console.log(`[Job ${id}] Starting training...`);
+      console.log(`[Job ${id}] Command: ${existingJob.command}`);
+      console.log(`[Job ${id}] System config found: ${!!systemConfig}`);
+      
+      if (!existingJob.command) {
+        console.error(`[Job ${id}] No command found for job`);
+        updateData.status = "failed";
+        updateData.errorMessage = "No training command configured for this job";
+        updateData.completedAt = new Date();
+      } else if (!systemConfig) {
+        console.error(`[Job ${id}] System config not found`);
+        updateData.status = "failed";
+        updateData.errorMessage = "System configuration not found. Please configure paths in Settings.";
+        updateData.completedAt = new Date();
+      } else {
         const framework = existingJob.project?.framework || "PaddleDetection";
         const workDir = framework === "PaddleClas" 
           ? systemConfig.paddleClasPath 
           : systemConfig.paddleDetectionPath;
 
-        if (workDir) {
+        console.log(`[Job ${id}] Framework: ${framework}`);
+        console.log(`[Job ${id}] Work directory: ${workDir}`);
+        console.log(`[Job ${id}] Python path: ${systemConfig.pythonPath || "python"}`);
+        console.log(`[Job ${id}] Conda env: ${systemConfig.condaEnv || "not set"}`);
+
+        if (!workDir) {
+          console.error(`[Job ${id}] Work directory not configured`);
+          updateData.status = "failed";
+          updateData.errorMessage = `${framework} path not configured in Settings. Please configure the path first.`;
+          updateData.completedAt = new Date();
+        } else {
           // Start training process
-          startTrainingProcess(id, existingJob.command, workDir, systemConfig.pythonPath || "python");
+          try {
+            const gpuIds = (trainingParams.gpuIds as string) || '0';
+            startTrainingProcess(
+              id, 
+              existingJob.command, 
+              workDir, 
+              systemConfig.pythonPath || "python", 
+              gpuIds,
+              systemConfig.condaEnv || null,
+              systemConfig.condaPath || null
+            );
+            console.log(`[Job ${id}] Training process started successfully`);
+          } catch (error) {
+            console.error(`[Job ${id}] Failed to start training process:`, error);
+            updateData.status = "failed";
+            updateData.errorMessage = `Failed to start training: ${error instanceof Error ? error.message : "Unknown error"}`;
+            updateData.completedAt = new Date();
+          }
         }
       }
     }
@@ -282,18 +336,117 @@ export async function DELETE(
 }
 
 // Start training process
-function startTrainingProcess(jobId: string, command: string, workDir: string, pythonPath: string) {
-  // Parse command - replace 'python' with configured python path
-  const fullCommand = command.replace(/^python\b/, pythonPath);
-  const parts = fullCommand.split(" ").filter(Boolean);
+function startTrainingProcess(
+  jobId: string, 
+  command: string, 
+  workDir: string, 
+  pythonPath: string, 
+  gpuIds: string = '0',
+  condaEnv: string | null = null,
+  condaPath: string | null = null
+) {
+  console.log(`\n========== TRAINING PROCESS START ==========`);
+  console.log(`[Job ${jobId}] GPU(s): ${gpuIds}`);
+  console.log(`[Job ${jobId}] Python path: "${pythonPath}"`);
+  console.log(`[Job ${jobId}] Conda env (from config): "${condaEnv || 'not set'}"`);
+  console.log(`[Job ${jobId}] Conda path (from config): "${condaPath || 'not set'}"`);
+  console.log(`[Job ${jobId}] Original command: ${command}`);
+  console.log(`[Job ${jobId}] Working directory: ${workDir}`);
   
-  const childProcess = spawn(parts[0], parts.slice(1), {
+  // Collect stderr for error reporting
+  let stderrCollector: string[] = [];
+  
+  // Build environment with CUDA_VISIBLE_DEVICES
+  const env: Record<string, string> = {
+    ...process.env,
+    PYTHONUNBUFFERED: "1",
+    CUDA_VISIBLE_DEVICES: gpuIds,
+  };
+  
+  // Detect if python path is in a conda environment
+  let detectedCondaEnv: string | null = condaEnv;
+  let detectedCondaPath: string | null = condaPath;
+  
+  // Auto-detect conda environment from python path
+  if (!detectedCondaEnv && pythonPath) {
+    console.log(`[Job ${jobId}] Attempting to auto-detect conda environment...`);
+    
+    // Check for conda envs pattern - multiple regex patterns for different installations
+    const patterns = [
+      // Standard anaconda/miniconda with envs: /envs/envname/
+      /[\/\\](?:anaconda3|miniconda3|anaconda|miniconda)[\/\\]envs[\/\\]([^\/\\]+)/i,
+      // condax envs pattern
+      /[\/\\]\.condax[\/\\]([^\/\\]+)/i,
+      // Direct env path (some custom setups)
+      /[\/\\]envs[\/\\]([^\/\\]+)/i,
+    ];
+    
+    for (const pattern of patterns) {
+      const match = pythonPath.match(pattern);
+      if (match) {
+        detectedCondaEnv = match[1];
+        console.log(`[Job ${jobId}] ✓ Conda environment detected via pattern: ${detectedCondaEnv}`);
+        break;
+      }
+    }
+    
+    if (!detectedCondaEnv) {
+      console.log(`[Job ${jobId}] ✗ No conda environment pattern matched in python path`);
+    }
+    
+    // Try to detect conda executable path
+    if (detectedCondaEnv && !detectedCondaPath) {
+      const pathParts = pythonPath.split(/[\/\\]/);
+      const envsIndex = pathParts.findIndex(p => p === 'envs');
+      if (envsIndex > 0) {
+        const condaRoot = pathParts.slice(0, envsIndex).join('/');
+        const isWindows = pythonPath.includes('\\') || pythonPath.match(/^[A-Z]:\\/i);
+        if (isWindows) {
+          // Windows: conda.exe is in Scripts folder
+          detectedCondaPath = `${condaRoot}\\Scripts\\conda.exe`;
+        } else {
+          detectedCondaPath = `${condaRoot}/bin/conda`;
+        }
+        console.log(`[Job ${jobId}] Detected conda path: ${detectedCondaPath}`);
+      }
+    }
+  }
+  
+  // Build the final command
+  let fullCommand = command;
+  
+  if (detectedCondaEnv) {
+    const condaExec = detectedCondaPath || 'conda';
+    console.log(`[Job ${jobId}] Using conda executable: "${condaExec}"`);
+    console.log(`[Job ${jobId}] Using conda environment: "${detectedCondaEnv}"`);
+    
+    // Use conda run with --no-capture-output to see real-time output
+    // Wrap the command properly for Windows
+    const isWindows = workDir.includes('\\') || workDir.match(/^[A-Z]:\\/i);
+    if (isWindows) {
+      // On Windows, wrap in quotes properly
+      fullCommand = `"${condaExec}" run -n ${detectedCondaEnv} --no-capture-output ${fullCommand}`;
+    } else {
+      fullCommand = `${condaExec} run -n ${detectedCondaEnv} --no-capture-output ${fullCommand}`;
+    }
+    console.log(`[Job ${jobId}] Conda command built: ${fullCommand}`);
+  } else {
+    console.log(`[Job ${jobId}] No conda environment - using direct python execution`);
+    let pythonExec = pythonPath || 'python';
+    if (pythonExec.includes(' ')) {
+      pythonExec = `"${pythonExec}"`;
+    }
+    fullCommand = fullCommand.replace(/^python\b/, pythonExec);
+  }
+  
+  console.log(`\n[Job ${jobId}] ===== FINAL COMMAND =====`);
+  console.log(`[Job ${jobId}] ${fullCommand}`);
+  console.log(`[Job ${jobId}] ============================\n`);
+  
+  const childProcess = spawn(fullCommand, [], {
     cwd: workDir,
     shell: true,
-    env: {
-      ...process.env,
-      PYTHONUNBUFFERED: "1",
-    },
+    env,
   });
 
   runningProcesses.set(jobId, childProcess);
@@ -307,7 +460,14 @@ function startTrainingProcess(jobId: string, command: string, workDir: string, p
   });
 
   childProcess.stderr?.on("data", (data: Buffer) => {
-    console.error(`[Job ${jobId} ERROR] ${data.toString()}`);
+    const stderrOutput = data.toString();
+    console.error(`[Job ${jobId} ERROR] ${stderrOutput}`);
+    // Collect stderr for error message
+    stderrCollector.push(stderrOutput);
+    // Keep only last 50 lines to avoid memory issues
+    if (stderrCollector.length > 50) {
+      stderrCollector = stderrCollector.slice(-50);
+    }
   });
 
   childProcess.on("close", async (code) => {
@@ -316,38 +476,104 @@ function startTrainingProcess(jobId: string, command: string, workDir: string, p
     // Update job status
     const status = code === 0 ? "completed" : "failed";
     try {
+      const updateData: Record<string, unknown> = {
+        status,
+        completedAt: new Date(),
+      };
+      
+      // If failed, capture stderr and exit code for error message
+      if (status === "failed") {
+        const stderrSummary = stderrCollector.slice(-10).join('\n').trim();
+        if (stderrSummary) {
+          updateData.errorMessage = `Training failed with exit code ${code}:\n${stderrSummary}`;
+        } else {
+          updateData.errorMessage = `Training process exited with code ${code}. Check logs for details.`;
+        }
+      }
+      
       await db.trainingJob.update({
         where: { id: jobId },
-        data: {
-          status,
-          completedAt: new Date(),
-        },
+        data: updateData,
       });
     } catch (error) {
       console.error("Failed to update job status:", error);
     }
   });
 
-  childProcess.on("error", (error) => {
+  childProcess.on("error", async (error) => {
     console.error(`[Job ${jobId} PROCESS ERROR]`, error);
     runningProcesses.delete(jobId);
+    
+    // Update job with error
+    try {
+      await db.trainingJob.update({
+        where: { id: jobId },
+        data: {
+          status: "failed",
+          errorMessage: error.message || "Failed to start training process",
+          completedAt: new Date(),
+        },
+      });
+    } catch (dbError) {
+      console.error("Failed to update job with error:", dbError);
+    }
   });
 }
 
 // Parse training output and update progress
 async function parseAndUpdateProgress(jobId: string, output: string) {
   try {
-    // Common patterns in PaddleDetection/PaddleClas training output
-    // Example: "epoch: 1, iter: 100, loss: 0.5, lr: 0.001"
-    const epochMatch = output.match(/epoch[:\s]+(\d+)/i);
-    const iterMatch = output.match(/iter[:\s]+(\d+)/i);
-    const lossMatch = output.match(/loss[:\s]+([\d.]+)/i);
-    const lrMatch = output.match(/lr[:\s]+([\d.e-]+)/i);
+    // PaddleDetection log format:
+    // Epoch: [8] [60/79] learning_rate: 0.000996 loss: 4.193813 loss_cls: 1.671748 ...
+    
+    // Match epoch: Epoch: [8]
+    const epochMatch = output.match(/Epoch:\s*\[(\d+)\]/i);
+    
+    // Match iteration: [iter/total] - find all patterns, use the last one (after epoch)
+    const iterPatterns = output.matchAll(/\[(\d+)\/(\d+)\]/g);
+    const iterMatches = Array.from(iterPatterns);
+    let iteration = 0;
+    let totalIter = 0;
+    if (iterMatches.length > 0) {
+      // Use the last [x/y] pattern (which is the iteration, after epoch)
+      const lastMatch = iterMatches[iterMatches.length - 1];
+      iteration = parseInt(lastMatch[1], 10);
+      totalIter = parseInt(lastMatch[2], 10);
+    }
 
+    // Extract metrics - support both "learning_rate" and "lr"
+    const lrMatch = output.match(/learning_rate:\s*([\d.e-]+)/i) || output.match(/lr[:\s]+([\d.e-]+)/i);
+    // Match "loss:" but NOT "loss_cls:", "loss_iou:", etc. (use negative lookahead for underscore)
+    const lossMatch = output.match(/(?:^|\s)loss:\s*([\d.]+)(?!\w)/i);
+    const lossClsMatch = output.match(/loss_cls:\s*([\d.]+)/i);
+    const lossIouMatch = output.match(/loss_iou:\s*([\d.]+)/i);
+    const lossDflMatch = output.match(/loss_dfl:\s*([\d.]+)/i);
+    const lossL1Match = output.match(/loss_l1:\s*([\d.]+)/i);
+    
+    // Extract ETA: eta: 0:02:24
+    const etaMatch = output.match(/eta:\s*(\d+:\d{2}:\d{2})/i);
+    
+    // Extract costs
+    const batchCostMatch = output.match(/batch_cost:\s*([\d.]+)/i);
+    const dataCostMatch = output.match(/data_cost:\s*([\d.]+)/i);
+    
+    // Extract IPS
+    const ipsMatch = output.match(/ips:\s*([\d.]+)/i);
+    
+    // Extract memory info (MB)
+    const memReservedMatch = output.match(/max_mem_reserved:\s*(\d+)/i);
+    const memAllocatedMatch = output.match(/max_mem_allocated:\s*(\d+)/i);
+
+    // Skip if no training metrics found
+    if (!epochMatch && !lossMatch && !lrMatch) {
+      return;
+    }
+
+    // Update job progress
     const updateData: Record<string, unknown> = {};
     
     if (epochMatch) {
-      updateData.currentEpoch = parseInt(epochMatch[1]);
+      updateData.currentEpoch = parseInt(epochMatch[1], 10);
     }
     if (lossMatch) {
       updateData.currentLoss = parseFloat(lossMatch[1]);
@@ -361,20 +587,30 @@ async function parseAndUpdateProgress(jobId: string, output: string) {
         where: { id: jobId },
         data: updateData,
       });
-
-      // Also save log entry
-      await db.trainingLog.create({
-        data: {
-          jobId,
-          epoch: epochMatch ? parseInt(epochMatch[1]) : 0,
-          iteration: iterMatch ? parseInt(iterMatch[1]) : 0,
-          totalIter: 0,
-          loss: lossMatch ? parseFloat(lossMatch[1]) : null,
-          learningRate: lrMatch ? parseFloat(lrMatch[1]) : null,
-          rawLog: output.slice(0, 1000), // Limit log size
-        },
-      });
     }
+
+    // Save detailed log entry
+    await db.trainingLog.create({
+      data: {
+        jobId,
+        epoch: epochMatch ? parseInt(epochMatch[1], 10) : 0,
+        iteration,
+        totalIter,
+        loss: lossMatch ? parseFloat(lossMatch[1]) : null,
+        lossCls: lossClsMatch ? parseFloat(lossClsMatch[1]) : null,
+        lossIou: lossIouMatch ? parseFloat(lossIouMatch[1]) : null,
+        lossDfl: lossDflMatch ? parseFloat(lossDflMatch[1]) : null,
+        lossL1: lossL1Match ? parseFloat(lossL1Match[1]) : null,
+        learningRate: lrMatch ? parseFloat(lrMatch[1]) : null,
+        eta: etaMatch ? etaMatch[1] : null,
+        batchCost: batchCostMatch ? parseFloat(batchCostMatch[1]) : null,
+        dataCost: dataCostMatch ? parseFloat(dataCostMatch[1]) : null,
+        ips: ipsMatch ? parseFloat(ipsMatch[1]) : null,
+        memReserved: memReservedMatch ? parseInt(memReservedMatch[1], 10) : null,
+        memAllocated: memAllocatedMatch ? parseInt(memAllocatedMatch[1], 10) : null,
+        rawLog: output.slice(0, 2000),
+      },
+    });
   } catch (error) {
     // Silently ignore parsing errors
   }

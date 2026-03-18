@@ -28,7 +28,6 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  ResponsiveContainer,
   Legend,
 } from 'recharts'
 import {
@@ -129,30 +128,30 @@ interface LogsResponse {
 const lossChartConfig = {
   loss: {
     label: "Total Loss",
-    color: "hsl(var(--chart-1))",
+    color: "var(--chart-1)",
   },
   lossCls: {
     label: "Cls Loss",
-    color: "hsl(var(--chart-2))",
+    color: "var(--chart-2)",
   },
   lossIou: {
     label: "IoU Loss",
-    color: "hsl(var(--chart-3))",
+    color: "var(--chart-3)",
   },
   lossDfl: {
     label: "DFL Loss",
-    color: "hsl(var(--chart-4))",
+    color: "var(--chart-4)",
   },
   lossL1: {
     label: "L1 Loss",
-    color: "hsl(var(--chart-5))",
+    color: "var(--chart-5)",
   },
 } satisfies ChartConfig
 
 const lrChartConfig = {
   learningRate: {
     label: "Learning Rate",
-    color: "hsl(var(--chart-1))",
+    color: "var(--chart-1)",
   },
 } satisfies ChartConfig
 
@@ -495,59 +494,57 @@ export function MonitoringPage() {
               <CardContent>
                 {lossChartData.length > 0 ? (
                   <ChartContainer config={lossChartConfig} className="h-[300px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={lossChartData}>
-                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                        <XAxis 
-                          dataKey="iteration" 
-                          className="text-xs"
-                          tickFormatter={(value) => value.toLocaleString()}
-                        />
-                        <YAxis className="text-xs" />
-                        <ChartTooltip content={<ChartTooltipContent />} />
-                        <Legend />
-                        <Line
-                          type="monotone"
-                          dataKey="loss"
-                          stroke="hsl(var(--chart-1))"
-                          strokeWidth={2}
-                          dot={false}
-                          name="Total Loss"
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="lossCls"
-                          stroke="hsl(var(--chart-2))"
-                          strokeWidth={1.5}
-                          dot={false}
-                          name="Cls Loss"
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="lossIou"
-                          stroke="hsl(var(--chart-3))"
-                          strokeWidth={1.5}
-                          dot={false}
-                          name="IoU Loss"
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="lossDfl"
-                          stroke="hsl(var(--chart-4))"
-                          strokeWidth={1.5}
-                          dot={false}
-                          name="DFL Loss"
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="lossL1"
-                          stroke="hsl(var(--chart-5))"
-                          strokeWidth={1.5}
-                          dot={false}
-                          name="L1 Loss"
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <LineChart data={lossChartData}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis
+                        dataKey="iteration"
+                        className="text-xs"
+                        tickFormatter={(value) => value.toLocaleString()}
+                      />
+                      <YAxis className="text-xs" />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="loss"
+                        stroke="var(--chart-1)"
+                        strokeWidth={2}
+                        dot={false}
+                        name="Total Loss"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="lossCls"
+                        stroke="var(--chart-2)"
+                        strokeWidth={1.5}
+                        dot={false}
+                        name="Cls Loss"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="lossIou"
+                        stroke="var(--chart-3)"
+                        strokeWidth={1.5}
+                        dot={false}
+                        name="IoU Loss"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="lossDfl"
+                        stroke="var(--chart-4)"
+                        strokeWidth={1.5}
+                        dot={false}
+                        name="DFL Loss"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="lossL1"
+                        stroke="var(--chart-5)"
+                        strokeWidth={1.5}
+                        dot={false}
+                        name="L1 Loss"
+                      />
+                    </LineChart>
                   </ChartContainer>
                 ) : (
                   <div className="flex items-center justify-center h-[300px] text-muted-foreground">
@@ -568,33 +565,28 @@ export function MonitoringPage() {
               <CardContent>
                 {lrChartData.length > 0 ? (
                   <ChartContainer config={lrChartConfig} className="h-[300px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={lrChartData}>
-                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                        <XAxis 
-                          dataKey="iteration" 
-                          className="text-xs"
-                          tickFormatter={(value) => value.toLocaleString()}
-                        />
-                        <YAxis 
-                          className="text-xs"
-                          tickFormatter={(value) => value.toExponential(1)}
-                        />
-                        <ChartTooltip 
-                          content={<ChartTooltipContent />}
-                          formatter={(value: number) => value.toExponential(4)}
-                        />
-                        <Legend />
-                        <Line
-                          type="monotone"
-                          dataKey="learningRate"
-                          stroke="hsl(var(--chart-1))"
-                          strokeWidth={2}
-                          dot={false}
-                          name="Learning Rate"
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <LineChart data={lrChartData}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis
+                        dataKey="iteration"
+                        className="text-xs"
+                        tickFormatter={(value) => value.toLocaleString()}
+                      />
+                      <YAxis
+                        className="text-xs"
+                        tickFormatter={(value) => value.toExponential(1)}
+                      />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="learningRate"
+                        stroke="var(--chart-1)"
+                        strokeWidth={2}
+                        dot={false}
+                        name="Learning Rate"
+                      />
+                    </LineChart>
                   </ChartContainer>
                 ) : (
                   <div className="flex items-center justify-center h-[300px] text-muted-foreground">

@@ -490,3 +490,101 @@ bun run start # Production
 - socket.io: ^4.7.2
 - @prisma/client: ^6.11.1
 - uuid: ^11.1.0
+
+---
+Task ID: Training Config Fix
+Agent: Main Agent
+Task: Fix training config YAML generation to include all fields when importing from default configs
+
+Work Log:
+- Added missing fields to Prisma schema: `useGpu`, `logIter`, `outputDir`, `weights`, `pretrainWeights`
+- Installed `yaml` package for YAML parsing
+- Created `parseTrainingYaml()` helper function to extract all config parameters from YAML content
+- Updated import API to parse YAML and correctly extract epoch, max_epochs, use_gpu, save_dir, output_dir, weights, etc.
+- Updated `generateYaml()` and `generateYamlFromConfig()` functions to include all fields
+- Added UI inputs for useGpu, outputDir, weights, pretrainWeights in Runtime tab
+- Updated training-configs route POST handler to save all new fields
+- Ran db:push to update database schema
+
+Stage Summary:
+- Training config YAML generation now includes: use_gpu, log_iter, save_dir, snapshot_epoch, output_dir, weights, pretrain_weights
+- When importing from default configs, all fields are correctly parsed from YAML and stored in database
+- Form UI updated to display and edit all runtime configuration options
+- Schema changes synchronized with SQLite database
+
+---
+Task ID: GPU Command Fix
+Agent: Main Agent
+Task: Fix GPU device ID not being included in training command when creating jobs
+
+Work Log:
+- Updated `generateCommand()` in jobs.tsx to include GPU device info for single GPU
+- Updated training-jobs API route.ts to include GPU device info in generated command
+- Single GPU now uses `CUDA_VISIBLE_DEVICES=X python tools/train.py`
+- Multi-GPU continues to use `python -m paddle.distributed.launch --gpus X,Y tools/train.py`
+
+Stage Summary:
+- GPU device selection is now properly reflected in generated training commands
+- Single GPU training: `CUDA_VISIBLE_DEVICES=0 python tools/train.py -c config.yml`
+- Multi-GPU training: `python -m paddle.distributed.launch --gpus 0,1 tools/train.py -c config.yml`
+
+---
+Task ID: Error Message Display Fix
+Agent: Main Agent
+Task: Fix job failure not showing error messages
+
+Work Log:
+- Added `errorMessage` field to TrainingJob Prisma schema
+- Updated training-jobs/[id] API to store error messages when training fails
+- Added stderr collection in startTrainingProcess to capture last 10 lines of error output
+- Updated jobs.tsx UI to display error messages with AlertCircle icon
+- Added error event handler for child process spawn errors
+
+Stage Summary:
+- Failed jobs now show specific error messages instead of just "failed" status
+- Error messages include stderr output (last 10 lines) and exit code
+- UI displays errors in a red alert box with clear visual indicator
+- Database stores errorMessage field for later reference
+
+---
+Task ID: Training Job Execution Debug
+Agent: Main Agent
+Task: Debug why training jobs don't actually start running
+
+Work Log:
+- Added detailed logging to PUT /api/training-jobs/[id] endpoint
+- Added error handling for missing systemConfig
+- Added error handling for missing workDir
+- Added error handling for missing command
+- Status is now set to "failed" with appropriate error message if prerequisites are missing
+
+Stage Summary:
+- Training job now provides detailed error messages when it cannot start
+- Common issues that will be caught and reported:
+  - No training command configured
+  - System configuration not found
+  - PaddleDetection/PaddleClas path not configured
+  - Failed to spawn training process
+- All errors are logged to console for debugging
+
+---
+Task ID: Job Status Toast Fix
+Agent: Main Agent
+Task: Fix frontend showing wrong status when job fails to start
+
+Work Log:
+- Updated handleUpdateJobStatus in jobs.tsx to use actual server response status
+- Added toast description to show error message when status is "failed"
+- Added destructive variant for failed status toast
+
+Stage Summary:
+- Frontend now correctly displays actual job status from server
+- When job fails to start due to missing configuration, user sees:
+  - Toast with "Job failed" title
+  - Error message description (first 100 chars)
+  - Red/destructive styling
+- Job card also shows error message in expanded view
+
+Root Cause Analysis:
+- SystemConfig table was empty - no PaddleDetection path configured
+- User needs to configure paths in Settings before starting training

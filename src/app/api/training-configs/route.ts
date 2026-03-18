@@ -63,9 +63,17 @@ export async function POST(request: NextRequest) {
         workerNum: body.workerNum ?? 4,
         evalHeight: body.evalHeight ?? 640,
         evalWidth: body.evalWidth ?? 640,
+        // Runtime
+        useGpu: body.useGpu ?? true,
+        logIter: body.logIter ?? 20,
         // Output
         saveDir: body.saveDir,
         snapshotEpoch: body.snapshotEpoch ?? 1,
+        outputDir: body.outputDir,
+        weights: body.weights,
+        pretrainWeights: body.pretrainWeights,
+        // YAML config
+        yamlConfig: body.yamlConfig,
       },
     });
 

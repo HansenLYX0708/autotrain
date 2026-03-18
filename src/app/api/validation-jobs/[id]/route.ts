@@ -26,10 +26,7 @@ export async function GET(
 
     if (!validationJob) {
       return NextResponse.json(
-        {
-          success: false,
-          error: 'Validation job not found',
-        },
+        { success: false, error: 'Validation job not found' },
         { status: 404 }
       );
     }
@@ -41,10 +38,7 @@ export async function GET(
   } catch (error) {
     console.error('Error fetching validation job:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: 'Failed to fetch validation job',
-      },
+      { success: false, error: 'Failed to fetch validation job' },
       { status: 500 }
     );
   }
@@ -66,22 +60,16 @@ export async function PUT(
 
     if (!existingJob) {
       return NextResponse.json(
-        {
-          success: false,
-          error: 'Validation job not found',
-        },
+        { success: false, error: 'Validation job not found' },
         { status: 404 }
       );
     }
 
     // Validate type if provided
-    const validTypes = ['eval', 'infer_single', 'infer_batch', 'export_trt'];
+    const validTypes = ['eval', 'infer'];
     if (body.type && !validTypes.includes(body.type)) {
       return NextResponse.json(
-        {
-          success: false,
-          error: `Invalid type. Must be one of: ${validTypes.join(', ')}`,
-        },
+        { success: false, error: `Invalid type. Must be one of: ${validTypes.join(', ')}` },
         { status: 400 }
       );
     }
@@ -90,42 +78,26 @@ export async function PUT(
     const validStatuses = ['pending', 'running', 'completed', 'failed'];
     if (body.status && !validStatuses.includes(body.status)) {
       return NextResponse.json(
-        {
-          success: false,
-          error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
-        },
+        { success: false, error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` },
         { status: 400 }
       );
     }
 
     // Build update data
-    const updateData: {
-      name?: string;
-      type?: string;
-      datasetPath?: string | null;
-      inferPath?: string | null;
-      weightsPath?: string | null;
-      outputDir?: string | null;
-      status?: string;
-      command?: string | null;
-      mapResult?: number | null;
-      resultPath?: string | null;
-      startedAt?: Date | null;
-      completedAt?: Date | null;
-    } = {};
+    const updateData: Record<string, unknown> = {};
 
     if (body.name !== undefined) updateData.name = body.name;
     if (body.type !== undefined) updateData.type = body.type;
-    if (body.datasetPath !== undefined) updateData.datasetPath = body.datasetPath || null;
-    if (body.inferPath !== undefined) updateData.inferPath = body.inferPath || null;
+    if (body.configPath !== undefined) updateData.configPath = body.configPath || null;
     if (body.weightsPath !== undefined) updateData.weightsPath = body.weightsPath || null;
-    if (body.outputDir !== undefined) updateData.outputDir = body.outputDir || null;
+    if (body.datasetPath !== undefined) updateData.datasetPath = body.datasetPath || null;
+    if (body.inferInputPath !== undefined) updateData.inferInputPath = body.inferInputPath || null;
+    if (body.inferOutputPath !== undefined) updateData.inferOutputPath = body.inferOutputPath || null;
     if (body.status !== undefined) updateData.status = body.status;
     if (body.command !== undefined) updateData.command = body.command || null;
-    if (body.mapResult !== undefined) {
-      updateData.mapResult = body.mapResult ? parseFloat(body.mapResult) : null;
-    }
+    if (body.resultJson !== undefined) updateData.resultJson = body.resultJson || null;
     if (body.resultPath !== undefined) updateData.resultPath = body.resultPath || null;
+    if (body.outputLog !== undefined) updateData.outputLog = body.outputLog || null;
     if (body.startedAt !== undefined) {
       updateData.startedAt = body.startedAt ? new Date(body.startedAt) : null;
     }
@@ -155,10 +127,7 @@ export async function PUT(
   } catch (error) {
     console.error('Error updating validation job:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: 'Failed to update validation job',
-      },
+      { success: false, error: 'Failed to update validation job' },
       { status: 500 }
     );
   }
@@ -179,10 +148,7 @@ export async function DELETE(
 
     if (!existingJob) {
       return NextResponse.json(
-        {
-          success: false,
-          error: 'Validation job not found',
-        },
+        { success: false, error: 'Validation job not found' },
         { status: 404 }
       );
     }
@@ -198,10 +164,7 @@ export async function DELETE(
   } catch (error) {
     console.error('Error deleting validation job:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: 'Failed to delete validation job',
-      },
+      { success: false, error: 'Failed to delete validation job' },
       { status: 500 }
     );
   }

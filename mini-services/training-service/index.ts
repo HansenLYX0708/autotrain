@@ -97,7 +97,8 @@ function unsubscribeFromJob(socket: Socket, jobId: string): void {
 async function updateJobStatus(
   jobId: string, 
   status: string, 
-  progress?: { epoch?: number; loss?: number; lr?: number }
+  progress?: { epoch?: number; loss?: number; lr?: number },
+  errorMessage?: string | null
 ): Promise<void> {
   try {
     const updateData: Record<string, unknown> = { status }
@@ -114,11 +115,16 @@ async function updateJobStatus(
       if (progress.lr !== undefined) updateData.currentLr = progress.lr
     }
     
+    // Add error message if provided
+    if (errorMessage !== undefined) {
+      updateData.errorMessage = errorMessage
+    }
+    
     await prisma.trainingJob.update({
       where: { id: jobId },
       data: updateData
     })
-    console.log(`[DB] Updated job ${jobId} status to: ${status}`)
+    console.log(`[DB] Updated job ${jobId} status to: ${status}${errorMessage ? ` with error: ${errorMessage}` : ''}`)
   } catch (error) {
     console.error(`[DB] Failed to update job ${jobId} status:`, error)
   }

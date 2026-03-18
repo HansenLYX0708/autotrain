@@ -19,6 +19,8 @@ import {
 
 interface SystemConfig {
   pythonPath: string
+  condaEnv: string
+  condaPath: string
   paddleDetectionPath: string
   paddleClasPath: string
   defaultGpu: number
@@ -28,6 +30,8 @@ interface SystemConfig {
 export function SettingsPage() {
   const [config, setConfig] = useState<SystemConfig>({
     pythonPath: '',
+    condaEnv: '',
+    condaPath: '',
     paddleDetectionPath: '',
     paddleClasPath: '',
     defaultGpu: 0,
@@ -47,6 +51,8 @@ export function SettingsPage() {
           if (data) {
             setConfig({
               pythonPath: data.pythonPath || '',
+              condaEnv: data.condaEnv || '',
+              condaPath: data.condaPath || '',
               paddleDetectionPath: data.paddleDetectionPath || '',
               paddleClasPath: data.paddleClasPath || '',
               defaultGpu: data.defaultGpu ?? 0,
@@ -141,10 +147,11 @@ export function SettingsPage() {
             Environment Configuration
           </CardTitle>
           <CardDescription>
-            Configure paths to Python and PaddlePaddle frameworks
+            Configure Python environment and GPU settings
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Python/Conda Configuration */}
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="pythonPath">Python Path</Label>
@@ -160,7 +167,7 @@ export function SettingsPage() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Path to Python executable (e.g., python, python3, or full path)
+                Path to Python executable. Leave empty if using conda.
               </p>
             </div>
 
@@ -176,6 +183,45 @@ export function SettingsPage() {
               <p className="text-xs text-muted-foreground">
                 GPU ID to use by default
               </p>
+            </div>
+          </div>
+
+          {/* Conda Configuration */}
+          <div className="border-t pt-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Badge variant="secondary">Conda Environment (Optional)</Badge>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="condaEnv">Conda Environment Name</Label>
+                <Input
+                  id="condaEnv"
+                  value={config.condaEnv}
+                  onChange={(e) => setConfig({ ...config, condaEnv: e.target.value })}
+                  placeholder="paddle or paddle_env"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Name of the conda environment with PaddlePaddle installed
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="condaPath">Conda Executable Path</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="condaPath"
+                    value={config.condaPath}
+                    onChange={(e) => setConfig({ ...config, condaPath: e.target.value })}
+                    placeholder="C:\\Users\\name\\anaconda3\\Scripts\\conda.exe"
+                  />
+                  <Button variant="outline" size="icon">
+                    <FolderOpen className="w-4 h-4" />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Full path to conda.exe (Windows) or conda (Linux/Mac)
+                </p>
+              </div>
             </div>
           </div>
         </CardContent>

@@ -68,7 +68,12 @@ interface TrainingConfig {
   evalHeight: number
   evalWidth: number
   snapshotEpoch: number
+  useGpu: boolean
+  logIter: number
   saveDir: string | null
+  outputDir: string | null
+  weights: string | null
+  pretrainWeights: string | null
   createdAt: string
 }
 
@@ -105,10 +110,15 @@ const defaultFormData = {
   imageHeight: 640,
   trainBatchSize: 8,
   evalBatchSize: 2,
-  // Output
+  // Runtime
+  useGpu: true,
+  logIter: 20,
   saveDir: '',
   snapshotEpoch: 1,
-  logIter: 20,
+  // Output
+  outputDir: '',
+  weights: '',
+  pretrainWeights: '',
 }
 
 export function TrainingPage() {
@@ -241,6 +251,7 @@ TestReader:
   batch_size: 1
 
 # Runtime settings
+use_gpu: ${formData.useGpu}
 log_iter: ${formData.logIter}
 ${formData.saveDir ? `save_dir: ${formData.saveDir}` : ''}
 snapshot_epoch: ${formData.snapshotEpoch}
@@ -253,6 +264,7 @@ export:
   nms: True
   benchmark: False
   fuse_conv_bn: False
+${formData.outputDir ? `output_dir: ${formData.outputDir}` : ''}${formData.weights ? `\nweights: ${formData.weights}` : ''}${formData.pretrainWeights ? `\npretrain_weights: ${formData.pretrainWeights}` : ''}
 `
   }
 
@@ -349,8 +361,13 @@ export:
             workerNum: formData.workerNum,
             imageWidth: formData.imageWidth,
             imageHeight: formData.imageHeight,
+            useGpu: formData.useGpu,
+            logIter: formData.logIter,
             snapshotEpoch: formData.snapshotEpoch,
-            saveDir: formData.saveDir,
+            saveDir: formData.saveDir || null,
+            outputDir: formData.outputDir || null,
+            weights: formData.weights || null,
+            pretrainWeights: formData.pretrainWeights || null,
           },
         }),
       })
@@ -472,7 +489,8 @@ TestReader:
   batch_size: 1
 
 # Runtime settings
-log_iter: 20
+use_gpu: ${config.useGpu}
+log_iter: ${config.logIter}
 ${config.saveDir ? `save_dir: ${config.saveDir}` : ''}
 snapshot_epoch: ${config.snapshotEpoch}
 print_flops: false
@@ -484,6 +502,7 @@ export:
   nms: True
   benchmark: False
   fuse_conv_bn: False
+${config.outputDir ? `output_dir: ${config.outputDir}` : ''}${config.weights ? `\nweights: ${config.weights}` : ''}${config.pretrainWeights ? `\npretrain_weights: ${config.pretrainWeights}` : ''}
 `
   }
 
@@ -872,6 +891,16 @@ export:
 
                   {/* Runtime Tab */}
                   <TabsContent value="runtime" className="space-y-4 mt-4">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="useGpu"
+                        checked={formData.useGpu}
+                        onChange={(e) => setFormData({ ...formData, useGpu: e.target.checked })}
+                        className="h-4 w-4"
+                      />
+                      <Label htmlFor="useGpu">Use GPU</Label>
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="snapshotEpoch">Snapshot Epoch Interval</Label>
@@ -895,12 +924,39 @@ export:
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="saveDirRuntime">Output Directory (optional)</Label>
+                      <Label htmlFor="saveDir">Save Directory</Label>
                       <Input
-                        id="saveDirRuntime"
+                        id="saveDir"
                         value={formData.saveDir}
                         onChange={(e) => setFormData({ ...formData, saveDir: e.target.value })}
-                        placeholder="/path/to/output"
+                        placeholder="outputs/your_job"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="outputDir">Output Directory</Label>
+                      <Input
+                        id="outputDir"
+                        value={formData.outputDir}
+                        onChange={(e) => setFormData({ ...formData, outputDir: e.target.value })}
+                        placeholder="/absolute/path/to/output"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="weights">Weights Path</Label>
+                      <Input
+                        id="weights"
+                        value={formData.weights}
+                        onChange={(e) => setFormData({ ...formData, weights: e.target.value })}
+                        placeholder="output/model/model_final"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="pretrainWeights">Pretrain Weights URL</Label>
+                      <Input
+                        id="pretrainWeights"
+                        value={formData.pretrainWeights}
+                        onChange={(e) => setFormData({ ...formData, pretrainWeights: e.target.value })}
+                        placeholder="https://paddledet.bj.bcebos.com/models/pretrained/..."
                       />
                     </div>
                   </TabsContent>

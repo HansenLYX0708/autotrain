@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 // Default configuration values
 const DEFAULT_CONFIG = {
   pythonPath: "python",  // Use 'python' command, works on Windows
+  condaEnv: "",  // Conda environment name
+  condaPath: "",  // Path to conda executable
   paddleDetectionPath: "",
   paddleClasPath: "",
   defaultGpu: 0,
@@ -57,6 +59,8 @@ export async function PUT(request: NextRequest) {
       config = await db.systemConfig.create({
         data: {
           pythonPath: body.pythonPath ?? DEFAULT_CONFIG.pythonPath,
+          condaEnv: body.condaEnv ?? DEFAULT_CONFIG.condaEnv,
+          condaPath: body.condaPath ?? DEFAULT_CONFIG.condaPath,
           paddleDetectionPath: body.paddleDetectionPath ?? DEFAULT_CONFIG.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath ?? DEFAULT_CONFIG.paddleClasPath,
           defaultGpu: body.defaultGpu ?? DEFAULT_CONFIG.defaultGpu,
@@ -69,6 +73,8 @@ export async function PUT(request: NextRequest) {
         where: { id: config.id },
         data: {
           pythonPath: body.pythonPath,
+          condaEnv: body.condaEnv,
+          condaPath: body.condaPath,
           paddleDetectionPath: body.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath,
           defaultGpu: body.defaultGpu,

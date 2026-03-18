@@ -2,6 +2,76 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import * as fs from "fs";
 import * as path from "path";
+import * as yaml from "yaml";
+
+// Helper function to parse YAML and extract training parameters
+function parseTrainingYaml(yamlContent: string) {
+  try {
+    const parsed = yaml.parse(yamlContent);
+    const params: Record<string, unknown> = {};
+
+    // Basic training params
+    if (parsed.epoch !== undefined) params.epochs = parseInt(parsed.epoch);
+
+    // Learning rate
+    if (parsed.LearningRate?.base_lr !== undefined) {
+      params.baseLr = parseFloat(parsed.LearningRate.base_lr);
+    }
+
+    // Scheduler params
+    if (parsed.LearningRate?.schedulers && Array.isArray(parsed.LearningRate.schedulers)) {
+      for (const scheduler of parsed.LearningRate.schedulers) {
+        if (scheduler.name) {
+          params.scheduler = scheduler.name;
+        }
+        if (scheduler.max_epochs !== undefined) {
+          params.maxEpochs = parseInt(scheduler.max_epochs);
+        }
+        if (scheduler.epochs !== undefined && scheduler.name === 'LinearWarmup') {
+          params.warmupEpochs = parseInt(scheduler.epochs);
+        }
+      }
+    }
+
+    // Optimizer params
+    if (parsed.OptimizerBuilder?.optimizer) {
+      if (parsed.OptimizerBuilder.optimizer.momentum !== undefined) {
+        params.momentum = parseFloat(parsed.OptimizerBuilder.optimizer.momentum);
+      }
+    }
+    if (parsed.OptimizerBuilder?.regularizer?.factor !== undefined) {
+      params.weightDecay = parseFloat(parsed.OptimizerBuilder.regularizer.factor);
+    }
+
+    // Reader settings
+    if (parsed.worker_num !== undefined) params.workerNum = parseInt(parsed.worker_num);
+    if (parsed.eval_height !== undefined) params.imageHeight = parseInt(parsed.eval_height);
+    if (parsed.eval_width !== undefined) params.imageWidth = parseInt(parsed.eval_width);
+
+    // TrainReader batch_size
+    if (parsed.TrainReader?.batch_size !== undefined) {
+      params.batchSize = parseInt(parsed.TrainReader.batch_size);
+    }
+
+    // Runtime settings
+    if (parsed.use_gpu !== undefined) params.useGpu = parsed.use_gpu === true || parsed.use_gpu === 'true';
+    if (parsed.log_iter !== undefined) params.logIter = parseInt(parsed.log_iter);
+    if (parsed.save_dir !== undefined) params.saveDir = parsed.save_dir;
+    if (parsed.snapshot_epoch !== undefined) params.snapshotEpoch = parseInt(parsed.snapshot_epoch);
+
+    // Output paths
+    if (parsed.output_dir !== undefined) params.outputDir = parsed.output_dir;
+    if (parsed.weights !== undefined) params.weights = parsed.weights;
+
+    // Pretrained weights
+    if (parsed.pretrain_weights !== undefined) params.pretrainWeights = parsed.pretrain_weights;
+
+    return params;
+  } catch (error) {
+    console.error('Error parsing YAML:', error);
+    return {};
+  }
+}
 
 // GET /api/training-configs/import - List available training configs
 export async function GET(request: NextRequest) {
@@ -135,6 +205,19 @@ export async function POST(request: NextRequest) {
     }
 
     let savedConfigPath = configPath;
+    let finalYamlContent = yamlContent;
+
+    // If importing default config, read content from file if not provided
+    if (isDefault && configPath && !yamlContent) {
+      const fullPath = path.join(workDir, configPath);
+      if (fs.existsSync(fullPath)) {
+        finalYamlContent = fs.readFileSync(fullPath, "utf-8");
+      }
+    }
+
+    // Parse YAML content to extract parameters
+    const parsedParams = finalYamlContent ? parseTrainingYaml(finalYamlContent) : {};
+    const finalParams = { ...parsedParams, ...trainingParams };
 
     // If importing default config, use existing path but still create db record
     if (isDefault) {
@@ -142,19 +225,25 @@ export async function POST(request: NextRequest) {
       const config = await db.trainingConfig.create({
         data: {
           name: name,
-          epoch: trainingParams?.epochs || 100,
-          batchSize: trainingParams?.batchSize || 8,
-          baseLr: trainingParams?.baseLr || 0.001,
-          momentum: trainingParams?.momentum || 0.9,
-          weightDecay: trainingParams?.weightDecay || 0.0005,
-          scheduler: trainingParams?.scheduler || 'CosineDecay',
-          warmupEpochs: trainingParams?.warmupEpochs || 5,
-          maxEpochs: trainingParams?.maxEpochs || 100,
-          workerNum: trainingParams?.workerNum || 4,
-          evalHeight: trainingParams?.imageHeight || 640,
-          evalWidth: trainingParams?.imageWidth || 640,
-          snapshotEpoch: trainingParams?.snapshotEpoch || 1,
-          saveDir: trainingParams?.saveDir || null,
+          epoch: finalParams.epochs || 100,
+          batchSize: finalParams.batchSize || 8,
+          baseLr: finalParams.baseLr || 0.001,
+          momentum: finalParams.momentum || 0.9,
+          weightDecay: finalParams.weightDecay || 0.0005,
+          scheduler: finalParams.scheduler || 'CosineDecay',
+          warmupEpochs: finalParams.warmupEpochs || 5,
+          maxEpochs: finalParams.maxEpochs || 100,
+          workerNum: finalParams.workerNum || 4,
+          evalHeight: finalParams.imageHeight || 640,
+          evalWidth: finalParams.imageWidth || 640,
+          useGpu: finalParams.useGpu !== undefined ? finalParams.useGpu : true,
+          logIter: finalParams.logIter || 20,
+          snapshotEpoch: finalParams.snapshotEpoch || 1,
+          saveDir: finalParams.saveDir || null,
+          outputDir: finalParams.outputDir || null,
+          weights: finalParams.weights || null,
+          pretrainWeights: finalParams.pretrainWeights || null,
+          yamlConfig: finalYamlContent || null,
         },
       });
 
@@ -189,19 +278,25 @@ export async function POST(request: NextRequest) {
     const config = await db.trainingConfig.create({
       data: {
         name: name,
-        epoch: trainingParams?.epochs || 100,
-        batchSize: trainingParams?.batchSize || 8,
-        baseLr: trainingParams?.baseLr || 0.001,
-        momentum: trainingParams?.momentum || 0.9,
-        weightDecay: trainingParams?.weightDecay || 0.0005,
-        scheduler: trainingParams?.scheduler || 'CosineDecay',
-        warmupEpochs: trainingParams?.warmupEpochs || 5,
-        maxEpochs: trainingParams?.maxEpochs || 100,
-        workerNum: trainingParams?.workerNum || 4,
-        evalHeight: trainingParams?.imageHeight || 640,
-        evalWidth: trainingParams?.imageWidth || 640,
-        snapshotEpoch: trainingParams?.snapshotEpoch || 1,
-        saveDir: trainingParams?.saveDir || null,
+        epoch: finalParams.epochs || 100,
+        batchSize: finalParams.batchSize || 8,
+        baseLr: finalParams.baseLr || 0.001,
+        momentum: finalParams.momentum || 0.9,
+        weightDecay: finalParams.weightDecay || 0.0005,
+        scheduler: finalParams.scheduler || 'CosineDecay',
+        warmupEpochs: finalParams.warmupEpochs || 5,
+        maxEpochs: finalParams.maxEpochs || 100,
+        workerNum: finalParams.workerNum || 4,
+        evalHeight: finalParams.imageHeight || 640,
+        evalWidth: finalParams.imageWidth || 640,
+        useGpu: finalParams.useGpu !== undefined ? finalParams.useGpu : true,
+        logIter: finalParams.logIter || 20,
+        snapshotEpoch: finalParams.snapshotEpoch || 1,
+        saveDir: finalParams.saveDir || null,
+        outputDir: finalParams.outputDir || null,
+        weights: finalParams.weights || null,
+        pretrainWeights: finalParams.pretrainWeights || null,
+        yamlConfig: finalYamlContent || null,
       },
     });
 
