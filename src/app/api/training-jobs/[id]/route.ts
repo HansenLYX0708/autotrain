@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { spawn } from "child_process";
+import { exec } from "child_process";
 
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
@@ -244,7 +245,14 @@ export async function PUT(
     if (body.status === "stopped" && existingJob.status === "running") {
       const process = runningProcesses.get(id);
       if (process) {
-        process.kill();
+		console.log(`stop test, run stdin`);
+		//process.stdin.write('\x03');
+		console.log(`stop test, run kill SIGINT`);
+        //process.kill('SIGINT');
+		
+		if (process?.pid) {
+			killProcessTree(process.pid);
+		}
         runningProcesses.delete(id);
       }
     }
@@ -333,6 +341,12 @@ export async function DELETE(
       { status: 500 }
     );
   }
+}
+
+function killProcessTree(pid: number) {
+  exec(`taskkill /PID ${pid} /T /F`, (err) => {
+    if (err) console.error(err);
+  });
 }
 
 // Start training process
