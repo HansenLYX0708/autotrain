@@ -354,13 +354,6 @@ export function DashboardPage() {
                   {systemConfig.paddleDetectionPath || 'Not configured'}
                 </div>
               </div>
-              
-              <div className="p-3 rounded-lg border border-border bg-muted/50">
-                <div className="text-xs text-muted-foreground mb-1">PaddleClas Path</div>
-                <div className="text-sm font-mono truncate" title={systemConfig.paddleClasPath}>
-                  {systemConfig.paddleClasPath || 'Not configured'}
-                </div>
-              </div>
             </div>
 
             <div className="pt-2">

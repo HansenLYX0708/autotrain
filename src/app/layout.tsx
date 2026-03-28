@@ -15,10 +15,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AutoTrain - AI Model Training Platform",
+  title: "HawkeyePlus - AI Model Training Platform",
   description: "Modern web application for managing PaddleDetection and PaddleClas training workflows with visual configuration, dataset management, and real-time monitoring.",
-  keywords: ["AutoTrain", "PaddleDetection", "PaddleClas", "Machine Learning", "Deep Learning", "Model Training"],
-  authors: [{ name: "AutoTrain Team" }],
+  keywords: ["HawkeyePlus", "PaddleDetection", "PaddleClas", "Machine Learning", "Deep Learning", "Model Training"],
+  authors: [{ name: "ATE Automation Team" }],
 };
 
 export default function RootLayout({

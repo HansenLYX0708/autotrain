@@ -78,9 +78,9 @@ interface Model {
   }
 }
 
-const BACKBONES = ['CSPResNet', 'MobileNetV3', 'ResNet', 'Res2Net', 'HRNet', 'CSPNeXt']
-const NECKS = ['CustomCSPPAN', 'FPN', 'CSPNeXtPAFPN', 'YOLOv3FPN']
-const HEADS = ['PPYOLOEHead', 'RTMDetHead', 'TwoFCHead', 'YOLOv3Head']
+const BACKBONES = ['CSPResNet', 'MobileNetV3', 'ResNet']
+const NECKS = ['CustomCSPPAN', 'FPN', 'YOLOv3FPN', 'CenterNetDLAFPN','HybridEncoder']
+const HEADS = ['PPYOLOEHead', 'RetinaHead', 'YOLOv3Head', 'CenterNetHead', 'DINOHead']
 
 interface ConfigFile {
   name: string
@@ -440,7 +440,7 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
             <DialogTrigger asChild>
               <Button variant="outline">
                 <Upload className="w-4 h-4 mr-2" />
-                Import Config
+                Import Model
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -588,10 +588,7 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
             }
           }}>
             <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Create Model
-              </Button>
+              
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -663,8 +660,9 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="YOLOv3">YOLOv3</SelectItem>
-                        <SelectItem value="PPYOLOE">PPYOLOE</SelectItem>
-                        <SelectItem value="RTMDet">RTMDet</SelectItem>
+                        <SelectItem value="CenterNet">CenterNet</SelectItem>
+                        <SelectItem value="RetinaNet">RetinaNet</SelectItem>
+                        <SelectItem value="DETR">DETR</SelectItem>
                         <SelectItem value="FasterRCNN">FasterRCNN</SelectItem>
                       </SelectContent>
                     </Select>

@@ -672,10 +672,7 @@ ${config.outputDir ? `output_dir: ${config.outputDir}` : ''}${config.weights ? `
             }
           }}>
             <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Create Config
-              </Button>
+
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>

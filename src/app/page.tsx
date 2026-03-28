@@ -71,7 +71,7 @@ const navigation = [
   },
   {
     id: 'training',
-    name: 'Training',
+    name: 'Configurations',
     icon: PlayCircle,
   },
   {
@@ -139,7 +139,7 @@ export default function Home() {
                 <Bot className="w-5 h-5 text-white" />
               </div>
               {!sidebarCollapsed && (
-                <span className="font-semibold text-lg">AutoTrain</span>
+                <span className="font-semibold text-lg">HawkeyePlus</span>
               )}
             </div>
           </div>
@@ -228,11 +228,7 @@ export default function Home() {
               {/* Search */}
               <div className="flex items-center gap-4 flex-1 max-w-md">
                 <div className="relative w-full">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search projects, datasets, models..."
-                    className="pl-9 bg-background"
-                  />
+
                 </div>
               </div>
 
@@ -246,13 +242,6 @@ export default function Home() {
                   </span>
                 </div>
 
-                {/* Notifications */}
-                <Button variant="ghost" size="icon" className="relative">
-                  <Bell className="w-5 h-5" />
-                  <Badge className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-[10px]">
-                    3
-                  </Badge>
-                </Button>
 
                 {/* Theme toggle */}
                 {mounted && (
@@ -290,7 +279,7 @@ export default function Home() {
 
           {/* Footer */}
           <footer className="h-10 border-t border-border bg-card/50 flex items-center justify-between px-6 text-xs text-muted-foreground shrink-0">
-            <div>AutoTrain v1.0.0</div>
+            <div>HawkeyePlus v1.0.0</div>
             <div className="flex items-center gap-4">
               <span>PaddleDetection Ready</span>
               <span>•</span>

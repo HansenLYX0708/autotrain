@@ -82,7 +82,7 @@ export function AppSidebar() {
               <Bot className="w-5 h-5 text-white" />
             </div>
             {!collapsed && (
-              <span className="font-semibold text-lg">AutoTrain</span>
+              <span className="font-semibold text-lg">HawkeyePlus</span>
             )}
           </Link>
         </div>

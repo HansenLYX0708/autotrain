@@ -257,24 +257,6 @@ export function SettingsPage() {
                 Path to PaddleDetection repository
               </p>
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="paddleClasPath">PaddleClas Path</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="paddleClasPath"
-                  value={config.paddleClasPath}
-                  onChange={(e) => setConfig({ ...config, paddleClasPath: e.target.value })}
-                  placeholder="C:\\workspace\\PaddleClas"
-                />
-                <Button variant="outline" size="icon">
-                  <FolderOpen className="w-4 h-4" />
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Path to PaddleClas repository
-              </p>
-            </div>
           </div>
         </CardContent>
       </Card>
@@ -300,12 +282,6 @@ export function SettingsPage() {
                   onClick={() => setConfig({ ...config, defaultFramework: 'PaddleDetection' })}
                 >
                   PaddleDetection
-                </Button>
-                <Button
-                  variant={config.defaultFramework === 'PaddleClas' ? 'default' : 'outline'}
-                  onClick={() => setConfig({ ...config, defaultFramework: 'PaddleClas' })}
-                >
-                  PaddleClas
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -337,13 +313,6 @@ export function SettingsPage() {
               <div className="w-2 h-2 rounded-full bg-emerald-500" />
               <div>
                 <div className="font-medium text-sm">PaddleDetection</div>
-                <div className="text-xs text-muted-foreground">Ready</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/50">
-              <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              <div>
-                <div className="font-medium text-sm">PaddleClas</div>
                 <div className="text-xs text-muted-foreground">Ready</div>
               </div>
             </div>
