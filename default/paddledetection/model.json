@@ -1,0 +1,16 @@
+{
+  "name": "Default PP-YOLOE Model",
+  "description": "Default model configuration for PaddleDetection testing",
+  "architecture": "YOLOv3",
+  "backbone": "CSPResNet",
+  "neck": "CustomCSPPAN",
+  "head": "PPYOLOEHead",
+  "numClasses": 1,
+  "normType": "sync_bn",
+  "useEma": true,
+  "emaDecay": 0.9998,
+  "depthMult": 0.33,
+  "widthMult": 0.50,
+  "pretrainWeights": null,
+  "yamlConfig": null
+}

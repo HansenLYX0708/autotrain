@@ -74,21 +74,21 @@ interface LabelMeAnnotation {
   imageWidth: number
 }
 
-const defaultLabels = ['person', 'car', 'bicycle', 'dog', 'cat', 'bird', 'truck', 'motorcycle']
+const defaultLabels: string[] = []
 
 // Helper to get initial labels from localStorage
 function getInitialLabels(): string[] {
-  if (typeof window === 'undefined') return defaultLabels
+  if (typeof window === 'undefined') return []
   const savedLabels = localStorage.getItem('annotationLabels')
   if (savedLabels) {
     try {
       const parsed = JSON.parse(savedLabels)
-      return [...new Set([...defaultLabels, ...parsed])]
+      return Array.isArray(parsed) ? parsed : []
     } catch {
-      return defaultLabels
+      return []
     }
   }
-  return defaultLabels
+  return []
 }
 
 export function AnnotationPage() {
@@ -99,7 +99,7 @@ export function AnnotationPage() {
   
   // Annotation state
   const [labels, setLabels] = useState<string[]>(getInitialLabels)
-  const [selectedLabel, setSelectedLabel] = useState<string>(defaultLabels[0])
+  const [selectedLabel, setSelectedLabel] = useState<string>('')
   const [isDrawing, setIsDrawing] = useState(false)
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null)
   const [currentBox, setCurrentBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
@@ -335,12 +335,30 @@ export function AnnotationPage() {
     }
 
     if (e.button === 0) {
+      // First check if clicking on an existing box
+      for (let i = currentImage.boxes.length - 1; i >= 0; i--) {
+        const box = currentImage.boxes[i]
+        if (coords.x >= box.x1 && coords.x <= box.x2 && coords.y >= box.y1 && coords.y <= box.y2) {
+          setSelectedBoxId(box.id === selectedBoxId ? null : box.id)
+          return
+        }
+      }
+
+      // No box clicked, check if label is selected for drawing
+      if (!selectedLabel) {
+        toast({
+          title: 'No label selected',
+          description: 'Please add and select a label before drawing',
+          variant: 'destructive'
+        })
+        return
+      }
       setIsDrawing(true)
       setDrawStart(coords)
       setCurrentBox({ x1: coords.x, y1: coords.y, x2: coords.x, y2: coords.y })
       setSelectedBoxId(null)
     }
-  }, [currentImage, getImageCoords, offset])
+  }, [currentImage, getImageCoords, offset, selectedLabel, selectedBoxId])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (isPanning && panStart) {
@@ -408,22 +426,11 @@ export function AnnotationPage() {
     setImages(prev => prev.map((img, idx) => idx === currentIndex ? updatedImage : img))
   }, [currentIndex])
 
-  // Handle box selection
+  // Handle box selection (for click outside boxes)
   const handleCanvasClick = useCallback((e: React.MouseEvent) => {
-    if (isDrawing || !currentImage) return
-
-    const coords = getImageCoords(e)
-    if (!coords) return
-
-    for (let i = currentImage.boxes.length - 1; i >= 0; i--) {
-      const box = currentImage.boxes[i]
-      if (coords.x >= box.x1 && coords.x <= box.x2 && coords.y >= box.y1 && coords.y <= box.y2) {
-        setSelectedBoxId(box.id === selectedBoxId ? null : box.id)
-        return
-      }
-    }
-    setSelectedBoxId(null)
-  }, [currentImage, getImageCoords, isDrawing, selectedBoxId])
+    // Selection is now handled in handleMouseDown
+    // This is kept for potential future use
+  }, [])
 
   // Delete selected box
   const deleteSelectedBox = useCallback(() => {
@@ -801,34 +808,46 @@ export function AnnotationPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Select value={selectedLabel} onValueChange={setSelectedLabel}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {labels.map(label => (
-                    <SelectItem key={label} value={label}>{label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Label stats */}
-              {currentImage && (
-                <div className="pt-2 border-t">
-                  <div className="text-xs text-muted-foreground mb-2">Current Image:</div>
-                  <div className="space-y-1">
-                    {labels.map(label => {
-                      const count = currentImage.boxes.filter(b => b.label === label).length
-                      if (count === 0) return null
-                      return (
-                        <div key={label} className="flex items-center justify-between text-xs">
-                          <span>{label}</span>
-                          <Badge variant="secondary" className="h-5">{count}</Badge>
-                        </div>
-                      )
-                    })}
-                  </div>
+              {labels.length === 0 ? (
+                <div className="text-center py-4">
+                  <p className="text-sm text-muted-foreground mb-3">No labels yet</p>
+                  <Button variant="outline" size="sm" onClick={() => setNewLabelDialog(true)}>
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Label
+                  </Button>
                 </div>
+              ) : (
+                <>
+                  <Select value={selectedLabel} onValueChange={setSelectedLabel}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a label" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {labels.map(label => (
+                        <SelectItem key={label} value={label}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Label stats */}
+                  {currentImage && (
+                    <div className="pt-2 border-t">
+                      <div className="text-xs text-muted-foreground mb-2">Current Image:</div>
+                      <div className="space-y-1">
+                        {labels.map(label => {
+                          const count = currentImage.boxes.filter(b => b.label === label).length
+                          if (count === 0) return null
+                          return (
+                            <div key={label} className="flex items-center justify-between text-xs">
+                              <span>{label}</span>
+                              <Badge variant="secondary" className="h-5">{count}</Badge>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>

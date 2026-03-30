@@ -51,6 +51,8 @@ import {
   Plus,
   Loader2,
   Cpu,
+  Filter,
+  X,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 
@@ -119,6 +121,13 @@ const defaultFormData = {
   useVdl: true,
 }
 
+const defaultFilterData = {
+  projectId: '__all__',
+  datasetId: '__all__',
+  modelId: '__all__',
+  configId: '__all__',
+}
+
 export function JobsPage() {
   const [jobs, setJobs] = useState<TrainingJob[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -130,10 +139,17 @@ export function JobsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [formData, setFormData] = useState(defaultFormData)
+  const [filterData, setFilterData] = useState(defaultFilterData)
+  const [allDatasets, setAllDatasets] = useState<Dataset[]>([])
+  const [allModels, setAllModels] = useState<Model[]>([])
+  const [totalJobs, setTotalJobs] = useState(0)
+  const [showAll, setShowAll] = useState(false)
 
   useEffect(() => {
     fetchJobs()
     fetchProjects()
+    fetchAllDatasets()
+    fetchAllModels()
   }, [])
 
   useEffect(() => {
@@ -150,13 +166,42 @@ export function JobsPage() {
     fetchConfigs()
   }, [])
 
+  // Re-fetch jobs when filter changes
+  useEffect(() => {
+    fetchJobs()
+  }, [filterData, showAll])
+
   const fetchJobs = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/training-jobs')
+      const params = new URLSearchParams()
+      
+      // If showAll is false, limit to 5 records
+      if (!showAll) {
+        params.append('limit', '5')
+      } else {
+        params.append('limit', '100')
+      }
+      
+      // Add filter parameters (only if not '__all__')
+      if (filterData.projectId && filterData.projectId !== '__all__') {
+        params.append('projectId', filterData.projectId)
+      }
+      if (filterData.datasetId && filterData.datasetId !== '__all__') {
+        params.append('datasetId', filterData.datasetId)
+      }
+      if (filterData.modelId && filterData.modelId !== '__all__') {
+        params.append('modelId', filterData.modelId)
+      }
+      if (filterData.configId && filterData.configId !== '__all__') {
+        params.append('configId', filterData.configId)
+      }
+      
+      const response = await fetch(`/api/training-jobs?${params.toString()}`)
       if (response.ok) {
         const data = await response.json()
         setJobs(data.data || [])
+        setTotalJobs(data.pagination?.total || 0)
       }
     } catch (error) {
       console.error('Failed to fetch jobs:', error)
@@ -177,15 +222,42 @@ export function JobsPage() {
     }
   }
 
+  const fetchAllDatasets = async () => {
+    try {
+      const response = await fetch('/api/datasets')
+      if (response.ok) {
+        const result = await response.json()
+        setAllDatasets(Array.isArray(result.data) ? result.data : (Array.isArray(result) ? result : []))
+      }
+    } catch (error) {
+      console.error('Failed to fetch all datasets:', error)
+      setAllDatasets([])
+    }
+  }
+
+  const fetchAllModels = async () => {
+    try {
+      const response = await fetch('/api/models')
+      if (response.ok) {
+        const result = await response.json()
+        setAllModels(Array.isArray(result.data) ? result.data : (Array.isArray(result) ? result : []))
+      }
+    } catch (error) {
+      console.error('Failed to fetch all models:', error)
+      setAllModels([])
+    }
+  }
+
   const fetchDatasets = async (projectId: string) => {
     try {
       const response = await fetch(`/api/datasets?projectId=${projectId}`)
       if (response.ok) {
-        const data = await response.json()
-        setDatasets(data.data || data)
+        const result = await response.json()
+        setDatasets(Array.isArray(result.data) ? result.data : (Array.isArray(result) ? result : []))
       }
     } catch (error) {
       console.error('Failed to fetch datasets:', error)
+      setDatasets([])
     }
   }
 
@@ -193,11 +265,12 @@ export function JobsPage() {
     try {
       const response = await fetch(`/api/models?projectId=${projectId}`)
       if (response.ok) {
-        const data = await response.json()
-        setModels(data.data || data)
+        const result = await response.json()
+        setModels(Array.isArray(result.data) ? result.data : (Array.isArray(result) ? result : []))
       }
     } catch (error) {
       console.error('Failed to fetch models:', error)
+      setModels([])
     }
   }
 
@@ -405,6 +478,17 @@ export function JobsPage() {
       { label: 'VDL', value: params.useVdl ? 'Enabled' : 'Disabled' },
     ].filter(p => p.value !== null && p.value !== undefined)
   }
+
+  const resetFilter = () => {
+    setFilterData(defaultFilterData)
+    setShowAll(false)
+  }
+
+  const hasActiveFilters = 
+    (filterData.projectId && filterData.projectId !== '__all__') ||
+    (filterData.datasetId && filterData.datasetId !== '__all__') ||
+    (filterData.modelId && filterData.modelId !== '__all__') ||
+    (filterData.configId && filterData.configId !== '__all__')
 
   const command = generateCommand()
   const commandDisplay = generateCommandDisplay()
@@ -617,6 +701,121 @@ export function JobsPage() {
           </Button>
         </div>
       </div>
+
+      {/* Filter Section */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Filter className="w-4 h-4" />
+              Filter Jobs
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              {hasActiveFilters && (
+                <Button variant="ghost" size="sm" onClick={resetFilter}>
+                  <X className="w-4 h-4 mr-1" />
+                  Clear Filters
+                </Button>
+              )}
+              <Button 
+                variant={showAll ? "default" : "outline"} 
+                size="sm"
+                onClick={() => setShowAll(!showAll)}
+              >
+                {showAll ? 'Show Latest 5' : `Show All (${totalJobs})`}
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Project Filter */}
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Project</Label>
+              <Select
+                value={filterData.projectId}
+                onValueChange={(value) => setFilterData({ ...filterData, projectId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="All Projects" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All Projects</SelectItem>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Dataset Filter */}
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Dataset</Label>
+              <Select
+                value={filterData.datasetId}
+                onValueChange={(value) => setFilterData({ ...filterData, datasetId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="All Datasets" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All Datasets</SelectItem>
+                  {allDatasets.map((dataset) => (
+                    <SelectItem key={dataset.id} value={dataset.id}>
+                      {dataset.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Model Filter */}
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Model</Label>
+              <Select
+                value={filterData.modelId}
+                onValueChange={(value) => setFilterData({ ...filterData, modelId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="All Models" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All Models</SelectItem>
+                  {allModels.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Config Filter */}
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Config</Label>
+              <Select
+                value={filterData.configId}
+                onValueChange={(value) => setFilterData({ ...filterData, configId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="All Configs" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All Configs</SelectItem>
+                  <SelectItem value="__none__">No Config</SelectItem>
+                  {configs.map((config) => (
+                    <SelectItem key={config.id} value={config.id}>
+                      {config.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Jobs List */}
       <Card>

@@ -44,6 +44,8 @@ import {
   FileText,
   Loader2,
   Code,
+  Filter,
+  X,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 
@@ -56,6 +58,7 @@ interface Project {
 interface TrainingConfig {
   id: string
   name: string
+  projectId: string
   epoch: number
   batchSize: number
   baseLr: number
@@ -75,6 +78,11 @@ interface TrainingConfig {
   weights: string | null
   pretrainWeights: string | null
   createdAt: string
+  project?: {
+    id: string
+    name: string
+    framework: string
+  }
 }
 
 interface ConfigFile {
@@ -129,6 +137,7 @@ export function TrainingPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [filterProjectId, setFilterProjectId] = useState<string>('__all__')
   const [selectedConfig, setSelectedConfig] = useState<TrainingConfig | null>(null)
   const [defaultConfigs, setDefaultConfigs] = useState<ConfigFile[]>([])
   const [userConfigs, setUserConfigs] = useState<ConfigFile[]>([])
@@ -146,6 +155,8 @@ export function TrainingPage() {
     fetchConfigs()
   }, [])
 
+
+
   const fetchProjects = async () => {
     try {
       const response = await fetch('/api/projects')
@@ -158,15 +169,21 @@ export function TrainingPage() {
     }
   }
 
-  const fetchConfigs = async () => {
+  const fetchConfigs = async (projectId?: string) => {
     try {
-      const response = await fetch('/api/training-configs')
+      const params = new URLSearchParams()
+      if (projectId && projectId !== '__all__') {
+        params.append('projectId', projectId)
+      }
+      const url = `/api/training-configs${params.toString() ? `?${params.toString()}` : ''}`
+      const response = await fetch(url)
       if (response.ok) {
         const data = await response.json()
-        setConfigs(data.data || data)
+        setConfigs(Array.isArray(data.data) ? data.data : [])
       }
     } catch (error) {
       console.error('Failed to fetch configs:', error)
+      setConfigs([])
     } finally {
       setLoading(false)
     }
@@ -506,9 +523,18 @@ ${config.outputDir ? `output_dir: ${config.outputDir}` : ''}${config.weights ? `
 `
   }
 
-  const filteredConfigs = configs.filter(config =>
-    config.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredConfigs = configs.filter(config => {
+    const matchesSearch = config.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesProject = filterProjectId === '__all__' || config.projectId === filterProjectId
+    return matchesSearch && matchesProject
+  })
+
+  const resetFilter = () => {
+    setFilterProjectId('__all__')
+    setSearchQuery('')
+  }
+
+  const hasActiveFilters = filterProjectId !== '__all__' || searchQuery !== ''
 
   return (
     <div className="space-y-6">
@@ -629,14 +655,6 @@ ${config.outputDir ? `output_dir: ${config.outputDir}` : ''}${config.weights ? `
                         ))}
                       </SelectContent>
                     </Select>
-                    {importForm.selectedConfig && (
-                      <div className="mt-2">
-                        <Label className="text-xs text-muted-foreground">Preview</Label>
-                        <pre className="p-2 rounded bg-muted/50 text-xs overflow-auto max-h-[150px] font-mono">
-                          {(importForm.configSource === 'default' ? defaultConfigs : userConfigs).find(c => c.name === importForm.selectedConfig)?.content || ''}
-                        </pre>
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -971,18 +989,48 @@ ${config.outputDir ? `output_dir: ${config.outputDir}` : ''}${config.weights ? `
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Config List */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Search */}
-          <div className="flex items-center gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search training configs..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-          </div>
+          {/* Filter Section */}
+          <Card>
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Filter className="w-4 h-4" />
+                  <span>Filter:</span>
+                </div>
+                <Select
+                  value={filterProjectId}
+                  onValueChange={(value) => setFilterProjectId(value)}
+                >
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="All Projects" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">All Projects</SelectItem>
+                    {projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search training configs..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                {hasActiveFilters && (
+                  <Button variant="ghost" size="sm" onClick={resetFilter}>
+                    <X className="w-4 h-4 mr-1" />
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {loading ? (
             <div className="grid gap-4">

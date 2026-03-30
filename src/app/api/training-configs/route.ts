@@ -8,19 +8,30 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "20");
     const skip = (page - 1) * limit;
+    const projectId = searchParams.get("projectId");
+
+    const where = projectId ? { projectId } : {};
 
     const [configs, total] = await Promise.all([
       db.trainingConfig.findMany({
+        where,
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
         include: {
+          project: {
+            select: {
+              id: true,
+              name: true,
+              framework: true,
+            },
+          },
           _count: {
             select: { trainingJobs: true },
           },
         },
       }),
-      db.trainingConfig.count(),
+      db.trainingConfig.count({ where }),
     ]);
 
     return NextResponse.json({
@@ -46,9 +57,18 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
+    // Validate required fields
+    if (!body.name || !body.projectId) {
+      return NextResponse.json(
+        { error: "Missing required fields: name and projectId are required" },
+        { status: 400 }
+      );
+    }
+
     const config = await db.trainingConfig.create({
       data: {
         name: body.name,
+        projectId: body.projectId,
         // Training parameters
         epoch: body.epoch ?? 100,
         batchSize: body.batchSize ?? 8,

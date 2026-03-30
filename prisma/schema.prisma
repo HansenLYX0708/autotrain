@@ -34,10 +34,11 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
-  datasets      Dataset[]
-  models        Model[]
-  trainingJobs  TrainingJob[]
-  validationJobs ValidationJob[]
+  datasets        Dataset[]
+  models          Model[]
+  trainingConfigs TrainingConfig[]
+  trainingJobs    TrainingJob[]
+  validationJobs  ValidationJob[]
 }
 
 // Dataset
@@ -110,6 +111,7 @@ model Model {
 model TrainingConfig {
   id          String   @id @default(cuid())
   name        String
+  projectId   String
 
   // Training parameters
   epoch       Int      @default(100)
@@ -147,7 +149,8 @@ model TrainingConfig {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  trainingJobs TrainingJob[]
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  trainingJobs  TrainingJob[]
 }
 
 // Training Job

@@ -46,6 +46,8 @@ import {
   Upload,
   FileText,
   Loader2,
+  Filter,
+  X,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 
@@ -98,6 +100,7 @@ export function ModelsPage() {
   const [editingModel, setEditingModel] = useState<Model | null>(null)
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [importing, setImporting] = useState(false)
+  const [filterProjectId, setFilterProjectId] = useState<string>('__all__')
   const [defaultConfigs, setDefaultConfigs] = useState<ConfigFile[]>([])
   const [userConfigs, setUserConfigs] = useState<ConfigFile[]>([])
   const [importForm, setImportForm] = useState({
@@ -130,6 +133,8 @@ export function ModelsPage() {
     fetchModels()
     fetchProjects()
   }, [])
+
+
 
   const fetchModels = async () => {
     try {
@@ -409,9 +414,18 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
     }
   }
 
-  const filteredModels = models.filter(model =>
-    model.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredModels = models.filter(model => {
+    const matchesSearch = model.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesProject = filterProjectId === '__all__' || model.projectId === filterProjectId
+    return matchesSearch && matchesProject
+  })
+
+  const resetFilter = () => {
+    setFilterProjectId('__all__')
+    setSearchQuery('')
+  }
+
+  const hasActiveFilters = filterProjectId !== '__all__' || searchQuery !== ''
 
   return (
     <div className="space-y-6">
@@ -544,14 +558,6 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
                         ))}
                       </SelectContent>
                     </Select>
-                    {importForm.selectedConfig && (
-                      <div className="mt-2">
-                        <Label className="text-xs text-muted-foreground">Preview</Label>
-                        <pre className="p-2 rounded bg-muted/50 text-xs overflow-auto max-h-[150px] font-mono">
-                          {(importForm.configSource === 'default' ? defaultConfigs : userConfigs).find(c => c.name === importForm.selectedConfig)?.content || ''}
-                        </pre>
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -790,18 +796,48 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Model List */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Search */}
-          <div className="flex items-center gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search models..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-          </div>
+          {/* Filter Section */}
+          <Card>
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Filter className="w-4 h-4" />
+                  <span>Filter:</span>
+                </div>
+                <Select
+                  value={filterProjectId}
+                  onValueChange={(value) => setFilterProjectId(value)}
+                >
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="All Projects" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">All Projects</SelectItem>
+                    {projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search models..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                {hasActiveFilters && (
+                  <Button variant="ghost" size="sm" onClick={resetFilter}>
+                    <X className="w-4 h-4 mr-1" />
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {loading ? (
             <div className="grid gap-4">

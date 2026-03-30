@@ -8,10 +8,13 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "20");
+    const limit = parseInt(searchParams.get("limit") || "5"); // Default to 5 records
     const skip = (page - 1) * limit;
     const status = searchParams.get("status");
     const projectId = searchParams.get("projectId");
+    const datasetId = searchParams.get("datasetId");
+    const modelId = searchParams.get("modelId");
+    const configId = searchParams.get("configId");
 
     const where: Record<string, unknown> = {};
     if (status) {
@@ -19,6 +22,15 @@ export async function GET(request: NextRequest) {
     }
     if (projectId) {
       where.projectId = projectId;
+    }
+    if (datasetId) {
+      where.datasetId = datasetId;
+    }
+    if (modelId) {
+      where.modelId = modelId;
+    }
+    if (configId) {
+      where.configId = configId;
     }
 
     const [jobs, total] = await Promise.all([

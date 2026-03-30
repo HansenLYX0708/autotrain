@@ -1,0 +1,22 @@
+{
+  "name": "Default Training Config",
+  "epoch": 100,
+  "batchSize": 8,
+  "baseLr": 0.001,
+  "momentum": 0.9,
+  "weightDecay": 0.0005,
+  "scheduler": "CosineDecay",
+  "warmupEpochs": 5,
+  "maxEpochs": 100,
+  "workerNum": 4,
+  "evalHeight": 640,
+  "evalWidth": 640,
+  "useGpu": true,
+  "logIter": 20,
+  "saveDir": "output",
+  "snapshotEpoch": 1,
+  "outputDir": "output/default",
+  "weights": null,
+  "pretrainWeights": null,
+  "yamlConfig": null
+}
