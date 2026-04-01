@@ -53,6 +53,7 @@ import {
   RefreshCw,
   Filter,
   X,
+  FileJson,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import {
@@ -104,6 +105,19 @@ export function DatasetsPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [labelmeDialogOpen, setLabelmeDialogOpen] = useState(false)
+  const [converting, setConverting] = useState(false)
+  const [labelmeFormData, setLabelmeFormData] = useState({
+    name: '',
+    description: '',
+    projectId: '',
+    labelmeImagesPath: '',
+    labelmeAnnotationsPath: '',
+    outputDatasetDir: '',
+    trainRatio: 0.7,
+    valRatio: 0.2,
+    testRatio: 0.1,
+  })
   const [editingDataset, setEditingDataset] = useState<Dataset | null>(null)
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
   const [parsing, setParsing] = useState(false)
@@ -278,6 +292,61 @@ export function DatasetsPage() {
     }
   }
 
+  const handleLabelmeConvert = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    // Validate ratios sum to 1
+    const total = labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio
+    if (Math.abs(total - 1.0) > 0.001) {
+      toast({ 
+        title: 'Invalid ratios', 
+        description: `Train + Val + Test must equal 1.0 (current: ${total.toFixed(2)})`,
+        variant: 'destructive' 
+      })
+      return
+    }
+
+    setConverting(true)
+    try {
+      const response = await fetch('/api/datasets/labelme-to-coco', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(labelmeFormData),
+      })
+      const result = await response.json()
+      
+      if (result.success) {
+        toast({ 
+          title: 'Conversion successful', 
+          description: `Created dataset with ${result.stats.trainCount} train, ${result.stats.valCount} val, ${result.stats.testCount} test images` 
+        })
+        fetchDatasets()
+        setLabelmeDialogOpen(false)
+        setLabelmeFormData({
+          name: '',
+          description: '',
+          projectId: '',
+          labelmeImagesPath: '',
+          labelmeAnnotationsPath: '',
+          outputDatasetDir: '',
+          trainRatio: 0.7,
+          valRatio: 0.2,
+          testRatio: 0.1,
+        })
+      } else {
+        toast({ 
+          title: 'Conversion failed', 
+          description: result.error || 'Check the paths and try again',
+          variant: 'destructive' 
+        })
+      }
+    } catch (error) {
+      toast({ title: 'Error converting dataset', variant: 'destructive' })
+    } finally {
+      setConverting(false)
+    }
+  }
+
   const filteredDatasets = datasets.filter(dataset => {
     const matchesSearch = dataset.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesProject = filterProjectId === '__all__' || dataset.projectId === filterProjectId
@@ -301,7 +370,155 @@ export function DatasetsPage() {
             Manage your training datasets
           </p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => {
+        <div className="flex items-center gap-2">
+          {/* Labelme to COCO Dialog */}
+          <Dialog open={labelmeDialogOpen} onOpenChange={setLabelmeDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <FileJson className="w-4 h-4 mr-2" />
+                Labelme → COCO
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Convert Labelme to COCO</DialogTitle>
+                <DialogDescription>
+                  Convert Labelme format dataset to COCO format with train/val/test split.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleLabelmeConvert}>
+                <div className="grid grid-cols-2 gap-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="lm-name">Dataset Name</Label>
+                    <Input
+                      id="lm-name"
+                      value={labelmeFormData.name}
+                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, name: e.target.value })}
+                      placeholder="My Dataset"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lm-project">Project</Label>
+                    <Select
+                      value={labelmeFormData.projectId}
+                      onValueChange={(value) => setLabelmeFormData({ ...labelmeFormData, projectId: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select project" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {projects.map((project) => (
+                          <SelectItem key={project.id} value={project.id}>
+                            {project.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="lm-description">Description</Label>
+                    <Textarea
+                      id="lm-description"
+                      value={labelmeFormData.description}
+                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, description: e.target.value })}
+                      placeholder="Describe your dataset..."
+                      rows={2}
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="lm-images-path">Labelme Images Path</Label>
+                    <Input
+                      id="lm-images-path"
+                      value={labelmeFormData.labelmeImagesPath}
+                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, labelmeImagesPath: e.target.value })}
+                      placeholder="path/to/labelme/images"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Absolute path or relative to PaddleDetection root
+                    </p>
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="lm-annotations-path">Labelme Annotations Path</Label>
+                    <Input
+                      id="lm-annotations-path"
+                      value={labelmeFormData.labelmeAnnotationsPath}
+                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, labelmeAnnotationsPath: e.target.value })}
+                      placeholder="path/to/labelme/annotations"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Directory containing .json annotation files
+                    </p>
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="lm-output-dir">Output Dataset Directory (Optional)</Label>
+                    <Input
+                      id="lm-output-dir"
+                      value={labelmeFormData.outputDatasetDir}
+                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, outputDatasetDir: e.target.value })}
+                      placeholder="dataset/my_converted_dataset"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Leave empty to auto-generate based on dataset name
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lm-train-ratio">Train Ratio</Label>
+                    <Input
+                      id="lm-train-ratio"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      value={labelmeFormData.trainRatio}
+                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, trainRatio: parseFloat(e.target.value) || 0 })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lm-val-ratio">Val Ratio</Label>
+                    <Input
+                      id="lm-val-ratio"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      value={labelmeFormData.valRatio}
+                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, valRatio: parseFloat(e.target.value) || 0 })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lm-test-ratio">Test Ratio</Label>
+                    <Input
+                      id="lm-test-ratio"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      value={labelmeFormData.testRatio}
+                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, testRatio: parseFloat(e.target.value) || 0 })}
+                      required
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <p className={`text-sm ${Math.abs(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio - 1.0) < 0.001 ? 'text-green-600' : 'text-red-600'}`}>
+                      Sum: {(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio).toFixed(2)} 
+                      {Math.abs(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio - 1.0) < 0.001 ? ' ✓' : ' (must equal 1.0)'}
+                    </p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={converting}>
+                    {converting ? 'Converting...' : 'Convert to COCO'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={dialogOpen} onOpenChange={(open) => {
           setDialogOpen(open)
           if (!open) {
             setEditingDataset(null)
@@ -456,7 +673,7 @@ export function DatasetsPage() {
           </DialogContent>
         </Dialog>
       </div>
-
+    </div>
       {/* Main Content */}
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Dataset List */}

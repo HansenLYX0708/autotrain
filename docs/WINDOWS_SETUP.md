@@ -1,34 +1,48 @@
-# Windows 11 环境安装指南
+# Windows 环境安装指南
 
-本文档介绍如何在 Windows 11 上安装和运行 Auto Training Platform。
+本文档介绍如何在 Windows 上安装和运行 Auto Training Platform。
 
 ## 目录
 
-1. [安装 Node.js](#1-安装-nodejs)
-2. [安装 Bun](#2-安装-bun)
-3. [安装 Python](#3-安装-python)
-4. [安装 PaddlePaddle](#4-安装-paddlepaddle)
-5. [安装 PaddleDetection](#5-安装-paddledetection)
-6. [配置项目](#6-配置项目)
-7. [运行项目](#7-运行项目)
+1. [环境要求](#1-环境要求)
+2. [安装 Node.js](#2-安装-nodejs)
+3. [安装 Bun](#3-安装-bun)
+4. [安装 Python](#4-安装-python)
+5. [安装 PaddlePaddle](#5-安装-paddlepaddle)
+6. [安装 PaddleDetection](#6-安装-paddledetection)
+7. [配置项目](#7-配置项目)
+8. [配置系统路径](#8-配置系统路径)
+9. [运行项目](#9-运行项目)
+10. [常见问题](#10-常见问题)
 
 ---
 
-## 1. 安装 Node.js
+## 1. 环境要求
+
+- Windows 10/11 (64位)
+- 至少 8GB 内存（推荐 16GB）
+- 至少 10GB 可用磁盘空间
+- 可选：NVIDIA GPU（用于 GPU 训练）
+
+---
+
+## 2. 安装 Node.js
+
+项目需要 Node.js 18.x 或更高版本。
 
 ### 方法一：使用官方安装包
 
 1. 访问 [Node.js 官网](https://nodejs.org/)
 2. 下载 **LTS 版本**（推荐 20.x 或更高）
 3. 运行安装程序，按照提示完成安装
-4. 打开 **PowerShell** 或 **命令提示符**，验证安装：
+4. 验证安装：
 
 ```powershell
 node --version
 npm --version
 ```
 
-### 方法二：使用 winget（Windows 包管理器）
+### 方法二：使用 winget（推荐）
 
 ```powershell
 winget install OpenJS.NodeJS.LTS
@@ -36,11 +50,11 @@ winget install OpenJS.NodeJS.LTS
 
 ---
 
-## 2. 安装 Bun
+## 3. 安装 Bun
 
 Bun 是本项目使用的 JavaScript 运行时和包管理器。
 
-### 方法一：使用 PowerShell 安装
+### 方法一：使用 PowerShell 安装（推荐）
 
 ```powershell
 powershell -c "irm bun.sh/install.ps1 | iex"
@@ -60,14 +74,14 @@ bun --version
 
 ---
 
-## 3. 安装 Python
+## 4. 安装 Python
 
-PaddleDetection 需要 Python 3.8-3.12。
+PaddleDetection 需要 Python 3.8-3.12（推荐 3.10）。
 
 ### 方法一：使用官方安装包
 
 1. 访问 [Python 官网](https://www.python.org/downloads/)
-2. 下载 Python 3.10 或 3.11（推荐）
+2. 下载 Python 3.10
 3. **重要**：安装时勾选 **"Add Python to PATH"**
 4. 验证安装：
 
@@ -85,17 +99,16 @@ winget install Python.Python.3.10
 ### 方法三：使用 Anaconda/Miniconda（推荐用于深度学习）
 
 1. 下载 [Miniconda](https://docs.conda.io/en/latest/miniconda.html)
-2. 安装后创建专用环境：
+2. 创建专用环境：
 
 ```powershell
-# 创建新的 conda 环境
 conda create -n paddle python=3.10
 conda activate paddle
 ```
 
 ---
 
-## 4. 安装 PaddlePaddle
+## 5. 安装 PaddlePaddle
 
 ### CPU 版本
 
@@ -105,19 +118,19 @@ pip install paddlepaddle
 
 ### GPU 版本（需要 NVIDIA GPU 和 CUDA）
 
-首先确保已安装：
+前置要求：
 - [NVIDIA 驱动](https://www.nvidia.com/Download/index.aspx)
 - [CUDA Toolkit 11.8 或 12.x](https://developer.nvidia.com/cuda-downloads)
 - [cuDNN](https://developer.nvidia.com/cudnn)
 
-然后安装 GPU 版本：
+安装命令：
 
 ```powershell
 # CUDA 11.8
-pip install paddlepaddle-gpu -i https://mirror.baidu.com/pypi/simple
+pip install paddlepaddle-gpu==2.5.2 -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # CUDA 12.x
-pip install paddlepaddle-gpu -i https://mirror.baidu.com/pypi/simple
+pip install paddlepaddle-gpu==2.6.0 -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 ### 验证安装
@@ -128,42 +141,41 @@ python -c "import paddle; paddle.utils.run_check()"
 
 ---
 
-## 5. 安装 PaddleDetection
+## 6. 安装 PaddleDetection
 
-### 克隆仓库
+### 6.1 克隆仓库
+
+打开 PowerShell，选择一个目录（如 `D:\_work\projects`）：
 
 ```powershell
-# 选择一个目录
 cd D:\_work\projects
 
 # 克隆 PaddleDetection
 git clone https://github.com/PaddlePaddle/PaddleDetection.git
 cd PaddleDetection
+
+# 切换到稳定版本（推荐）
+git checkout release/2.6
 ```
 
-### 安装依赖
+### 6.2 安装依赖
 
 ```powershell
 pip install -r requirements.txt
-pip install pycocotools-windows  # Windows 特定
+pip install pycocotools-windows
 ```
 
-### 编译安装
-
-```powershell
-python setup.py install
-```
-
-### 验证安装
+### 6.3 验证安装
 
 ```powershell
 python -c "import ppdet; print(ppdet.__version__)"
 ```
 
-### 创建必要的配置目录
+### 6.4 创建必要的配置目录
+
+在 PaddleDetection 目录下执行：
 
 ```powershell
-# 在 PaddleDetection 目录下创建 autotrain 配置目录
 mkdir configs\autotrain\jobs
 mkdir configs\autotrain\training\default
 mkdir configs\autotrain\training\user
@@ -172,41 +184,66 @@ mkdir configs\autotrain\models
 
 ---
 
-## 6. 配置项目
+## 7. 配置项目
 
-### 克隆项目
+### 7.1 拷贝项目
 
-```powershell
-git clone https://github.com/HansenLYX0708/autotrain.git
-cd autotrain
-```
-
-### 安装依赖
+### 7.2 安装项目依赖
 
 ```powershell
 bun install
 ```
 
-### 配置数据库
+### 7.3 初始化数据库
 
-项目使用 SQLite，无需额外安装。初始化数据库：
+项目使用 SQLite，无需额外安装。
 
 ```powershell
 bunx prisma generate
 bunx prisma db push
 ```
 
-### 创建环境文件
+### 7.4 创建环境文件
 
-创建 `.env` 文件（如果不存在）：
+在项目根目录创建 `.env.local` 文件：
 
 ```env
 DATABASE_URL="file:./db/custom.db"
+NEXT_PUBLIC_API_URL="http://localhost:3000"
 ```
 
 ---
 
-## 7. 运行项目
+## 8. 配置系统路径
+
+启动项目后，需要在 Web 界面中配置以下路径：
+
+1. 打开浏览器访问 `http://localhost:3000`
+2. 登录系统（首次使用需注册）
+3. 进入 **Settings** 页面
+4. 配置以下路径：
+
+| 配置项 | 示例值 | 说明 |
+|--------|--------|------|
+| Python Path | `C:\Python310\python.exe` | Python 可执行文件路径 |
+| PaddleDetection Path | `D:\_work\projects\PaddleDetection` | PaddleDetection 根目录 |
+| PaddleClas Path | （可选） | 如使用 PaddleClas |
+
+### 路径查找方法
+
+**Python 路径**：
+```powershell
+where python
+# 或
+(Get-Command python).Source
+```
+
+**PaddleDetection 路径**：
+即克隆的 PaddleDetection 文件夹路径，如 `D:\_work\projects\PaddleDetection`
+
+---
+
+## 9. 运行项目
 
 ### 启动开发服务器
 
@@ -216,21 +253,16 @@ bun run dev
 
 项目将在 `http://localhost:3000` 运行。
 
-### 在浏览器中打开
+### 生产环境部署
 
-打开浏览器访问 `http://localhost:3000`
-
-### 配置系统路径
-
-1. 进入 **Settings** 页面
-2. 配置以下路径：
-   - **Python Path**: `C:\Python310\python.exe` 或 conda 环境的 python 路径
-   - **PaddleDetection Path**: `D:\_work\projects\PaddleDetection`
-   - **PaddleClas Path**: （如果使用 PaddleClas）
+```powershell
+bun run build
+bun run start
+```
 
 ---
 
-## 常见问题
+## 10. 常见问题
 
 ### Q1: Bun 安装失败
 
@@ -257,17 +289,13 @@ Windows 上需要使用特殊版本：
 pip install pycocotools-windows
 ```
 
-或：
-```powershell
-pip install pycocotools -f https://dl.fbaipublicfiles.com/detectron2/wheels/index.html
-```
-
 ### Q4: Prisma 命令失败
 
-确保已安装 Prisma CLI：
+确保在项目目录下运行：
 ```powershell
 bun add prisma
 bunx prisma generate
+bunx prisma db push
 ```
 
 ### Q5: 端口被占用
@@ -276,6 +304,13 @@ bunx prisma generate
 ```powershell
 netstat -ano | findstr :3000
 taskkill /PID <PID> /F
+```
+
+### Q6: 提示 "无法加载文件，因为在此系统上禁止运行脚本"
+
+以管理员身份运行 PowerShell，执行：
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
 ---
@@ -288,14 +323,12 @@ D:\_work\projects\
 │   ├── src\
 │   ├── prisma\
 │   ├── db\
+│   ├── docs\
 │   └── ...
 ├── PaddleDetection\        # PaddleDetection
 │   ├── configs\
-│   │   └── autotrain\
-│   │       ├── jobs\
-│   │       ├── training\
-│   │       └── models\
-│   ├── output\
+│   │   └── autotrain\      # 训练配置目录
+│   ├── ppdet\
 │   └── ...
 └── PaddleClas\             # PaddleClas（可选）
 ```
@@ -305,8 +338,9 @@ D:\_work\projects\
 ## 开发工具推荐
 
 1. **VS Code** - 代码编辑器
-   - 扩展：ESLint, Prettier, Prisma, Python
-
+   
+- 推荐扩展：ESLint, Prettier, Prisma, Python
+   
 2. **PowerShell 7** - 更好的终端体验
    ```powershell
    winget install Microsoft.PowerShell
@@ -322,59 +356,3 @@ D:\_work\projects\
    winget install Git.Git
    ```
 
----
-
-## 一键安装脚本
-
-创建 `install.ps1` 文件：
-
-```powershell
-# install.ps1 - Windows 11 环境安装脚本
-
-Write-Host "=== Auto Training Platform 环境安装 ===" -ForegroundColor Green
-
-# 检查 Node.js
-Write-Host "检查 Node.js..." -ForegroundColor Yellow
-if (!(Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "安装 Node.js..." -ForegroundColor Yellow
-    winget install OpenJS.NodeJS.LTS
-} else {
-    Write-Host "Node.js 已安装: $(node --version)" -ForegroundColor Green
-}
-
-# 检查 Bun
-Write-Host "检查 Bun..." -ForegroundColor Yellow
-if (!(Get-Command bun -ErrorAction SilentlyContinue)) {
-    Write-Host "安装 Bun..." -ForegroundColor Yellow
-    powershell -c "irm bun.sh/install.ps1 | iex"
-} else {
-    Write-Host "Bun 已安装: $(bun --version)" -ForegroundColor Green
-}
-
-# 检查 Python
-Write-Host "检查 Python..." -ForegroundColor Yellow
-if (!(Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Host "安装 Python 3.10..." -ForegroundColor Yellow
-    winget install Python.Python.3.10
-} else {
-    Write-Host "Python 已安装: $(python --version)" -ForegroundColor Green
-}
-
-# 安装项目依赖
-Write-Host "安装项目依赖..." -ForegroundColor Yellow
-bun install
-
-# 初始化数据库
-Write-Host "初始化数据库..." -ForegroundColor Yellow
-bunx prisma generate
-bunx prisma db push
-
-Write-Host "`n=== 安装完成 ===" -ForegroundColor Green
-Write-Host "运行 'bun run dev' 启动项目" -ForegroundColor Cyan
-```
-
-运行脚本：
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-.\install.ps1
-```
