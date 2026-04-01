@@ -224,6 +224,7 @@ export async function POST(request: NextRequest) {
       // Create training config in database (no file save for default configs)
       const config = await db.trainingConfig.create({
         data: {
+          projectId: projectId,
           name: name,
           epoch: finalParams.epochs || 100,
           batchSize: finalParams.batchSize || 8,
@@ -277,6 +278,7 @@ export async function POST(request: NextRequest) {
     // Create training config in database with provided params
     const config = await db.trainingConfig.create({
       data: {
+        projectId: projectId,
         name: name,
         epoch: finalParams.epochs || 100,
         batchSize: finalParams.batchSize || 8,
