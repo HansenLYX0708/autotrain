@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireAuth } from "@/lib/auth";
 import * as fs from "fs";
 import * as path from "path";
 
-// GET /api/models/import - List available model configs from configs/autotrain/models/default
+// GET /api/models/import - List available model configs (filtered by user access)
 export async function GET(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId } = auth;
+
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get("projectId");
 
@@ -16,14 +23,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get project to determine framework
-    const project = await db.project.findUnique({
-      where: { id: projectId },
+    // Get project and verify user access
+    const project = await db.project.findFirst({
+      where: { 
+        id: projectId,
+        userId: userId,
+      },
     });
 
     if (!project) {
       return NextResponse.json(
-        { error: "Project not found" },
+        { error: "Project not found or access denied" },
         { status: 404 }
       );
     }
@@ -98,6 +108,12 @@ export async function GET(request: NextRequest) {
 // POST /api/models/import - Import and save model config
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId } = auth;
+
     const body = await request.json();
     const { projectId, name, description, yamlContent, isDefault, configPath } = body;
 
@@ -108,14 +124,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get project to determine framework
-    const project = await db.project.findUnique({
-      where: { id: projectId },
+    // Get project and verify user access
+    const project = await db.project.findFirst({
+      where: { 
+        id: projectId,
+        userId: userId,
+      },
     });
 
     if (!project) {
       return NextResponse.json(
-        { error: "Project not found" },
+        { error: "Project not found or access denied" },
         { status: 404 }
       );
     }
@@ -157,12 +176,13 @@ export async function POST(request: NextRequest) {
     // Parse YAML content to extract model info
     const parsedInfo = parseYamlConfig(yamlContent || "");
 
-    // Create model in database
+    // Create model in database with userId
     const model = await db.model.create({
       data: {
         name: name,
         description: description || null,
         projectId: projectId,
+        userId: userId,
         architecture: parsedInfo.architecture || "YOLOv3",
         backbone: parsedInfo.backbone || "CSPResNet",
         neck: parsedInfo.neck || "CustomCSPPAN",

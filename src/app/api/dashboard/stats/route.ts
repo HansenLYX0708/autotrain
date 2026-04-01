@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireAuth, buildUserFilter } from "@/lib/auth";
 
 interface DashboardStats {
   totalProjects: number;
@@ -23,11 +24,18 @@ interface GpuMetricInfo {
 
 /**
  * GET /api/dashboard/stats
- * Returns aggregated dashboard statistics.
+ * Returns aggregated dashboard statistics filtered by user access.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    // Execute all count queries in parallel for better performance
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId, role } = auth;
+
+    // Build user filter for regular users (admin sees all)
+    const userFilter = role === 'admin' ? {} : { userId: userId };
     const [
       projectsCount,
       datasetsCount,
@@ -38,29 +46,48 @@ export async function GET() {
       failedJobsCount,
       latestGpuMetrics,
     ] = await Promise.all([
-      // Total projects count
+      // Total projects count (filtered by user)
       db.project.count({
-        where: { status: "active" },
+        where: { 
+          status: "active",
+          ...userFilter,
+        },
       }),
-      // Total datasets count
-      db.dataset.count(),
-      // Total models count
-      db.model.count(),
-      // Running training jobs count
-      db.trainingJob.count({
-        where: { status: "running" },
+      // Total datasets count (filtered by user)
+      db.dataset.count({
+        where: userFilter,
       }),
-      // Completed training jobs count
-      db.trainingJob.count({
-        where: { status: "completed" },
+      // Total models count (filtered by user)
+      db.model.count({
+        where: userFilter,
       }),
-      // Pending training jobs count
+      // Running training jobs count (filtered by user)
       db.trainingJob.count({
-        where: { status: "pending" },
+        where: { 
+          status: "running",
+          ...userFilter,
+        },
       }),
-      // Failed training jobs count
+      // Completed training jobs count (filtered by user)
       db.trainingJob.count({
-        where: { status: "failed" },
+        where: { 
+          status: "completed",
+          ...userFilter,
+        },
+      }),
+      // Pending training jobs count (filtered by user)
+      db.trainingJob.count({
+        where: { 
+          status: "pending",
+          ...userFilter,
+        },
+      }),
+      // Failed training jobs count (filtered by user)
+      db.trainingJob.count({
+        where: { 
+          status: "failed",
+          ...userFilter,
+        },
       }),
       // Get latest GPU metrics for each GPU
       db.gpuMetric.groupBy({

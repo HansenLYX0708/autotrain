@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireAuth, buildUserFilter } from "@/lib/auth";
 
-// GET /api/models - Get all models with project info
+// GET /api/models - Get all models with project info (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId, role } = auth;
+
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get("projectId");
 
-    const where = projectId ? { projectId } : {};
+    // Build where clause with user filter
+    const userFilter = buildUserFilter(userId, role, 'userId');
+    const where: Record<string, unknown> = { ...userFilter };
+
+    if (projectId) {
+      where.projectId = projectId;
+    }
 
     const models = await db.model.findMany({
       where,
@@ -45,6 +58,12 @@ export async function GET(request: NextRequest) {
 // POST /api/models - Create a new model
 export async function POST(request: Request) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request as NextRequest);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId } = auth;
+    
     const body = await request.json();
 
     const {
@@ -76,16 +95,19 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check if project exists
-    const project = await db.project.findUnique({
-      where: { id: projectId },
+    // Check if project exists and user has access
+    const project = await db.project.findFirst({
+      where: { 
+        id: projectId,
+        userId: userId,
+      },
     });
 
     if (!project) {
       return NextResponse.json(
         {
           success: false,
-          error: "Project not found",
+          error: "Project not found or access denied",
         },
         { status: 404 }
       );
@@ -96,6 +118,7 @@ export async function POST(request: Request) {
         name,
         description,
         projectId,
+        userId,
         architecture,
         backbone,
         neck,

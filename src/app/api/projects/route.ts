@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, buildUserFilter } from '@/lib/auth';
 
-// GET /api/projects - Get all projects with counts
-export async function GET() {
+// GET /api/projects - Get all projects with counts (filtered by user for non-admins)
+export async function GET(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId, role } = auth;
+    const whereClause = buildUserFilter(userId, role, 'userId');
+
     const projects = await db.project.findMany({
+      where: whereClause,
       orderBy: {
         createdAt: 'desc',
       },
@@ -38,6 +47,12 @@ export async function GET() {
 // POST /api/projects - Create a new project
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId } = auth;
+
     const body = await request.json();
     const { name, description, framework } = body;
 
@@ -69,13 +84,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create the project
+    // Create the project with userId
     const project = await db.project.create({
       data: {
         name: name.trim(),
         description: description?.trim() || null,
         framework: framework || 'PaddleDetection',
         status: 'active',
+        userId: userId,
       },
       include: {
         _count: {

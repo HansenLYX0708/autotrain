@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireAuth } from "@/lib/auth";
 import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "yaml";
@@ -73,9 +74,15 @@ function parseTrainingYaml(yamlContent: string) {
   }
 }
 
-// GET /api/training-configs/import - List available training configs
+// GET /api/training-configs/import - List available training configs (filtered by user access)
 export async function GET(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId } = auth;
+
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get("projectId");
 
@@ -86,14 +93,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get project to determine framework
-    const project = await db.project.findUnique({
-      where: { id: projectId },
+    // Get project and verify user access
+    const project = await db.project.findFirst({
+      where: { 
+        id: projectId,
+        userId: userId,
+      },
     });
 
     if (!project) {
       return NextResponse.json(
-        { error: "Project not found" },
+        { error: "Project not found or access denied" },
         { status: 404 }
       );
     }
@@ -168,6 +178,12 @@ export async function GET(request: NextRequest) {
 // POST /api/training-configs/import - Import and save training config
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId } = auth;
+
     const body = await request.json();
     const { projectId, name, description, yamlContent, isDefault, configPath, trainingParams } = body;
 
@@ -178,14 +194,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get project to determine framework
-    const project = await db.project.findUnique({
-      where: { id: projectId },
+    // Get project and verify user access
+    const project = await db.project.findFirst({
+      where: { 
+        id: projectId,
+        userId: userId,
+      },
     });
 
     if (!project) {
       return NextResponse.json(
-        { error: "Project not found" },
+        { error: "Project not found or access denied" },
         { status: 404 }
       );
     }
@@ -221,10 +240,11 @@ export async function POST(request: NextRequest) {
 
     // If importing default config, use existing path but still create db record
     if (isDefault) {
-      // Create training config in database (no file save for default configs)
+      // Create training config in database with userId (no file save for default configs)
       const config = await db.trainingConfig.create({
         data: {
           projectId: projectId,
+          userId: userId,
           name: name,
           epoch: finalParams.epochs || 100,
           batchSize: finalParams.batchSize || 8,
@@ -275,10 +295,11 @@ export async function POST(request: NextRequest) {
       savedConfigPath = `configs/autotrain/training/user/${fileName}`;
     }
 
-    // Create training config in database with provided params
+    // Create training config in database with userId
     const config = await db.trainingConfig.create({
       data: {
         projectId: projectId,
+        userId: userId,
         name: name,
         epoch: finalParams.epochs || 100,
         batchSize: finalParams.batchSize || 8,

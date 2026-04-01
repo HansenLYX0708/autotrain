@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, buildUserFilter } from '@/lib/auth';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -88,13 +89,25 @@ num_classes: ${dataset.numClasses}
   return yaml;
 }
 
-// GET /api/datasets - Get all datasets with project info
+// GET /api/datasets - Get all datasets with project info (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId, role } = auth;
+
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get('projectId');
 
-    const where = projectId ? { projectId } : {};
+    // Build where clause with user filter
+    const userFilter = buildUserFilter(userId, role, 'userId');
+    const where: Record<string, unknown> = { ...userFilter };
+    
+    if (projectId) {
+      where.projectId = projectId;
+    }
 
     const datasets = await db.dataset.findMany({
       where,
@@ -133,6 +146,12 @@ export async function GET(request: NextRequest) {
 // POST /api/datasets - Create a new dataset
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId } = auth;
+    
     const body = await request.json();
 
     // Validate required fields
@@ -147,17 +166,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if project exists and get PaddleDetection path
-    const project = await db.project.findUnique({
-      where: { id: body.projectId },
+    // Check if project exists and user has access
+    const project = await db.project.findFirst({
+      where: { 
+        id: body.projectId,
+        userId: userId,
+      },
     });
 
     if (!project) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Project not found',
-          message: `Project with id ${body.projectId} does not exist`,
+          error: 'Project not found or access denied',
+          message: `Project with id ${body.projectId} does not exist or you don't have access`,
         },
         { status: 404 }
       );
@@ -181,12 +203,13 @@ export async function POST(request: NextRequest) {
     
     const yamlConfig = generateDatasetYaml(datasetData);
 
-    // Create dataset in database
+    // Create dataset in database with userId
     const dataset = await db.dataset.create({
       data: {
         name: body.name,
         description: body.description || null,
         projectId: body.projectId,
+        userId: userId,
         format: body.format || 'COCO',
         trainImagePath: body.trainImagePath || null,
         trainAnnoPath: body.trainAnnoPath || null,

@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireAuth, buildUserFilter } from "@/lib/auth";
 import * as fs from "fs";
 import * as path from "path";
 
-// GET /api/training-jobs - Get all training jobs with relations
+// GET /api/training-jobs - Get all training jobs with relations (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId, role } = auth;
+
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "5"); // Default to 5 records
+    const limit = parseInt(searchParams.get("limit") || "5");
     const skip = (page - 1) * limit;
     const status = searchParams.get("status");
     const projectId = searchParams.get("projectId");
@@ -16,7 +23,10 @@ export async function GET(request: NextRequest) {
     const modelId = searchParams.get("modelId");
     const configId = searchParams.get("configId");
 
-    const where: Record<string, unknown> = {};
+    // Build where clause with user filter
+    const userFilter = buildUserFilter(userId, role, 'userId');
+    const where: Record<string, unknown> = { ...userFilter };
+
     if (status) {
       where.status = status;
     }
@@ -96,34 +106,79 @@ export async function GET(request: NextRequest) {
 // POST /api/training-jobs - Create a new training job
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId, role } = auth;
+    
     const body = await request.json();
 
-    // Validate required relations
+    // Validate required relations and user access
+    // Admin can access any project/dataset/model, regular user can only access their own
     const [project, dataset, model, trainingConfig] = await Promise.all([
-      db.project.findUnique({ where: { id: body.projectId } }),
-      db.dataset.findUnique({ where: { id: body.datasetId } }),
-      db.model.findUnique({ where: { id: body.modelId } }),
-      body.configId ? db.trainingConfig.findUnique({ 
-        where: { id: body.configId },
-        select: {
-          id: true,
-          name: true,
-          epoch: true,
-          batchSize: true,
-          baseLr: true,
-          yamlConfig: true,
-        }
-      }) : null,
+      role === 'admin' 
+        ? db.project.findUnique({ where: { id: body.projectId } })
+        : db.project.findFirst({ 
+            where: { 
+              id: body.projectId,
+              userId: userId,
+            } 
+          }),
+      role === 'admin'
+        ? db.dataset.findUnique({ where: { id: body.datasetId } })
+        : db.dataset.findFirst({ 
+            where: { 
+              id: body.datasetId,
+              userId: userId,
+            } 
+          }),
+      role === 'admin'
+        ? db.model.findUnique({ where: { id: body.modelId } })
+        : db.model.findFirst({ 
+            where: { 
+              id: body.modelId,
+              userId: userId,
+            } 
+          }),
+      body.configId 
+        ? (role === 'admin'
+            ? db.trainingConfig.findUnique({ 
+                where: { id: body.configId },
+                select: {
+                  id: true,
+                  name: true,
+                  epoch: true,
+                  batchSize: true,
+                  baseLr: true,
+                  yamlConfig: true,
+                }
+              })
+            : db.trainingConfig.findFirst({ 
+                where: { 
+                  id: body.configId,
+                  userId: userId,
+                },
+                select: {
+                  id: true,
+                  name: true,
+                  epoch: true,
+                  batchSize: true,
+                  baseLr: true,
+                  yamlConfig: true,
+                }
+              }))
+        : null,
     ]);
 
     if (!project) {
-      return NextResponse.json({ error: "Project not found" }, { status: 400 });
+      return NextResponse.json({ error: "Project not found or access denied" }, { status: 400 });
     }
     if (!dataset) {
-      return NextResponse.json({ error: "Dataset not found" }, { status: 400 });
+      return NextResponse.json({ error: "Dataset not found or access denied" }, { status: 400 });
     }
     if (!model) {
-      return NextResponse.json({ error: "Model not found" }, { status: 400 });
+      return NextResponse.json({ error: "Model not found or access denied" }, { status: 400 });
     }
 
     // Get system config for PaddleDetection path
@@ -198,13 +253,14 @@ export async function POST(request: NextRequest) {
     // Generate infer command (for single image inference)
     const inferCommand = `python tools/infer.py -c ${configPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
 
-    // Create job in database
+    // Create job in database with userId
     const job = await db.trainingJob.create({
       data: {
         projectId: body.projectId,
         datasetId: body.datasetId,
         modelId: body.modelId,
         configId: body.configId || null,
+        userId: userId,
         name: body.name,
         status: 'pending',
         command: command,

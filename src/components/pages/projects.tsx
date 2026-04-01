@@ -121,13 +121,23 @@ export function ProjectsPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this project? All related data will be deleted.')) {
+  const handleDelete = async (project: Project) => {
+    const relatedData = [
+      project._count?.datasets ? `${project._count.datasets} 个数据集` : null,
+      project._count?.models ? `${project._count.models} 个模型` : null,
+      project._count?.trainingJobs ? `${project._count.trainingJobs} 个训练任务` : null,
+    ].filter(Boolean)
+
+    const warningMessage = relatedData.length > 0
+      ? `此项目包含以下数据:\n${relatedData.map(item => `• ${item}`).join('\n')}\n\n删除此项目将同时永久删除所有相关数据，此操作无法撤销。是否确认删除？`
+      : '确定要删除此项目吗？此操作无法撤销。'
+
+    if (!confirm(warningMessage)) {
       return
     }
     
     try {
-      const response = await fetch(`/api/projects/${id}`, {
+      const response = await fetch(`/api/projects/${project.id}`, {
         method: 'DELETE',
       })
       if (response.ok) {
@@ -292,7 +302,7 @@ export function ProjectsPage() {
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className="text-destructive"
-                        onClick={() => handleDelete(project.id)}
+                        onClick={() => handleDelete(project)}
                       >
                         <Trash2 className="w-4 h-4 mr-2" />
                         Delete

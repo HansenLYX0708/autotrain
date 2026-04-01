@@ -10,7 +10,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// System Configuration
+// User Account
+model User {
+  id          String   @id @default(cuid())
+  username    String   @unique
+  password    String   // Hashed password
+  role        String   @default("user") // admin, user
+  status      String   @default("active") // active, disabled
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  projects        Project[]
+  datasets      Dataset[]
+  models        Model[]
+  trainingConfigs TrainingConfig[]
+  trainingJobs  TrainingJob[]
+  validationJobs ValidationJob[]
+}
 model SystemConfig {
   id                    String   @id @default(cuid())
   pythonPath            String?
@@ -39,6 +55,8 @@ model Project {
   trainingConfigs TrainingConfig[]
   trainingJobs    TrainingJob[]
   validationJobs  ValidationJob[]
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 // Dataset
@@ -69,6 +87,9 @@ model Dataset {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
   project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   trainingJobs  TrainingJob[]
 }
@@ -97,8 +118,10 @@ model Model {
   // Pretrained weights
   pretrainWeights String?
   
-  // Full YAML config (for advanced editing)
   yamlConfig    String?
+  
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -143,8 +166,10 @@ model TrainingConfig {
   // Pretrained weights
   pretrainWeights String?
 
-  // YAML config (for imported configs)
   yamlConfig  String?
+  
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -191,6 +216,9 @@ model TrainingJob {
   
   // YAML configuration
   yamlConfig   String?
+  
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   
   // Timing
   startedAt     DateTime?
@@ -267,6 +295,9 @@ model ValidationJob {
   
   // Logs
   outputLog   String?  // Captured stdout/stderr
+  
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   
   startedAt   DateTime?
   completedAt DateTime?

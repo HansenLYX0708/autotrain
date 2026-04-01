@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, buildUserFilter } from '@/lib/auth';
 import { spawn } from 'child_process';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join, basename, extname } from 'path';
@@ -62,19 +63,23 @@ function findInferenceImages(outputDir: string): string[] {
   return images;
 }
 
-// GET /api/validation-jobs - Get all validation jobs with project relation
+// GET /api/validation-jobs - Get all validation jobs with project relation (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId, role } = auth;
+
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get('projectId');
     const status = searchParams.get('status');
     const type = searchParams.get('type');
 
-    const where: {
-      projectId?: string;
-      status?: string;
-      type?: string;
-    } = {};
+    // Build where clause with user filter
+    const userFilter = buildUserFilter(userId, role, 'userId');
+    const where: Record<string, unknown> = { ...userFilter };
 
     if (projectId) {
       where.projectId = projectId;
@@ -119,6 +124,12 @@ export async function GET(request: NextRequest) {
 // POST /api/validation-jobs - Create and optionally run a validation job
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { userId, role } = auth;
+    
     const body = await request.json();
 
     // Validate required fields
@@ -145,14 +156,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if project exists
-    const project = await db.project.findUnique({
-      where: { id: body.projectId },
-    });
+    // Check if project exists and user has access
+    // Admin can access any project, regular user can only access their own
+    const project = role === 'admin'
+      ? await db.project.findUnique({ where: { id: body.projectId } })
+      : await db.project.findFirst({
+          where: { 
+            id: body.projectId,
+            userId: userId,
+          },
+        });
 
     if (!project) {
       return NextResponse.json(
-        { success: false, error: 'Project not found' },
+        { success: false, error: 'Project not found or access denied' },
         { status: 404 }
       );
     }
@@ -186,11 +203,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create validation job
+    // Create validation job with userId
     const validationJob = await db.validationJob.create({
       data: {
         projectId: body.projectId,
         trainingJobId: body.trainingJobId || null,
+        userId: userId,
         name: body.name,
         type: body.type || 'eval',
         configPath: body.configPath || null,

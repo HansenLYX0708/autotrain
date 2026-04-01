@@ -14,15 +14,16 @@ import {
   Settings,
   Moon,
   Sun,
-  Bell,
-  Search,
   Bot,
   ChevronLeft,
   ChevronRight,
   PencilRuler,
+  Users,
+  User,
+  LogOut,
+  Lock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   Tooltip,
@@ -34,9 +35,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useTheme } from 'next-themes'
+import { useAuth } from '@/contexts/auth-context'
+import { LoginPage } from '@/components/pages/login'
 import { DashboardPage } from '@/components/pages/dashboard'
 import { ProjectsPage } from '@/components/pages/projects'
 import { DatasetsPage } from '@/components/pages/datasets'
@@ -47,53 +51,20 @@ import { MonitoringPage } from '@/components/pages/monitoring'
 import { ValidationPage } from '@/components/pages/validation'
 import { SettingsPage } from '@/components/pages/settings'
 import { AnnotationPage } from '@/components/pages/annotation'
+import { UserManagementPage } from '@/components/pages/users'
+import { ChangePasswordDialog } from '@/components/change-password-dialog'
+import { AuthProvider } from '@/contexts/auth-context'
 
 const navigation = [
-  {
-    id: 'dashboard',
-    name: 'Dashboard',
-    icon: LayoutDashboard,
-  },
-  {
-    id: 'projects',
-    name: 'Projects',
-    icon: FolderKanban,
-  },
-  {
-    id: 'datasets',
-    name: 'Datasets',
-    icon: Database,
-  },
-  {
-    id: 'models',
-    name: 'Models',
-    icon: Cpu,
-  },
-  {
-    id: 'training',
-    name: 'Configurations',
-    icon: PlayCircle,
-  },
-  {
-    id: 'jobs',
-    name: 'Jobs',
-    icon: ListTodo,
-  },
-  {
-    id: 'monitoring',
-    name: 'Monitoring',
-    icon: Activity,
-  },
-  {
-    id: 'validation',
-    name: 'Validation',
-    icon: CheckCircle2,
-  },
-  {
-    id: 'annotation',
-    name: 'Annotation',
-    icon: PencilRuler,
-  },
+  { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
+  { id: 'projects', name: 'Projects', icon: FolderKanban },
+  { id: 'datasets', name: 'Datasets', icon: Database },
+  { id: 'models', name: 'Models', icon: Cpu },
+  { id: 'training', name: 'Configurations', icon: PlayCircle },
+  { id: 'jobs', name: 'Jobs', icon: ListTodo },
+  { id: 'monitoring', name: 'Monitoring', icon: Activity },
+  { id: 'validation', name: 'Validation', icon: CheckCircle2 },
+  { id: 'annotation', name: 'Annotation', icon: PencilRuler },
 ]
 
 const pageComponents: Record<string, React.ComponentType> = {
@@ -106,19 +77,48 @@ const pageComponents: Record<string, React.ComponentType> = {
   monitoring: MonitoringPage,
   validation: ValidationPage,
   annotation: AnnotationPage,
+  settings: SettingsPage,
+  users: UserManagementPage,
 }
 
-export default function Home() {
+function AppContent() {
   const [currentPage, setCurrentPage] = useState('dashboard')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const { setTheme, theme } = useTheme()
-  
-  // Use useSyncExternalStore to avoid setState in effect
+  const { user, isLoading, isAuthenticated, logout } = useAuth()
+
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
     () => false
   )
+
+  // Show loading while checking auth
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center animate-pulse">
+            <Bot className="w-5 h-5 text-primary-foreground" />
+          </div>
+          <span className="text-lg font-semibold">Loading...</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage />
+  }
+
+  const isAdmin = user?.role === 'admin'
+
+  // Add user management for admin
+  const allNavigation = isAdmin
+    ? [...navigation, { id: 'users', name: 'User Management', icon: Users }]
+    : navigation
 
   const PageComponent = pageComponents[currentPage]
 
@@ -146,9 +146,9 @@ export default function Home() {
 
           {/* Navigation */}
           <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-            {navigation.map((item) => {
+            {allNavigation.map((item) => {
               const isActive = currentPage === item.id
-              
+
               return (
                 <Tooltip key={item.id}>
                   <TooltipTrigger asChild>
@@ -225,15 +225,22 @@ export default function Home() {
           {/* Header */}
           <header className="h-16 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-30 shrink-0">
             <div className="flex items-center justify-between h-full px-6">
-              {/* Search */}
-              <div className="flex items-center gap-4 flex-1 max-w-md">
-                <div className="relative w-full">
-
-                </div>
+              {/* Page Title */}
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-semibold capitalize">
+                  {allNavigation.find(n => n.id === currentPage)?.name || 'Settings'}
+                </h1>
               </div>
 
               {/* Right side */}
               <div className="flex items-center gap-3">
+                {/* User Role Badge */}
+                {isAdmin && (
+                  <Badge variant="default" className="bg-primary/20 text-primary border-primary/30">
+                    Admin
+                  </Badge>
+                )}
+
                 {/* Status indicator */}
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -241,7 +248,6 @@ export default function Home() {
                     System Ready
                   </span>
                 </div>
-
 
                 {/* Theme toggle */}
                 {mounted && (
@@ -268,13 +274,40 @@ export default function Home() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
+
+                {/* User Menu */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="rounded-full">
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                        <User className="w-4 h-4 text-primary" />
+                      </div>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <div className="px-3 py-2">
+                      <p className="text-sm font-medium">{user?.username}</p>
+                      <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
+                    </div>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
+                      <Lock className="mr-2 h-4 w-4" />
+                      Change Password
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Logout
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           </header>
 
           {/* Page Content */}
           <main className="flex-1 p-6 overflow-auto">
-            {currentPage === 'settings' ? <SettingsPage /> : <PageComponent />}
+            {PageComponent && <PageComponent />}
           </main>
 
           {/* Footer */}
@@ -288,6 +321,17 @@ export default function Home() {
           </footer>
         </div>
       </div>
+
+      {/* Change Password Dialog */}
+      <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
     </TooltipProvider>
+  )
+}
+
+export default function Home() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   )
 }
