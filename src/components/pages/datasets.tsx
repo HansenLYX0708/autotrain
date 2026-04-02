@@ -54,6 +54,7 @@ import {
   Filter,
   X,
   FileJson,
+  Eye,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import {
@@ -90,6 +91,27 @@ interface Dataset {
   }
 }
 
+interface SampleImage {
+  id: number
+  fileName: string
+  width: number
+  height: number
+  imagePath: string
+  annotations: {
+    id: number
+    categoryId: number
+    categoryName: string
+    bbox: number[]
+    area: number
+  }[]
+}
+
+interface Category {
+  id: number
+  name: string
+  supercategory?: string
+}
+
 const chartConfig = {
   count: {
     label: "Annotations",
@@ -123,6 +145,12 @@ export function DatasetsPage() {
   const [parsing, setParsing] = useState(false)
   const [detectingClasses, setDetectingClasses] = useState(false)
   const [filterProjectId, setFilterProjectId] = useState<string>('__all__')
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewSamples, setPreviewSamples] = useState<SampleImage[]>([])
+  const [previewCategories, setPreviewCategories] = useState<Category[]>([])
+  const [selectedCategory, setSelectedCategory] = useState<string>('__all__')
+  const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -379,6 +407,54 @@ export function DatasetsPage() {
     const matchesProject = filterProjectId === '__all__' || dataset.projectId === filterProjectId
     return matchesSearch && matchesProject
   })
+
+  const fetchSamples = async (categoryId?: string) => {
+    if (!selectedDataset) return
+    
+    setPreviewLoading(true)
+    try {
+      const url = new URL('/api/datasets/samples', window.location.origin)
+      url.searchParams.append('datasetId', selectedDataset.id)
+      url.searchParams.append('limit', '50')
+      if (categoryId && categoryId !== '__all__') {
+        url.searchParams.append('categoryId', categoryId)
+      }
+      
+      const response = await fetch(url.toString())
+      const result = await response.json()
+      
+      if (result.success) {
+        setPreviewSamples(result.data.samples)
+        setPreviewCategories(result.data.categories)
+        setCurrentImageIndex(0)
+      } else {
+        toast({
+          title: 'Failed to load samples',
+          description: result.error || 'Could not load dataset samples',
+          variant: 'destructive',
+        })
+      }
+    } catch (error) {
+      console.error('Error fetching samples:', error)
+      toast({
+        title: 'Error loading samples',
+        variant: 'destructive',
+      })
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const openPreview = () => {
+    setPreviewDialogOpen(true)
+    setSelectedCategory('__all__')
+    fetchSamples()
+  }
+
+  const handleCategoryChange = (categoryId: string) => {
+    setSelectedCategory(categoryId)
+    fetchSamples(categoryId)
+  }
 
   const resetFilter = () => {
     setFilterProjectId('__all__')
@@ -938,6 +1014,17 @@ export function DatasetsPage() {
                     {parsing ? 'Parsing...' : 'Parse Dataset Statistics'}
                   </Button>
 
+                  {/* Preview Samples Button */}
+                  <Button 
+                    variant="outline" 
+                    className="w-full"
+                    onClick={openPreview}
+                    disabled={previewLoading}
+                  >
+                    <Eye className="w-4 h-4 mr-2" />
+                    {previewLoading ? 'Loading...' : 'Preview Samples'}
+                  </Button>
+
                   {/* Download Chart */}
                   <Button variant="outline" className="w-full">
                     <Download className="w-4 h-4 mr-2" />
@@ -956,6 +1043,118 @@ export function DatasetsPage() {
           </Card>
         </div>
       </div>
+
+      {/* Preview Samples Dialog */}
+      <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ImageIcon className="w-5 h-5" />
+              Sample Preview - {selectedDataset?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Preview dataset images with annotations. Select a category to filter samples.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex items-center gap-4 py-2">
+            <Label htmlFor="category-filter">Filter by Category:</Label>
+            <Select
+              value={selectedCategory}
+              onValueChange={handleCategoryChange}
+            >
+              <SelectTrigger className="w-[200px]" id="category-filter">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Categories</SelectItem>
+                {previewCategories.map((cat) => (
+                  <SelectItem key={cat.id} value={String(cat.id)}>
+                    {cat.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-sm text-muted-foreground">
+              {previewSamples.length} images
+            </span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto py-4">
+            {previewLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-muted-foreground">Loading samples...</span>
+              </div>
+            ) : previewSamples.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <ImageIcon className="w-12 h-12 text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No samples found for the selected category</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {previewSamples.map((sample, index) => (
+                  <Card key={sample.id} className="overflow-hidden">
+                    <div className="relative aspect-square bg-muted">
+                      <img
+                        src={`/api/datasets/image?path=${encodeURIComponent(sample.imagePath)}`}
+                        alt={sample.fileName}
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none'
+                        }}
+                      />
+                      {/* Annotation overlays */}
+                      <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                        {sample.annotations.map((ann, annIndex) => (
+                          <g key={ann.id}>
+                            <rect
+                              x={(ann.bbox[0] / sample.width) * 100 + '%'}
+                              y={(ann.bbox[1] / sample.height) * 100 + '%'}
+                              width={(ann.bbox[2] / sample.width) * 100 + '%'}
+                              height={(ann.bbox[3] / sample.height) * 100 + '%'}
+                              fill="none"
+                              stroke="#ef4444"
+                              strokeWidth="2"
+                            />
+                          </g>
+                        ))}
+                      </svg>
+                      {/* Annotation count badge */}
+                      <Badge className="absolute top-2 right-2 bg-primary/80">
+                        {sample.annotations.length} annotations
+                      </Badge>
+                    </div>
+                    <CardContent className="p-2">
+                      <p className="text-xs truncate text-muted-foreground" title={sample.fileName}>
+                        {sample.fileName}
+                      </p>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {Array.from(new Set(sample.annotations.map(a => a.categoryName))).slice(0, 3).map((catName, i) => (
+                          <Badge key={i} variant="secondary" className="text-[10px]">
+                            {catName}
+                          </Badge>
+                        ))}
+                        {new Set(sample.annotations.map(a => a.categoryName)).size > 3 && (
+                          <Badge variant="secondary" className="text-[10px]">
+                            +{new Set(sample.annotations.map(a => a.categoryName)).size - 3}
+                          </Badge>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPreviewDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
