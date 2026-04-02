@@ -596,8 +596,8 @@ export function JobsPage() {
                           onValueChange={(value) => setFormData({ ...formData, datasetId: value })}
                           disabled={!formData.projectId}
                         >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select dataset" />
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select dataset" className="truncate" />
                           </SelectTrigger>
                           <SelectContent>
                             {datasets.map((dataset) => (
@@ -615,8 +615,8 @@ export function JobsPage() {
                           onValueChange={(value) => setFormData({ ...formData, modelId: value })}
                           disabled={!formData.projectId}
                         >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select model" />
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select model" className="truncate" />
                           </SelectTrigger>
                           <SelectContent>
                             {models.map((model) => (
@@ -634,8 +634,8 @@ export function JobsPage() {
                           onValueChange={(value) => setFormData({ ...formData, configId: value })}
                           disabled={!formData.projectId}
                         >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select config (optional)" />
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select config (optional)" className="truncate" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">None</SelectItem>
