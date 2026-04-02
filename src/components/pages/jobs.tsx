@@ -659,45 +659,37 @@ export function JobsPage() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="gpuIds">GPU IDs</Label>
-                        {gpus.length === 0 ? (
-                          <Input
-                            id="gpuIds"
-                            value={formData.gpuIds}
-                            onChange={(e) => setFormData({ ...formData, gpuIds: e.target.value })}
-                            placeholder="0,1,2,3"
-                          />
-                        ) : (
-                          <Select
-                            value={formData.gpuIds}
-                            onValueChange={(value) => setFormData({ ...formData, gpuIds: value })}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Select GPU(s)" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {gpus.map((gpu) => {
-                                const isIdle = gpu.status === 'idle'
-                                return (
-                                  <SelectItem 
-                                    key={gpu.id} 
-                                    value={String(gpu.id)}
-                                    disabled={!isIdle}
-                                  >
-                                    <div className="flex items-center justify-between w-full gap-4">
-                                      <span>GPU {gpu.id} - {gpu.name || 'Unknown'}</span>
-                                      <Badge 
-                                        variant={gpu.status === 'idle' ? 'secondary' : 'destructive'} 
-                                        className="text-[10px]"
-                                      >
-                                        {gpu.status === 'idle' ? 'Idle' : 'Occupied'}
-                                      </Badge>
-                                    </div>
-                                  </SelectItem>
-                                )
-                              })}
-                            </SelectContent>
-                          </Select>
-                        )}
+                        <Select
+                          value={formData.gpuIds}
+                          onValueChange={(value) => setFormData({ ...formData, gpuIds: value })}
+                          disabled={gpus.length === 0}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder={gpus.length === 0 ? "No GPUs available" : "Select GPU"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {gpus.map((gpu) => {
+                              const isIdle = gpu.status === 'idle'
+                              return (
+                                <SelectItem 
+                                  key={gpu.id} 
+                                  value={String(gpu.id)}
+                                  disabled={!isIdle}
+                                >
+                                  <div className="flex items-center justify-between w-full gap-4">
+                                    <span>GPU {gpu.id} - {gpu.name || 'Unknown'}</span>
+                                    <Badge 
+                                      variant={gpu.status === 'idle' ? 'secondary' : 'destructive'} 
+                                      className="text-[10px]"
+                                    >
+                                      {gpu.status === 'idle' ? 'Idle' : 'Occupied'}
+                                    </Badge>
+                                  </div>
+                                </SelectItem>
+                              )
+                            })}
+                          </SelectContent>
+                        </Select>
                         <p className="text-xs text-muted-foreground">
                           Select GPU for training (Occupied GPUs are disabled)
                         </p>
