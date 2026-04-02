@@ -327,12 +327,18 @@ export async function POST(request: NextRequest) {
     // Calculate statistics
     const totalAnnotations = trainData.annotationCount + valData.annotationCount + testData.annotationCount;
     const classDistribution: Record<string, number> = {};
+    const classImageDistribution: Record<string, Set<number>> = {};
     
-    [trainData.annotations, valData.annotations, testData.annotations].forEach(annos => {
-      annos.forEach(anno => {
+    [trainData, valData, testData].forEach((splitData, splitIndex) => {
+      const imageIdOffset = splitIndex * 1000000; // Offset to distinguish splits
+      splitData.annotations.forEach((anno, idx) => {
         const catName = Array.from(categories.entries()).find(([, id]) => id === anno.category_id)?.[0];
         if (catName) {
           classDistribution[catName] = (classDistribution[catName] || 0) + 1;
+          if (!classImageDistribution[catName]) {
+            classImageDistribution[catName] = new Set();
+          }
+          classImageDistribution[catName].add(anno.image_id + imageIdOffset);
         }
       });
     });
@@ -341,6 +347,7 @@ export async function POST(request: NextRequest) {
       name,
       id,
       count: classDistribution[name] || 0,
+      imageCount: classImageDistribution[name]?.size || 0,
     }));
 
     // Create dataset record in database

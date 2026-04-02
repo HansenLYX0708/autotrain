@@ -19,6 +19,10 @@ import {
   AlertCircle,
   RefreshCw,
   Monitor,
+  CheckCircle,
+  XCircle,
+  Terminal,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   ChartConfig,
@@ -47,6 +51,22 @@ interface SystemConfig {
   pythonPath: string
   paddleDetectionPath: string
   paddleClasPath: string
+}
+
+interface EnvironmentCheck {
+  python: {
+    exists: boolean
+    version: string | null
+    isValid: boolean
+    error?: string
+  }
+  paddleDetection: {
+    exists: boolean
+    version: string | null
+    isValid: boolean
+    error?: string
+  }
+  allValid: boolean
 }
 
 const chartConfig = {
@@ -79,6 +99,8 @@ export function DashboardPage() {
   const [gpuHistory, setGpuHistory] = useState<{ time: string; gpu: number; memory: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [gpuLoading, setGpuLoading] = useState(true)
+  const [environmentCheck, setEnvironmentCheck] = useState<EnvironmentCheck | null>(null)
+  const [envCheckLoading, setEnvCheckLoading] = useState(false)
 
   // Fetch GPU info
   const fetchGpuInfo = async () => {
@@ -152,8 +174,27 @@ export function DashboardPage() {
       }
     }
 
+    // Fetch environment check
+    const fetchEnvironmentCheck = async () => {
+      setEnvCheckLoading(true)
+      try {
+        const response = await fetch('/api/system/environment-check')
+        if (response.ok) {
+          const result = await response.json()
+          if (result.success && result.data) {
+            setEnvironmentCheck(result.data)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch environment check:', error)
+      } finally {
+        setEnvCheckLoading(false)
+      }
+    }
+
     fetchStats()
     fetchConfig()
+    fetchEnvironmentCheck()
     fetchGpuInfo()
 
     // Poll GPU info every 5 seconds
@@ -334,32 +375,102 @@ export function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Settings className="w-5 h-5" />
+              <Terminal className="w-5 h-5" />
               System Environment
             </CardTitle>
-            <CardDescription>Current runtime configuration</CardDescription>
+            <CardDescription>Version compatibility check</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-3">
-              <div className="p-3 rounded-lg border border-border bg-muted/50">
-                <div className="text-xs text-muted-foreground mb-1">Python Environment</div>
-                <div className="text-sm font-mono truncate" title={systemConfig.pythonPath}>
-                  {systemConfig.pythonPath || 'Not configured'}
+            {/* Python Check */}
+            <div className={`p-3 rounded-lg border ${environmentCheck?.python?.isValid ? 'border-emerald-500/30 bg-emerald-50/30' : environmentCheck?.python?.exists ? 'border-red-500/30 bg-red-50/30' : 'border-yellow-500/30 bg-yellow-50/30'}`}>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5">
+                  {environmentCheck?.python?.isValid ? (
+                    <CheckCircle className="w-5 h-5 text-emerald-500" />
+                  ) : environmentCheck?.python?.exists ? (
+                    <XCircle className="w-5 h-5 text-red-500" />
+                  ) : (
+                    <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                  )}
                 </div>
-              </div>
-              
-              <div className="p-3 rounded-lg border border-border bg-muted/50">
-                <div className="text-xs text-muted-foreground mb-1">PaddleDetection Path</div>
-                <div className="text-sm font-mono truncate" title={systemConfig.paddleDetectionPath}>
-                  {systemConfig.paddleDetectionPath || 'Not configured'}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-sm">Python</span>
+                    {environmentCheck?.python?.version && (
+                      <Badge variant="outline" className="text-xs">
+                        {environmentCheck.python.version}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {environmentCheck?.python?.isValid ? (
+                      <span className="text-emerald-600">Version compatible (3.7 - 3.10)</span>
+                    ) : environmentCheck?.python?.error ? (
+                      <span className="text-red-600">{environmentCheck.python.error}</span>
+                    ) : envCheckLoading ? (
+                      <span>Checking...</span>
+                    ) : (
+                      <span>Not configured</span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="pt-2">
+            {/* PaddleDetection Check */}
+            <div className={`p-3 rounded-lg border ${environmentCheck?.paddleDetection?.isValid ? 'border-emerald-500/30 bg-emerald-50/30' : environmentCheck?.paddleDetection?.exists ? 'border-red-500/30 bg-red-50/30' : 'border-yellow-500/30 bg-yellow-50/30'}`}>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5">
+                  {environmentCheck?.paddleDetection?.isValid ? (
+                    <CheckCircle className="w-5 h-5 text-emerald-500" />
+                  ) : environmentCheck?.paddleDetection?.exists ? (
+                    <XCircle className="w-5 h-5 text-red-500" />
+                  ) : (
+                    <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-sm">PaddleDetection</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {environmentCheck?.paddleDetection?.isValid ? (
+                      <span className="text-emerald-600">Path valid</span>
+                    ) : environmentCheck?.paddleDetection?.error ? (
+                      <span className="text-red-600">{environmentCheck.paddleDetection.error}</span>
+                    ) : envCheckLoading ? (
+                      <span>Checking...</span>
+                    ) : (
+                      <span>Not configured</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Path Info */}
+            <div className="space-y-2 pt-2">
+              <div className="text-xs text-muted-foreground">Python Path</div>
+              <div className="text-xs font-mono truncate text-muted-foreground" title={systemConfig.pythonPath}>
+                {systemConfig.pythonPath || 'Not configured'}
+              </div>
+              <div className="text-xs text-muted-foreground">PaddleDetection Path</div>
+              <div className="text-xs font-mono truncate text-muted-foreground" title={systemConfig.paddleDetectionPath}>
+                {systemConfig.paddleDetectionPath || 'Not configured'}
+              </div>
+            </div>
+
+            {/* Overall Status */}
+            <div className="pt-2 border-t">
               <div className="flex items-center gap-2 text-sm">
-                <div className={`w-2 h-2 rounded-full ${systemConfig.pythonPath ? 'bg-emerald-500' : 'bg-yellow-500'}`} />
-                <span>{systemConfig.pythonPath ? 'Environment Ready' : 'Configure paths in Settings'}</span>
+                <div className={`w-2 h-2 rounded-full ${environmentCheck?.allValid ? 'bg-emerald-500' : environmentCheck ? 'bg-red-500' : 'bg-yellow-500'}`} />
+                <span>
+                  {environmentCheck?.allValid 
+                    ? 'Environment Ready' 
+                    : environmentCheck 
+                      ? 'Environment Issues Detected' 
+                      : 'Configure paths in Settings'}
+                </span>
               </div>
             </div>
           </CardContent>

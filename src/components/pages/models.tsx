@@ -909,8 +909,6 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
                       <Badge variant="outline">{model.architecture}</Badge>
                       <span>{model.backbone}</span>
-                      <span>•</span>
-                      <span>{model.numClasses} classes</span>
                     </div>
                   </CardContent>
                 </Card>

@@ -4,6 +4,60 @@ import { requireAuth, buildUserFilter } from '@/lib/auth';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Parse COCO JSON file
+async function parseCocoFile(filePath: string) {
+  try {
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      console.error('File not found:', filePath);
+      return null;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(content);
+    
+    return {
+      images: data.images || [],
+      annotations: data.annotations || [],
+      categories: data.categories || [],
+    };
+  } catch (error) {
+    console.error('Error parsing COCO file:', error);
+    return null;
+  }
+}
+
+// Calculate statistics from COCO dataset
+function calculateStats(cocoData: { images: any[]; annotations: any[]; categories: any[] }) {
+  const categoryCount: Record<number, number> = {};
+  const categoryImageCount: Record<number, Set<number>> = {};
+
+  // Count annotations per category and track images per category
+  for (const ann of cocoData.annotations) {
+    categoryCount[ann.category_id] = (categoryCount[ann.category_id] || 0) + 1;
+    
+    if (!categoryImageCount[ann.category_id]) {
+      categoryImageCount[ann.category_id] = new Set();
+    }
+    categoryImageCount[ann.category_id].add(ann.image_id);
+  }
+
+  // Build category statistics
+  const classStats = cocoData.categories.map((cat: any) => ({
+    id: cat.id,
+    name: cat.name,
+    count: categoryCount[cat.id] || 0,
+    imageCount: categoryImageCount[cat.id]?.size || 0,
+  }));
+
+  return {
+    numClasses: cocoData.categories.length,
+    numAnnotations: cocoData.annotations.length,
+    numImages: cocoData.images.length,
+    classStats,
+  };
+}
+
 // Generate dataset YAML content
 function generateDatasetYaml(dataset: {
   name: string;
@@ -189,11 +243,48 @@ export async function POST(request: NextRequest) {
     const systemConfig = await db.systemConfig.findFirst();
     const workDir = systemConfig?.paddleDetectionPath;
 
+    // Parse train annotation file if provided to get actual stats
+    let numClasses = body.numClasses || 1;
+    let numAnnotations = body.numAnnotations || 0;
+    let numTrainImages = body.numTrainImages || 0;
+    let numEvalImages = body.numEvalImages || 0;
+    let classStats: { train: any[]; eval: any[] } = { train: [], eval: [] };
+
+    if (body.trainAnnoPath && workDir) {
+      const trainAnnoFullPath = path.isAbsolute(body.trainAnnoPath) 
+        ? body.trainAnnoPath 
+        : path.join(workDir, body.trainAnnoPath);
+      
+      const cocoData = await parseCocoFile(trainAnnoFullPath);
+      if (cocoData) {
+        const stats = calculateStats(cocoData);
+        numClasses = stats.numClasses;
+        numAnnotations = stats.numAnnotations;
+        numTrainImages = stats.numImages;
+        
+        // Parse eval annotation if provided
+        let evalClassStats: any[] = [];
+        if (body.evalAnnoPath) {
+          const evalAnnoFullPath = path.isAbsolute(body.evalAnnoPath)
+            ? body.evalAnnoPath
+            : path.join(workDir, body.evalAnnoPath);
+          const evalData = await parseCocoFile(evalAnnoFullPath);
+          if (evalData) {
+            const evalStats = calculateStats(evalData);
+            numEvalImages = evalStats.numImages;
+            evalClassStats = evalStats.classStats;
+          }
+        }
+        
+        classStats = { train: stats.classStats, eval: evalClassStats };
+      }
+    }
+
     // Generate dataset YAML
     const datasetData = {
       name: body.name,
       format: body.format || 'COCO',
-      numClasses: body.numClasses || 1,
+      numClasses: numClasses,
       datasetDir: body.datasetDir,
       trainImagePath: body.trainImagePath,
       trainAnnoPath: body.trainAnnoPath,
@@ -216,11 +307,11 @@ export async function POST(request: NextRequest) {
         evalImagePath: body.evalImagePath || null,
         evalAnnoPath: body.evalAnnoPath || null,
         datasetDir: body.datasetDir || null,
-        numClasses: body.numClasses || 0,
-        numAnnotations: body.numAnnotations || 0,
-        numTrainImages: body.numTrainImages || 0,
-        numEvalImages: body.numEvalImages || 0,
-        classStats: body.classStats || null,
+        numClasses: numClasses,
+        numAnnotations: numAnnotations,
+        numTrainImages: numTrainImages,
+        numEvalImages: numEvalImages,
+        classStats: JSON.stringify(classStats),
         yamlConfig: yamlConfig,
       },
       include: {

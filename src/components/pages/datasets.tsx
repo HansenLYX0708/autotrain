@@ -121,6 +121,7 @@ export function DatasetsPage() {
   const [editingDataset, setEditingDataset] = useState<Dataset | null>(null)
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
   const [parsing, setParsing] = useState(false)
+  const [detectingClasses, setDetectingClasses] = useState(false)
   const [filterProjectId, setFilterProjectId] = useState<string>('__all__')
   const [formData, setFormData] = useState({
     name: '',
@@ -139,6 +140,32 @@ export function DatasetsPage() {
     fetchDatasets()
     fetchProjects()
   }, [])
+
+  // Auto-detect numClasses when trainAnnoPath changes
+  useEffect(() => {
+    const detectClasses = async () => {
+      if (!formData.trainAnnoPath || formData.trainAnnoPath.trim() === '') {
+        return
+      }
+      
+      setDetectingClasses(true)
+      try {
+        const response = await fetch(`/api/datasets/parse?path=${encodeURIComponent(formData.trainAnnoPath)}`)
+        const result = await response.json()
+        
+        if (result.success && result.data.numClasses > 0) {
+          setFormData(prev => ({ ...prev, numClasses: result.data.numClasses }))
+        }
+      } catch (error) {
+        console.error('Failed to detect classes:', error)
+      } finally {
+        setDetectingClasses(false)
+      }
+    }
+
+    const timeoutId = setTimeout(detectClasses, 500)
+    return () => clearTimeout(timeoutId)
+  }, [formData.trainAnnoPath])
 
   const fetchDatasets = async () => {
     try {
@@ -605,17 +632,6 @@ export function DatasetsPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="numClasses">Number of Classes</Label>
-                  <Input
-                    id="numClasses"
-                    type="number"
-                    min={1}
-                    value={formData.numClasses}
-                    onChange={(e) => setFormData({ ...formData, numClasses: parseInt(e.target.value) || 1 })}
-                    placeholder="1"
-                  />
-                </div>
-                <div className="col-span-2 space-y-2">
                   <Label htmlFor="datasetDir">Dataset Directory</Label>
                   <Input
                     id="datasetDir"
@@ -623,9 +639,10 @@ export function DatasetsPage() {
                     onChange={(e) => setFormData({ ...formData, datasetDir: e.target.value })}
                     placeholder="dataset/my_dataset"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Relative path from PaddleDetection root
-                  </p>
+                </div>
+                {/* Train Set Paths */}
+                <div className="col-span-2 pt-2 border-t">
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">Train Set</h4>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="trainImagePath">Train Images Path</Label>
@@ -638,12 +655,23 @@ export function DatasetsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="trainAnnoPath">Train Annotations Path</Label>
-                  <Input
-                    id="trainAnnoPath"
-                    value={formData.trainAnnoPath}
-                    onChange={(e) => setFormData({ ...formData, trainAnnoPath: e.target.value })}
-                    placeholder="annotations/train.json"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="trainAnnoPath"
+                      value={formData.trainAnnoPath}
+                      onChange={(e) => setFormData({ ...formData, trainAnnoPath: e.target.value })}
+                      placeholder="annotations/train.json"
+                    />
+                    {detectingClasses && (
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Eval Set Paths */}
+                <div className="col-span-2 pt-2 border-t">
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">Validation Set</h4>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="evalImagePath">Eval Images Path</Label>
@@ -663,8 +691,14 @@ export function DatasetsPage() {
                     placeholder="annotations/val.json"
                   />
                 </div>
-                
-
+                {/* Detected Classes Display */}
+                {formData.numClasses > 0 && (
+                  <div className="col-span-2 pt-2">
+                    <p className="text-sm text-green-600">
+                      Detected {formData.numClasses} classes from train annotations
+                    </p>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button type="submit">{editingDataset ? 'Update' : 'Import'}</Button>
