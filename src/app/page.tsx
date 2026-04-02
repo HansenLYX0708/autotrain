@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useSyncExternalStore } from 'react'
+import { useState, useSyncExternalStore, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
@@ -22,6 +22,7 @@ import {
   User,
   LogOut,
   Lock,
+  AlertCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -87,6 +88,92 @@ function AppContent() {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const { setTheme, theme } = useTheme()
   const { user, isLoading, isAuthenticated, logout } = useAuth()
+  
+  // System status states
+  const [systemStatus, setSystemStatus] = useState<'ready' | 'occupied' | 'busy' | 'error' | 'partial'>('ready')
+  const [runningJobs, setRunningJobs] = useState(0)
+  const [gpuInfo, setGpuInfo] = useState<{ memoryUsed: number; memoryTotal: number; utilization: number }[]>([])
+  const [envCheck, setEnvCheck] = useState({ pythonValid: false, paddleValid: false })
+
+  // Fetch system status data
+  useEffect(() => {
+    const fetchSystemStatus = async () => {
+      try {
+        // Fetch running jobs
+        const jobsResponse = await fetch('/api/training-jobs?status=running')
+        let jobsCount = 0
+        if (jobsResponse.ok) {
+          const jobsData = await jobsResponse.json()
+          jobsCount = jobsData.data?.length || 0
+        }
+        setRunningJobs(jobsCount)
+
+        // Fetch GPU info
+        const gpuResponse = await fetch('/api/system/gpu')
+        let currentGpuInfo: typeof gpuInfo = []
+        if (gpuResponse.ok) {
+          const gpuResult = await gpuResponse.json()
+          currentGpuInfo = gpuResult.data?.gpus || []
+          setGpuInfo(currentGpuInfo)
+        }
+
+        // Fetch environment check
+        const envResponse = await fetch('/api/system/environment-check')
+        let currentEnvCheck = { pythonValid: false, paddleValid: false }
+        if (envResponse.ok) {
+          const envData = await envResponse.json()
+          if (envData.success && envData.data) {
+            currentEnvCheck = {
+              pythonValid: envData.data.python?.isValid || false,
+              paddleValid: envData.data.paddleDetection?.isValid || false,
+            }
+            setEnvCheck(currentEnvCheck)
+          }
+        }
+
+        // Determine system status using current data
+        const hasEnvError = !currentEnvCheck.pythonValid || !currentEnvCheck.paddleValid
+        
+        if (hasEnvError) {
+          setSystemStatus('error')
+        } else if (jobsCount > 0) {
+          setSystemStatus('busy')
+        } else {
+          // Check GPU usage across all GPUs
+          const hasGpu = currentGpuInfo.length > 0
+          if (hasGpu) {
+            // Count GPUs by status
+            const gpuStats = currentGpuInfo.map(g => {
+              const highMemory = g.memoryTotal > 0 && (g.memoryUsed / g.memoryTotal) >= 0.5
+              const highUtil = g.utilization >= 30
+              return { highMemory, highUtil }
+            })
+            
+            const occupiedGpus = gpuStats.filter(g => g.highMemory || g.highUtil).length
+            const idleGpus = gpuStats.length - occupiedGpus
+            
+            if (occupiedGpus === 0) {
+              setSystemStatus('ready')
+            } else if (idleGpus === 0) {
+              setSystemStatus('occupied')
+            } else {
+              // Partial - some GPUs occupied, some idle
+              setSystemStatus('partial')
+            }
+          } else {
+            setSystemStatus('ready')
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch system status:', error)
+        setSystemStatus('error')
+      }
+    }
+
+    fetchSystemStatus()
+    const interval = setInterval(fetchSystemStatus, 30000)
+    return () => clearInterval(interval)
+  }, [])
 
   const mounted = useSyncExternalStore(
     () => () => {},
@@ -242,12 +329,55 @@ function AppContent() {
                 )}
 
                 {/* Status indicator */}
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                    System Ready
-                  </span>
-                </div>
+                {(() => {
+                  const statusConfig = {
+                    ready: {
+                      bg: 'bg-emerald-500/10',
+                      border: 'border-emerald-500/20',
+                      dot: 'bg-emerald-500',
+                      text: 'text-emerald-600 dark:text-emerald-400',
+                      label: 'System Ready',
+                    },
+                    occupied: {
+                      bg: 'bg-orange-500/10',
+                      border: 'border-orange-500/20',
+                      dot: 'bg-orange-500',
+                      text: 'text-orange-600 dark:text-orange-400',
+                      label: 'GPU Occupied',
+                    },
+                    partial: {
+                      bg: 'bg-yellow-500/10',
+                      border: 'border-yellow-500/20',
+                      dot: 'bg-yellow-500',
+                      text: 'text-yellow-600 dark:text-yellow-400',
+                      label: 'GPU Partial',
+                    },
+                    busy: {
+                      bg: 'bg-blue-500/10',
+                      border: 'border-blue-500/20',
+                      dot: 'bg-blue-500',
+                      text: 'text-blue-600 dark:text-blue-400',
+                      label: `Training (${runningJobs})`,
+                    },
+                    error: {
+                      bg: 'bg-red-500/10',
+                      border: 'border-red-500/20',
+                      dot: 'bg-red-500',
+                      text: 'text-red-600 dark:text-red-400',
+                      label: 'Env Error',
+                    },
+                  }
+                  const config = statusConfig[systemStatus]
+                  
+                  return (
+                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${config.bg} border ${config.border}`}>
+                      <div className={`w-2 h-2 rounded-full ${config.dot} animate-pulse`} />
+                      <span className={`text-xs font-medium ${config.text}`}>
+                        {config.label}
+                      </span>
+                    </div>
+                  )
+                })()}
 
                 {/* Theme toggle */}
                 {mounted && (
@@ -314,9 +444,7 @@ function AppContent() {
           <footer className="h-10 border-t border-border bg-card/50 flex items-center justify-between px-6 text-xs text-muted-foreground shrink-0">
             <div>HawkeyePlus v1.0.0</div>
             <div className="flex items-center gap-4">
-              <span>PaddleDetection Ready</span>
-              <span>•</span>
-              <span>PaddleClas Ready</span>
+              <span>AutoTrain Platform</span>
             </div>
           </footer>
         </div>

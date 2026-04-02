@@ -85,6 +85,16 @@ interface TrainingConfig {
   baseLr: number
 }
 
+interface GPUInfo {
+  id: number
+  name: string
+  utilization: number
+  memoryUsed: number
+  memoryTotal: number
+  temperature: number
+  status?: 'idle' | 'occupied'
+}
+
 interface TrainingJob {
   id: string
   name: string
@@ -144,12 +154,14 @@ export function JobsPage() {
   const [allModels, setAllModels] = useState<Model[]>([])
   const [totalJobs, setTotalJobs] = useState(0)
   const [showAll, setShowAll] = useState(false)
+  const [gpus, setGpus] = useState<GPUInfo[]>([])
 
   useEffect(() => {
     fetchJobs()
     fetchProjects()
     fetchAllDatasets()
     fetchAllModels()
+    fetchGPUs()
   }, [])
 
   useEffect(() => {
@@ -274,6 +286,29 @@ export function JobsPage() {
     }
   }
 
+  const fetchGPUs = async () => {
+    try {
+      const response = await fetch('/api/system/gpu')
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success && data.data && Array.isArray(data.data)) {
+          // Determine GPU status based on utilization/memory usage
+          const gpusWithStatus = data.data.map((gpu: GPUInfo) => {
+            const memoryUsagePercent = (gpu.memoryUsed / gpu.memoryTotal) * 100
+            const isOccupied = memoryUsagePercent >= 50 || gpu.utilization >= 30
+            return {
+              ...gpu,
+              status: isOccupied ? 'occupied' : 'idle' as 'idle' | 'occupied'
+            }
+          })
+          setGpus(gpusWithStatus)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch GPUs:', error)
+    }
+  }
+
   const fetchConfigs = async () => {
     try {
       const response = await fetch('/api/training-configs')
@@ -294,15 +329,9 @@ export function JobsPage() {
     
     const parts: string[] = []
     
-    // GPU selection
+    // GPU selection - always use paddle.distributed.launch
     const gpuIds = formData.gpuIds || '0'
-    if (gpuIds.includes(',')) {
-      // Multi-GPU: use distributed launch
-      parts.push(`python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py`)
-    } else {
-      // Single GPU: CUDA_VISIBLE_DEVICES set via environment variable
-      parts.push(`python tools/train.py`)
-    }
+    parts.push(`python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py`)
 
     // Config file - use merged job config
     parts.push(`-c ${configPath}`)
@@ -327,12 +356,16 @@ export function JobsPage() {
     if (!cmd) return ''
     
     const gpuIds = formData.gpuIds || '0'
-    if (gpuIds.includes(',')) {
-      return cmd
-    } else {
-      // Single GPU - show environment variable setup
-      return `# GPU: ${gpuIds} (set via CUDA_VISIBLE_DEVICES)\n${cmd}`
+    const isMultiGpu = gpuIds.includes(',')
+    const isWindows = typeof window !== 'undefined' && window.navigator.platform.toLowerCase().includes('win')
+    
+    let display = cmd
+    
+    if (isMultiGpu && isWindows) {
+      display = `# WARNING: Multi-GPU training is only supported on Linux.\n# On Windows, please use single GPU or WSL2.\n${cmd}`
     }
+    
+    return display
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -626,14 +659,47 @@ export function JobsPage() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="gpuIds">GPU IDs</Label>
-                        <Input
-                          id="gpuIds"
-                          value={formData.gpuIds}
-                          onChange={(e) => setFormData({ ...formData, gpuIds: e.target.value })}
-                          placeholder="0,1,2,3"
-                        />
+                        {gpus.length === 0 ? (
+                          <Input
+                            id="gpuIds"
+                            value={formData.gpuIds}
+                            onChange={(e) => setFormData({ ...formData, gpuIds: e.target.value })}
+                            placeholder="0,1,2,3"
+                          />
+                        ) : (
+                          <Select
+                            value={formData.gpuIds}
+                            onValueChange={(value) => setFormData({ ...formData, gpuIds: value })}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Select GPU(s)" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {gpus.map((gpu) => {
+                                const isIdle = gpu.status === 'idle'
+                                return (
+                                  <SelectItem 
+                                    key={gpu.id} 
+                                    value={String(gpu.id)}
+                                    disabled={!isIdle}
+                                  >
+                                    <div className="flex items-center justify-between w-full gap-4">
+                                      <span>GPU {gpu.id} - {gpu.name || 'Unknown'}</span>
+                                      <Badge 
+                                        variant={gpu.status === 'idle' ? 'secondary' : 'destructive'} 
+                                        className="text-[10px]"
+                                      >
+                                        {gpu.status === 'idle' ? 'Idle' : 'Occupied'}
+                                      </Badge>
+                                    </div>
+                                  </SelectItem>
+                                )
+                              })}
+                            </SelectContent>
+                          </Select>
+                        )}
                         <p className="text-xs text-muted-foreground">
-                          Comma-separated GPU IDs
+                          Select GPU for training (Occupied GPUs are disabled)
                         </p>
                       </div>
                       <div className="flex flex-col justify-end gap-4">

@@ -63,6 +63,11 @@ export function buildUserFilter(userId: string, role: string, userIdField: strin
   if (role === 'admin') {
     return {}; // Admin can see all data
   }
-  // Regular user can only see their own data
-  return { [userIdField]: userId };
+  // Regular user can see their own data OR data with no owner (userId is null)
+  return { 
+    OR: [
+      { [userIdField]: userId },
+      { [userIdField]: null }
+    ]
+  };
 }

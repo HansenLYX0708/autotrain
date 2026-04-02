@@ -197,8 +197,8 @@ export function DashboardPage() {
     fetchEnvironmentCheck()
     fetchGpuInfo()
 
-    // Poll GPU info every 5 seconds
-    const interval = setInterval(fetchGpuInfo, 5000)
+    // Poll GPU info every 30 seconds
+    const interval = setInterval(fetchGpuInfo, 30000)
 
     return () => clearInterval(interval)
   }, [])
@@ -289,50 +289,78 @@ export function DashboardPage() {
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 mb-6">
-                {gpuInfo.map((gpu) => (
-                  <div key={gpu.id} className="p-4 rounded-lg border border-border bg-muted/50">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="font-medium text-sm truncate" title={gpu.name}>{gpu.name}</span>
-                      <Badge variant="secondary">{hasNvidia ? `GPU ${gpu.id}` : 'CPU'}</Badge>
-                    </div>
-                    
-                    <div className="space-y-3">
-                      <div>
-                        <div className="flex items-center justify-between text-sm mb-1">
-                          <span className="text-muted-foreground flex items-center gap-1">
-                            <Activity className="w-3 h-3" />
-                            Utilization
-                          </span>
-                          <span className="font-medium">{gpu.utilization.toFixed(1)}%</span>
+                {gpuInfo.map((gpu) => {
+                  // Determine GPU status
+                  const highMemory = gpu.memoryTotal > 0 && (gpu.memoryUsed / gpu.memoryTotal) >= 0.5
+                  const highUtil = gpu.utilization >= 30
+                  const isOccupied = highMemory || highUtil
+                  const isIdle = !isOccupied
+                  
+                  const statusConfig = {
+                    idle: {
+                      badge: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
+                      label: 'Idle',
+                      dot: 'bg-emerald-500',
+                    },
+                    occupied: {
+                      badge: 'bg-orange-500/10 text-orange-600 border-orange-500/20',
+                      label: 'Occupied',
+                      dot: 'bg-orange-500',
+                    },
+                  }
+                  const status = isIdle ? statusConfig.idle : statusConfig.occupied
+                  
+                  return (
+                    <div key={gpu.id} className="p-4 rounded-lg border border-border bg-muted/50">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm truncate" title={gpu.name}>{gpu.name}</span>
+                          <div className={`px-2 py-0.5 rounded-full text-xs font-medium border ${status.badge} flex items-center gap-1`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
+                            {status.label}
+                          </div>
                         </div>
-                        <Progress value={gpu.utilization} className="h-2" />
+                        <Badge variant="secondary">{hasNvidia ? `GPU ${gpu.id}` : 'CPU'}</Badge>
                       </div>
                       
-                      <div>
-                        <div className="flex items-center justify-between text-sm mb-1">
-                          <span className="text-muted-foreground flex items-center gap-1">
-                            <HardDrive className="w-3 h-3" />
-                            Memory
-                          </span>
-                          <span className="font-medium">{formatMemory(gpu.memoryUsed)} / {formatMemory(gpu.memoryTotal)}</span>
+                      <div className="space-y-3">
+                        <div>
+                          <div className="flex items-center justify-between text-sm mb-1">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              <Activity className="w-3 h-3" />
+                              Utilization
+                            </span>
+                            <span className="font-medium">{gpu.utilization.toFixed(1)}%</span>
+                          </div>
+                          <Progress value={gpu.utilization} className="h-2" />
                         </div>
-                        <Progress value={gpu.memoryTotal > 0 ? (gpu.memoryUsed / gpu.memoryTotal) * 100 : 0} className="h-2" />
+                        
+                        <div>
+                          <div className="flex items-center justify-between text-sm mb-1">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              <HardDrive className="w-3 h-3" />
+                              Memory
+                            </span>
+                            <span className="font-medium">{formatMemory(gpu.memoryUsed)} / {formatMemory(gpu.memoryTotal)}</span>
+                          </div>
+                          <Progress value={gpu.memoryTotal > 0 ? (gpu.memoryUsed / gpu.memoryTotal) * 100 : 0} className="h-2" />
+                        </div>
+                        
+                        {gpu.temperature > 0 && (
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              <Thermometer className="w-3 h-3" />
+                              Temperature
+                            </span>
+                            <span className={`font-medium ${gpu.temperature > 80 ? 'text-red-500' : gpu.temperature > 70 ? 'text-yellow-500' : 'text-green-500'}`}>
+                              {gpu.temperature}°C
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      
-                      {gpu.temperature > 0 && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground flex items-center gap-1">
-                            <Thermometer className="w-3 h-3" />
-                            Temperature
-                          </span>
-                          <span className={`font-medium ${gpu.temperature > 80 ? 'text-red-500' : gpu.temperature > 70 ? 'text-yellow-500' : 'text-green-500'}`}>
-                            {gpu.temperature}°C
-                          </span>
-                        </div>
-                      )}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
