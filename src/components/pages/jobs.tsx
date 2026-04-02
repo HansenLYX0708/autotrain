@@ -127,8 +127,8 @@ const defaultFormData = {
   modelId: '',
   configId: '__none__',
   gpuIds: '0',
-  useAmp: false,
-  useVdl: true,
+  useAmp: true,
+  useVdl: false,
 }
 
 const defaultFilterData = {

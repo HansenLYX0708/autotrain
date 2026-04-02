@@ -55,6 +55,9 @@ import {
   X,
   FileJson,
   Eye,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import {
@@ -150,7 +153,9 @@ export function DatasetsPage() {
   const [previewSamples, setPreviewSamples] = useState<SampleImage[]>([])
   const [previewCategories, setPreviewCategories] = useState<Category[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string>('__all__')
-  const [currentImageIndex, setCurrentImageIndex] = useState(0)
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false)
+  const [selectedSample, setSelectedSample] = useState<SampleImage | null>(null)
+  const [zoom, setZoom] = useState(1)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -415,7 +420,7 @@ export function DatasetsPage() {
     try {
       const url = new URL('/api/datasets/samples', window.location.origin)
       url.searchParams.append('datasetId', selectedDataset.id)
-      url.searchParams.append('limit', '50')
+      url.searchParams.append('limit', '10')
       if (categoryId && categoryId !== '__all__') {
         url.searchParams.append('categoryId', categoryId)
       }
@@ -426,7 +431,6 @@ export function DatasetsPage() {
       if (result.success) {
         setPreviewSamples(result.data.samples)
         setPreviewCategories(result.data.categories)
-        setCurrentImageIndex(0)
       } else {
         toast({
           title: 'Failed to load samples',
@@ -449,6 +453,24 @@ export function DatasetsPage() {
     setPreviewDialogOpen(true)
     setSelectedCategory('__all__')
     fetchSamples()
+  }
+
+  const openDetailView = (sample: SampleImage) => {
+    setSelectedSample(sample)
+    setDetailDialogOpen(true)
+    setZoom(1)
+  }
+
+  const handleZoomIn = () => {
+    setZoom(prev => Math.min(prev + 0.25, 3))
+  }
+
+  const handleZoomOut = () => {
+    setZoom(prev => Math.max(prev - 0.25, 0.5))
+  }
+
+  const handleZoomReset = () => {
+    setZoom(1)
   }
 
   const handleCategoryChange = (categoryId: string) => {
@@ -1046,7 +1068,7 @@ export function DatasetsPage() {
 
       {/* Preview Samples Dialog */}
       <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent className="!max-w-none w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ImageIcon className="w-5 h-5" />
@@ -1092,9 +1114,13 @@ export function DatasetsPage() {
                 <p className="text-muted-foreground">No samples found for the selected category</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {previewSamples.map((sample, index) => (
-                  <Card key={sample.id} className="overflow-hidden">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                {previewSamples.slice(0, 10).map((sample) => (
+                  <Card 
+                    key={sample.id} 
+                    className="overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary transition-all"
+                    onDoubleClick={() => openDetailView(sample)}
+                  >
                     <div className="relative aspect-square bg-muted">
                       <img
                         src={`/api/datasets/image?path=${encodeURIComponent(sample.imagePath)}`}
@@ -1150,6 +1176,107 @@ export function DatasetsPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setPreviewDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Detail View Dialog with Zoom */}
+      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
+        <DialogContent className="!max-w-none w-[95vw] h-[95vh] max-h-none overflow-hidden flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6 pb-2">
+            <DialogTitle className="flex items-center gap-2">
+              <ImageIcon className="w-5 h-5" />
+              {selectedSample?.fileName}
+            </DialogTitle>
+            <DialogDescription>
+              Double-click image to zoom in, use controls to zoom in/out
+            </DialogDescription>
+          </DialogHeader>
+          
+          {/* Zoom Controls */}
+          <div className="flex items-center justify-center gap-2 px-6 py-2 border-b">
+            <Button variant="outline" size="sm" onClick={handleZoomOut} disabled={zoom <= 0.5}>
+              <ZoomOut className="w-4 h-4" />
+            </Button>
+            <span className="text-sm min-w-[60px] text-center">{Math.round(zoom * 100)}%</span>
+            <Button variant="outline" size="sm" onClick={handleZoomIn} disabled={zoom >= 3}>
+              <ZoomIn className="w-4 h-4" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleZoomReset}>
+              <RotateCcw className="w-4 h-4" />
+            </Button>
+          </div>
+
+          {/* Image Container */}
+          <div className="flex-1 overflow-auto p-4 bg-muted/50">
+            {selectedSample && (
+              <div 
+                className="relative inline-block min-w-full min-h-full"
+                style={{ 
+                  transform: `scale(${zoom})`, 
+                  transformOrigin: 'top left',
+                  transition: 'transform 0.2s ease'
+                }}
+              >
+                <img
+                  src={`/api/datasets/image?path=${encodeURIComponent(selectedSample.imagePath)}`}
+                  alt={selectedSample.fileName}
+                  className="max-w-none"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none'
+                  }}
+                  onDoubleClick={handleZoomIn}
+                />
+                {/* SVG Overlay for Annotations */}
+                <svg 
+                  className="absolute top-0 left-0 pointer-events-none"
+                  style={{ width: selectedSample.width, height: selectedSample.height }}
+                >
+                  {selectedSample.annotations.map((ann) => (
+                    <g key={ann.id}>
+                      <rect
+                        x={ann.bbox[0]}
+                        y={ann.bbox[1]}
+                        width={ann.bbox[2]}
+                        height={ann.bbox[3]}
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="2"
+                      />
+                      <text
+                        x={ann.bbox[0]}
+                        y={ann.bbox[1] - 4}
+                        fill="#ef4444"
+                        fontSize="12"
+                        fontWeight="bold"
+                      >
+                        {ann.categoryName}
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+            )}
+          </div>
+
+          {/* Annotation List */}
+          {selectedSample && selectedSample.annotations.length > 0 && (
+            <div className="px-6 py-2 border-t max-h-[150px] overflow-y-auto">
+              <h4 className="text-sm font-medium mb-2">Annotations ({selectedSample.annotations.length})</h4>
+              <div className="flex flex-wrap gap-2">
+                {selectedSample.annotations.map((ann) => (
+                  <Badge key={ann.id} variant="secondary" className="text-xs">
+                    {ann.categoryName} ({ann.bbox.map(n => Math.round(n)).join(', ')})
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="px-6 py-4">
+            <Button variant="outline" onClick={() => setDetailDialogOpen(false)}>
               Close
             </Button>
           </DialogFooter>
