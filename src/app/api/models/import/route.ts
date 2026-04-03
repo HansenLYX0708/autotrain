@@ -38,25 +38,39 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Get current user info including username
+    const currentUser = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, role: true },
+    });
+
+    if (!currentUser) {
+      return NextResponse.json(
+        { error: "User not found" },
+        { status: 404 }
+      );
+    }
+
     // Get system config for paths
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
     const workDir = framework === "PaddleClas"
       ? systemConfig?.paddleClasPath
       : systemConfig?.paddleDetectionPath;
+    const userConfigsPath = (systemConfig as any)?.userConfigsPath;
 
-    if (!workDir) {
-      return NextResponse.json(
-        { error: `Please configure ${framework} path in Settings` },
-        { status: 400 }
-      );
+    // List configs from userConfigsPath/default/models folder
+    let defaultConfigDir = "";
+    if (userConfigsPath) {
+      defaultConfigDir = path.join(userConfigsPath, "default", "models");
+    } else if (workDir) {
+      // Fallback to old path if userConfigsPath not set
+      defaultConfigDir = path.join(workDir, "configs", "autotrain", "models", "default");
     }
-
-    // List configs from autotrain/models/default folder
-    const defaultConfigDir = path.join(workDir, "configs", "autotrain", "models", "default");
+    
     const configs: Array<{ name: string; path: string; content: string }> = [];
 
-    if (fs.existsSync(defaultConfigDir)) {
+    if (defaultConfigDir && fs.existsSync(defaultConfigDir)) {
       const files = fs.readdirSync(defaultConfigDir).filter(f => f.endsWith(".yml") || f.endsWith(".yaml"));
       
       for (const file of files) {
@@ -64,17 +78,25 @@ export async function GET(request: NextRequest) {
         const content = fs.readFileSync(filePath, "utf-8");
         configs.push({
           name: file.replace(/\.(yml|yaml)$/, ""),
-          path: `configs/autotrain/models/default/${file}`,
+          path: userConfigsPath 
+            ? path.join("default", "models", file)
+            : `configs/autotrain/models/default/${file}`,
           content: content,
         });
       }
     }
 
-    // Also list user configs from autotrain/models/user folder
-    const userConfigDir = path.join(workDir, "configs", "autotrain", "models", "user");
+    // Also list user configs from userConfigsPath/{username}/models folder or fallback
+    let userConfigDir = "";
+    if (userConfigsPath && currentUser.username) {
+      userConfigDir = path.join(userConfigsPath, currentUser.username, "models");
+    } else if (workDir) {
+      userConfigDir = path.join(workDir, "configs", "autotrain", "models", "user");
+    }
+    
     const userConfigs: Array<{ name: string; path: string; content: string }> = [];
 
-    if (fs.existsSync(userConfigDir)) {
+    if (userConfigDir && fs.existsSync(userConfigDir)) {
       const files = fs.readdirSync(userConfigDir).filter(f => f.endsWith(".yml") || f.endsWith(".yaml"));
       
       for (const file of files) {
@@ -82,7 +104,9 @@ export async function GET(request: NextRequest) {
         const content = fs.readFileSync(filePath, "utf-8");
         userConfigs.push({
           name: file.replace(/\.(yml|yaml)$/, ""),
-          path: `configs/autotrain/models/user/${file}`,
+          path: userConfigsPath && currentUser.username
+            ? path.join(currentUser.username, "models", file)
+            : `configs/autotrain/models/user/${file}`,
           content: content,
         });
       }
@@ -94,6 +118,7 @@ export async function GET(request: NextRequest) {
         defaultConfigs: configs,
         userConfigs: userConfigs,
         workDir: workDir,
+        userConfigsPath: userConfigsPath,
       },
     });
   } catch (error) {
@@ -215,8 +240,32 @@ export async function POST(request: NextRequest) {
 }
 
 // Parse YAML config to extract model info
-function parseYamlConfig(yamlContent: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+function parseYamlConfig(yamlContent: string): {
+  architecture?: string;
+  backbone?: string;
+  neck?: string;
+  head?: string;
+  numClasses?: number;
+  normType?: string;
+  useEma?: boolean;
+  emaDecay?: number;
+  depthMult?: number;
+  widthMult?: number;
+  pretrainWeights?: string;
+} {
+  const result: {
+    architecture?: string;
+    backbone?: string;
+    neck?: string;
+    head?: string;
+    numClasses?: number;
+    normType?: string;
+    useEma?: boolean;
+    emaDecay?: number;
+    depthMult?: number;
+    widthMult?: number;
+    pretrainWeights?: string;
+  } = {};
   
   try {
     // Simple YAML parsing for key fields

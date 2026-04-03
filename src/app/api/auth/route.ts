@@ -122,6 +122,11 @@ async function handleRegister({ username, password }: { username: string; passwo
     return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
   }
 
+  // Prevent reserved usernames
+  if (username.toLowerCase() === "default") {
+    return NextResponse.json({ error: "Username 'default' is reserved and cannot be used" }, { status: 400 });
+  }
+
   // Check if username already exists
   const existing = await db.user.findUnique({ where: { username } });
   if (existing) {

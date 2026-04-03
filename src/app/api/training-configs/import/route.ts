@@ -108,25 +108,39 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Get current user info including username
+    const currentUser = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, role: true },
+    });
+
+    if (!currentUser) {
+      return NextResponse.json(
+        { error: "User not found" },
+        { status: 404 }
+      );
+    }
+
     // Get system config for paths
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
     const workDir = framework === "PaddleClas"
       ? systemConfig?.paddleClasPath
       : systemConfig?.paddleDetectionPath;
+    const userConfigsPath = (systemConfig as any)?.userConfigsPath;
 
-    if (!workDir) {
-      return NextResponse.json(
-        { error: `Please configure ${framework} path in Settings` },
-        { status: 400 }
-      );
+    // List configs from userConfigsPath/default/training folder
+    let defaultConfigDir = "";
+    if (userConfigsPath) {
+      defaultConfigDir = path.join(userConfigsPath, "default", "training");
+    } else if (workDir) {
+      // Fallback to old path if userConfigsPath not set
+      defaultConfigDir = path.join(workDir, "configs", "autotrain", "training", "default");
     }
-
-    // List configs from autotrain/training/default folder
-    const defaultConfigDir = path.join(workDir, "configs", "autotrain", "training", "default");
+    
     const defaultConfigs: Array<{ name: string; path: string; content: string }> = [];
 
-    if (fs.existsSync(defaultConfigDir)) {
+    if (defaultConfigDir && fs.existsSync(defaultConfigDir)) {
       const files = fs.readdirSync(defaultConfigDir).filter(f => f.endsWith(".yml") || f.endsWith(".yaml"));
       
       for (const file of files) {
@@ -134,17 +148,25 @@ export async function GET(request: NextRequest) {
         const content = fs.readFileSync(filePath, "utf-8");
         defaultConfigs.push({
           name: file.replace(/\.(yml|yaml)$/, ""),
-          path: `configs/autotrain/training/default/${file}`,
+          path: userConfigsPath 
+            ? path.join("default", "training", file)
+            : `configs/autotrain/training/default/${file}`,
           content: content,
         });
       }
     }
 
-    // Also list user configs from autotrain/training/user folder
-    const userConfigDir = path.join(workDir, "configs", "autotrain", "training", "user");
+    // Also list user configs from userConfigsPath/{username}/training folder or fallback
+    let userConfigDir = "";
+    if (userConfigsPath && currentUser.username) {
+      userConfigDir = path.join(userConfigsPath, currentUser.username, "training");
+    } else if (workDir) {
+      userConfigDir = path.join(workDir, "configs", "autotrain", "training", "user");
+    }
+    
     const userConfigs: Array<{ name: string; path: string; content: string }> = [];
 
-    if (fs.existsSync(userConfigDir)) {
+    if (userConfigDir && fs.existsSync(userConfigDir)) {
       const files = fs.readdirSync(userConfigDir).filter(f => f.endsWith(".yml") || f.endsWith(".yaml"));
       
       for (const file of files) {
@@ -152,7 +174,9 @@ export async function GET(request: NextRequest) {
         const content = fs.readFileSync(filePath, "utf-8");
         userConfigs.push({
           name: file.replace(/\.(yml|yaml)$/, ""),
-          path: `configs/autotrain/training/user/${file}`,
+          path: userConfigsPath && currentUser.username
+            ? path.join(currentUser.username, "training", file)
+            : `configs/autotrain/training/user/${file}`,
           content: content,
         });
       }
@@ -164,6 +188,7 @@ export async function GET(request: NextRequest) {
         defaultConfigs,
         userConfigs,
         workDir,
+        userConfigsPath,
       },
     });
   } catch (error) {

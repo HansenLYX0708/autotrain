@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useAuth } from '@/contexts/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -152,6 +153,7 @@ export function DatasetsPage() {
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
   const [parsing, setParsing] = useState(false)
   const [detectingClasses, setDetectingClasses] = useState(false)
+  const { user } = useAuth()
   const [filterProjectId, setFilterProjectId] = useState<string>('__all__')
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -310,10 +312,15 @@ export function DatasetsPage() {
           setEditingDataset(null)
         }
       } else {
+        // Include username when importing dataset
+        const submitData = {
+          ...formData,
+          username: user?.username,
+        }
         const response = await fetch('/api/datasets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(formData),
+          body: JSON.stringify(submitData),
         })
         if (response.ok) {
           toast({ title: 'Dataset created successfully' })

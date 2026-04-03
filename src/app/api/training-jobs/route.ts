@@ -181,9 +181,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Model not found or access denied" }, { status: 400 });
     }
 
-    // Get system config for PaddleDetection path
+    // Get system config for PaddleDetection path and userConfigsPath
     const systemConfig = await db.systemConfig.findFirst();
     const workDir = systemConfig?.paddleDetectionPath;
+    const userConfigsPath = (systemConfig as any)?.userConfigsPath;
+
+    // Get current user info for username
+    const currentUser = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true },
+    });
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
 
     if (!workDir) {
       return NextResponse.json(
@@ -216,42 +227,54 @@ export async function POST(request: NextRequest) {
     
     const mergedYaml = yamlParts.join('\n\n');
 
-    // Save to configs/autotrain/jobs folder
-    const jobsConfigDir = path.join(workDir, 'configs', 'autotrain', 'jobs');
-    if (!fs.existsSync(jobsConfigDir)) {
-      fs.mkdirSync(jobsConfigDir, { recursive: true });
+    // Save to userConfigsPath/{username}/jobs folder, fallback to old path if not set
+    let configFilePath: string;
+    let configPath: string;
+    
+    if (userConfigsPath && currentUser.username) {
+      const jobsConfigDir = path.join(userConfigsPath, currentUser.username, 'jobs');
+      if (!fs.existsSync(jobsConfigDir)) {
+        fs.mkdirSync(jobsConfigDir, { recursive: true });
+      }
+      configFilePath = path.join(jobsConfigDir, configFileName);
+      configPath = path.join(currentUser.username, 'jobs', configFileName);
+    } else {
+      // Fallback to old path
+      const jobsConfigDir = path.join(workDir, 'configs', 'autotrain', 'jobs');
+      if (!fs.existsSync(jobsConfigDir)) {
+        fs.mkdirSync(jobsConfigDir, { recursive: true });
+      }
+      configFilePath = path.join(jobsConfigDir, configFileName);
+      configPath = `configs/autotrain/jobs/${configFileName}`;
     }
-
-    const configFilePath = path.join(jobsConfigDir, configFileName);
+    
     fs.writeFileSync(configFilePath, mergedYaml, 'utf-8');
 
-    // Relative path for command
-    const configPath = `configs/autotrain/jobs/${configFileName}`;
-
-    // Generate training command
+    // Generate training command using absolute path
     // Note: CUDA_VISIBLE_DEVICES is set via environment variable during execution for cross-platform compatibility
     const gpuIds = body.gpuIds || '0';
     const useAmp = body.useAmp || false;
     const useVdl = body.useVdl || false;
 
     let command = '';
+    const quotedConfigPath = `"${configFilePath}"`;
     if (gpuIds.includes(',')) {
       // Multi-GPU: use distributed launch
-      command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py -c ${configPath}`;
+      command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py -c ${quotedConfigPath}`;
     } else {
       // Single GPU: CUDA_VISIBLE_DEVICES will be set via environment variable
-      command = `python tools/train.py -c ${configPath}`;
+      command = `python tools/train.py -c ${quotedConfigPath}`;
     }
     if (useAmp) command += ' --amp';
     if (useVdl) {
       command += ` --use_vdl=true --vdl_log_dir=output/${project.name}/${jobName}/vdl`;
     }
 
-    // Generate eval command
-    const evalCommand = `python tools/eval.py -c ${configPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
+    // Generate eval command using absolute path
+    const evalCommand = `python tools/eval.py -c ${quotedConfigPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
 
-    // Generate infer command (for single image inference)
-    const inferCommand = `python tools/infer.py -c ${configPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
+    // Generate infer command (for single image inference) using absolute path
+    const inferCommand = `python tools/infer.py -c ${quotedConfigPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
 
     // Create job in database with userId
     const job = await db.trainingJob.create({
