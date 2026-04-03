@@ -32,6 +32,8 @@ model SystemConfig {
   pythonPath            String?
   condaEnv              String?  // Conda environment name (e.g., "paddle", "paddle_env")
   condaPath             String?  // Path to conda executable (e.g., "C:\\Users\\name\\anaconda3\\Scripts\\conda.exe")
+  pythonEnvsBasePath    String?  // Base path where multiple Python environments are stored
+  gpuPythonMappings     String?  // JSON string mapping GPU IDs to Python environment paths (e.g., {"0": "C:/envs/gpu0/python.exe", "1": "C:/envs/gpu1/python.exe"})
   paddleDetectionPath   String?
   paddleClasPath        String?
   defaultGpu            Int      @default(0)

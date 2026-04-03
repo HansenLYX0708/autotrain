@@ -101,6 +101,29 @@ export function DashboardPage() {
   const [gpuLoading, setGpuLoading] = useState(true)
   const [environmentCheck, setEnvironmentCheck] = useState<EnvironmentCheck | null>(null)
   const [envCheckLoading, setEnvCheckLoading] = useState(false)
+  const [occupiedGpuIds, setOccupiedGpuIds] = useState<number[]>([])
+  const [gpuUsageMap, setGpuUsageMap] = useState<Map<number, string[]>>(new Map())
+
+  // Fetch GPU usage info from running jobs
+  const fetchGpuUsage = async () => {
+    try {
+      const response = await fetch('/api/system/gpu-usage')
+      if (response.ok) {
+        const result = await response.json()
+        if (result.success && result.data) {
+          setOccupiedGpuIds(result.data.occupiedGpuIds || [])
+          // Build map of GPU ID to job names
+          const usageMap = new Map<number, string[]>()
+          for (const usage of result.data.gpuUsage || []) {
+            usageMap.set(usage.gpuId, usage.jobNames || [])
+          }
+          setGpuUsageMap(usageMap)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch GPU usage:', error)
+    }
+  }
 
   // Fetch GPU info
   const fetchGpuInfo = async () => {
@@ -196,9 +219,13 @@ export function DashboardPage() {
     fetchConfig()
     fetchEnvironmentCheck()
     fetchGpuInfo()
+    fetchGpuUsage()
 
     // Poll GPU info every 30 seconds
-    const interval = setInterval(fetchGpuInfo, 30000)
+    const interval = setInterval(() => {
+      fetchGpuInfo()
+      fetchGpuUsage()
+    }, 30000)
 
     return () => clearInterval(interval)
   }, [])
@@ -227,7 +254,7 @@ export function DashboardPage() {
             Overview of your training platform
           </p>
         </div>
-        <Button onClick={() => { fetchGpuInfo(); }}>
+        <Button onClick={() => { fetchGpuInfo(); fetchGpuUsage(); }}>
           <RefreshCw className="w-4 h-4 mr-2" />
           Refresh
         </Button>
@@ -293,7 +320,8 @@ export function DashboardPage() {
                   // Determine GPU status
                   const highMemory = gpu.memoryTotal > 0 && (gpu.memoryUsed / gpu.memoryTotal) >= 0.5
                   const highUtil = gpu.utilization >= 30
-                  const isOccupied = highMemory || highUtil
+                  const isUsedBySystem = occupiedGpuIds.includes(gpu.id)
+                  const isOccupied = highMemory || highUtil || isUsedBySystem
                   const isIdle = !isOccupied
                   
                   const statusConfig = {
@@ -307,8 +335,14 @@ export function DashboardPage() {
                       label: 'Occupied',
                       dot: 'bg-orange-500',
                     },
+                    system: {
+                      badge: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
+                      label: 'In Training',
+                      dot: 'bg-blue-500 animate-pulse',
+                    },
                   }
-                  const status = isIdle ? statusConfig.idle : statusConfig.occupied
+                  const status = isIdle ? statusConfig.idle : (isUsedBySystem ? statusConfig.system : statusConfig.occupied)
+                  const jobNames = gpuUsageMap.get(gpu.id) || []
                   
                   return (
                     <div key={gpu.id} className="p-4 rounded-lg border border-border bg-muted/50">
@@ -324,6 +358,12 @@ export function DashboardPage() {
                       </div>
                       
                       <div className="space-y-3">
+                        {jobNames.length > 0 && (
+                          <div className="text-xs text-muted-foreground">
+                            <span className="font-medium">Training Jobs: </span>
+                            {jobNames.join(', ')}
+                          </div>
+                        )}
                         <div>
                           <div className="flex items-center justify-between text-sm mb-1">
                             <span className="text-muted-foreground flex items-center gap-1">

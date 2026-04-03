@@ -155,6 +155,29 @@ export function JobsPage() {
   const [totalJobs, setTotalJobs] = useState(0)
   const [showAll, setShowAll] = useState(false)
   const [gpus, setGpus] = useState<GPUInfo[]>([])
+  const [occupiedGpuIds, setOccupiedGpuIds] = useState<number[]>([])
+  const [gpuUsageMap, setGpuUsageMap] = useState<Map<number, string[]>>(new Map())
+
+  // Fetch GPU usage info from running jobs
+  const fetchGpuUsage = async () => {
+    try {
+      const response = await fetch('/api/system/gpu-usage')
+      if (response.ok) {
+        const result = await response.json()
+        if (result.success && result.data) {
+          setOccupiedGpuIds(result.data.occupiedGpuIds || [])
+          // Build map of GPU ID to job names
+          const usageMap = new Map<number, string[]>()
+          for (const usage of result.data.gpuUsage || []) {
+            usageMap.set(usage.gpuId, usage.jobNames || [])
+          }
+          setGpuUsageMap(usageMap)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch GPU usage:', error)
+    }
+  }
 
   useEffect(() => {
     fetchJobs()
@@ -162,6 +185,7 @@ export function JobsPage() {
     fetchAllDatasets()
     fetchAllModels()
     fetchGPUs()
+    fetchGpuUsage()
   }, [])
 
   useEffect(() => {
@@ -294,10 +318,33 @@ export function JobsPage() {
         // API returns { success: true, data: { gpus: [...], cpu: {...} } }
         const gpuArray = data.data?.gpus || data.data
         if (data.success && Array.isArray(gpuArray)) {
-          // Determine GPU status based on utilization/memory usage
+          // Get running jobs GPU usage first
+          let occupiedIds: number[] = []
+          try {
+            const usageResponse = await fetch('/api/system/gpu-usage')
+            if (usageResponse.ok) {
+              const usageResult = await usageResponse.json()
+              if (usageResult.success && usageResult.data) {
+                occupiedIds = usageResult.data.occupiedGpuIds || []
+                // Update the usage map as well
+                const usageMap = new Map<number, string[]>()
+                for (const usage of usageResult.data.gpuUsage || []) {
+                  usageMap.set(usage.gpuId, usage.jobNames || [])
+                }
+                setGpuUsageMap(usageMap)
+              }
+            }
+          } catch (e) {
+            console.error('Failed to fetch GPU usage in fetchGPUs:', e)
+          }
+          setOccupiedGpuIds(occupiedIds)
+          
+          // Determine GPU status based on utilization/memory usage AND running jobs
           const gpusWithStatus = gpuArray.map((gpu: GPUInfo) => {
             const memoryUsagePercent = (gpu.memoryUsed / gpu.memoryTotal) * 100
-            const isOccupied = memoryUsagePercent >= 50 || gpu.utilization >= 30
+            const isOccupiedByHardware = memoryUsagePercent >= 50 || gpu.utilization >= 30
+            const isOccupiedBySystem = occupiedIds.includes(gpu.id)
+            const isOccupied = isOccupiedByHardware || isOccupiedBySystem
             return {
               ...gpu,
               status: isOccupied ? 'occupied' : 'idle' as 'idle' | 'occupied'
@@ -671,7 +718,9 @@ export function JobsPage() {
                           </SelectTrigger>
                           <SelectContent>
                             {gpus.map((gpu) => {
-                              const isIdle = gpu.status === 'idle'
+                              const isOccupiedBySystem = occupiedGpuIds.includes(gpu.id)
+                              const isIdle = gpu.status === 'idle' && !isOccupiedBySystem
+                              const jobNames = gpuUsageMap.get(gpu.id) || []
                               return (
                                 <SelectItem 
                                   key={gpu.id} 
@@ -680,12 +729,19 @@ export function JobsPage() {
                                 >
                                   <div className="flex items-center justify-between w-full gap-4">
                                     <span>GPU {gpu.id} - {gpu.name || 'Unknown'}</span>
-                                    <Badge 
-                                      variant={gpu.status === 'idle' ? 'secondary' : 'destructive'} 
-                                      className="text-[10px]"
-                                    >
-                                      {gpu.status === 'idle' ? 'Idle' : 'Occupied'}
-                                    </Badge>
+                                    <div className="flex items-center gap-2">
+                                      {isOccupiedBySystem && jobNames.length > 0 && (
+                                        <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+                                          ({jobNames.join(', ')})
+                                        </span>
+                                      )}
+                                      <Badge 
+                                        variant={isIdle ? 'secondary' : 'destructive'} 
+                                        className="text-[10px]"
+                                      >
+                                        {isIdle ? 'Idle' : (isOccupiedBySystem ? 'In Training' : 'Occupied')}
+                                      </Badge>
+                                    </div>
                                   </div>
                                 </SelectItem>
                               )
@@ -693,7 +749,7 @@ export function JobsPage() {
                           </SelectContent>
                         </Select>
                         <p className="text-xs text-muted-foreground">
-                          Select GPU for training (Occupied GPUs are disabled)
+                          Select GPU for training (Occupied/In Training GPUs are disabled)
                         </p>
                       </div>
                       <div className="flex flex-col justify-end gap-4">

@@ -187,9 +187,35 @@ export async function PUT(
       // Get system config for paths
       const systemConfig = await db.systemConfig.findFirst();
       
+      // Determine Python path based on GPU selection
+      let pythonPath = systemConfig?.pythonPath || "python";
+      
+      // Parse GPU IDs from training params
+      const gpuIdsStr = (trainingParams.gpuIds as string) || '0';
+      const gpuIds = gpuIdsStr.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
+      const primaryGpuId = gpuIds[0] || 0;
+      
+      // Check if there's a GPU-specific Python mapping
+      if (systemConfig?.gpuPythonMappings) {
+        try {
+          const gpuMappings = JSON.parse(systemConfig.gpuPythonMappings) as Record<string, string>;
+          const gpuSpecificPath = gpuMappings[primaryGpuId.toString()];
+          if (gpuSpecificPath && gpuSpecificPath.trim()) {
+            pythonPath = gpuSpecificPath.trim();
+            console.log(`[Job ${id}] Using GPU ${primaryGpuId} specific Python path: ${pythonPath}`);
+          } else {
+            console.log(`[Job ${id}] No GPU-specific Python path for GPU ${primaryGpuId}, using default: ${pythonPath}`);
+          }
+        } catch (e) {
+          console.error(`[Job ${id}] Failed to parse GPU Python mappings:`, e);
+        }
+      }
+      
       console.log(`[Job ${id}] Starting training...`);
       console.log(`[Job ${id}] Command: ${existingJob.command}`);
       console.log(`[Job ${id}] System config found: ${!!systemConfig}`);
+      console.log(`[Job ${id}] Selected GPUs: ${gpuIdsStr}, Primary GPU: ${primaryGpuId}`);
+      console.log(`[Job ${id}] Python path: ${pythonPath}`);
       
       if (!existingJob.command) {
         console.error(`[Job ${id}] No command found for job`);
@@ -220,13 +246,12 @@ export async function PUT(
         } else {
           // Start training process
           try {
-            const gpuIds = (trainingParams.gpuIds as string) || '0';
             startTrainingProcess(
               id, 
               existingJob.command, 
               workDir, 
-              systemConfig.pythonPath || "python", 
-              gpuIds,
+              pythonPath, 
+              gpuIdsStr,
               systemConfig.condaEnv || null,
               systemConfig.condaPath || null
             );

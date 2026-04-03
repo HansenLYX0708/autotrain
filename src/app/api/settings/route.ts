@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 
 // Default configuration values
 const DEFAULT_CONFIG = {
   pythonPath: "python",  // Use 'python' command, works on Windows
   condaEnv: "",  // Conda environment name
   condaPath: "",  // Path to conda executable
+  pythonEnvsBasePath: "",  // Base path for multiple Python environments
+  gpuPythonMappings: "",  // JSON string for GPU to Python path mappings
   paddleDetectionPath: "",
   paddleClasPath: "",
   defaultGpu: 0,
@@ -15,8 +18,15 @@ const DEFAULT_CONFIG = {
 /**
  * GET /api/settings
  * Returns the system configuration. Creates a default one if none exists.
+ * Only admins can access this endpoint.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // Check admin permission
+  const auth = await requireAdmin(request);
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     let config = await db.systemConfig.findFirst();
 
@@ -46,8 +56,15 @@ export async function GET() {
 /**
  * PUT /api/settings
  * Updates the system configuration.
+ * Only admins can access this endpoint.
  */
 export async function PUT(request: NextRequest) {
+  // Check admin permission
+  const auth = await requireAdmin(request);
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const body = await request.json();
 
@@ -61,6 +78,8 @@ export async function PUT(request: NextRequest) {
           pythonPath: body.pythonPath ?? DEFAULT_CONFIG.pythonPath,
           condaEnv: body.condaEnv ?? DEFAULT_CONFIG.condaEnv,
           condaPath: body.condaPath ?? DEFAULT_CONFIG.condaPath,
+          pythonEnvsBasePath: body.pythonEnvsBasePath ?? DEFAULT_CONFIG.pythonEnvsBasePath,
+          gpuPythonMappings: body.gpuPythonMappings ?? DEFAULT_CONFIG.gpuPythonMappings,
           paddleDetectionPath: body.paddleDetectionPath ?? DEFAULT_CONFIG.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath ?? DEFAULT_CONFIG.paddleClasPath,
           defaultGpu: body.defaultGpu ?? DEFAULT_CONFIG.defaultGpu,
@@ -75,6 +94,8 @@ export async function PUT(request: NextRequest) {
           pythonPath: body.pythonPath,
           condaEnv: body.condaEnv,
           condaPath: body.condaPath,
+          pythonEnvsBasePath: body.pythonEnvsBasePath,
+          gpuPythonMappings: body.gpuPythonMappings,
           paddleDetectionPath: body.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath,
           defaultGpu: body.defaultGpu,
