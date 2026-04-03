@@ -58,8 +58,13 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
+  Upload,
+  AlertCircle,
+  FileArchive,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
+import { Progress } from '@/components/ui/progress'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   ChartConfig,
   ChartContainer,
@@ -156,6 +161,29 @@ export function DatasetsPage() {
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
   const [selectedSample, setSelectedSample] = useState<SampleImage | null>(null)
   const [zoom, setZoom] = useState(1)
+  // Upload dataset dialog state
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
+  const [uploadFormData, setUploadFormData] = useState({
+    name: '',
+    description: '',
+    projectId: '',
+    format: 'COCO' as 'COCO' | 'labelme',
+  })
+  const [uploadFiles, setUploadFiles] = useState<FileList | null>(null)
+  const [uploadFolderMode, setUploadFolderMode] = useState(false)
+  const [availableDatasets, setAvailableDatasets] = useState<Array<{
+    name: string;
+    path: string;
+    hasTrain: boolean;
+    hasVal: boolean;
+    hasAnnotations: boolean;
+    trainAnnotations: string[];
+    valAnnotations: string[];
+  }>>([])
+  const [loadingAvailableDatasets, setLoadingAvailableDatasets] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -183,7 +211,7 @@ export function DatasetsPage() {
       
       setDetectingClasses(true)
       try {
-        const response = await fetch(`/api/datasets/parse?path=${encodeURIComponent(formData.trainAnnoPath)}`)
+        const response = await fetch(`/api/datasets/parse?path=${encodeURIComponent(formData.trainAnnoPath)}&datasetDir=${encodeURIComponent(formData.datasetDir)}`)
         const result = await response.json()
         
         if (result.success && result.data.numClasses > 0) {
@@ -223,6 +251,45 @@ export function DatasetsPage() {
       }
     } catch (error) {
       console.error('Failed to fetch projects:', error)
+    }
+  }
+
+  const fetchAvailableDatasets = async () => {
+    setLoadingAvailableDatasets(true)
+    try {
+      const response = await fetch('/api/datasets/available')
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          setAvailableDatasets(data.datasets || [])
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch available datasets:', error)
+    } finally {
+      setLoadingAvailableDatasets(false)
+    }
+  }
+
+  // Auto-fill form when dataset folder is selected
+  const handleDatasetSelect = (datasetName: string) => {
+    const selectedDataset = availableDatasets.find(d => d.name === datasetName)
+    if (selectedDataset) {
+      setFormData(prev => ({
+        ...prev,
+        name: datasetName,
+        datasetDir: `COCO/${datasetName}`,
+        trainImagePath: selectedDataset.hasTrain ? 'data/train' : '',
+        evalImagePath: selectedDataset.hasVal ? 'data/val' : '',
+        trainAnnoPath: selectedDataset.trainAnnotations.length > 0 
+          ? selectedDataset.trainAnnotations[0] 
+          : '',
+        evalAnnoPath: selectedDataset.valAnnotations.length > 0 
+          ? selectedDataset.valAnnotations[0] 
+          : '',
+      }))
+    } else {
+      setFormData(prev => ({ ...prev, name: datasetName }))
     }
   }
 
@@ -404,6 +471,91 @@ export function DatasetsPage() {
       toast({ title: 'Error converting dataset', variant: 'destructive' })
     } finally {
       setConverting(false)
+    }
+  }
+
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!uploadFiles || uploadFiles.length === 0) {
+      toast({ 
+        title: 'No files selected', 
+        description: 'Please select files to upload',
+        variant: 'destructive'
+      })
+      return
+    }
+
+    if (!uploadFormData.name.trim()) {
+      toast({ 
+        title: 'Dataset name required', 
+        variant: 'destructive'
+      })
+      return
+    }
+
+    setUploading(true)
+    setUploadProgress(0)
+    setUploadError(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('datasetName', uploadFormData.name)
+      formData.append('format', uploadFormData.format)
+      formData.append('projectId', uploadFormData.projectId)
+      formData.append('description', uploadFormData.description)
+
+      // Calculate total size for progress tracking
+      let totalSize = 0
+      for (let i = 0; i < uploadFiles.length; i++) {
+        totalSize += uploadFiles[i].size
+        formData.append('files', uploadFiles[i])
+      }
+
+      const response = await fetch('/api/datasets/upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      // Simulate progress (since fetch doesn't support progress natively)
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (prev >= 90) return prev
+          return prev + 10
+        })
+      }, 500)
+
+      const result = await response.json()
+      clearInterval(progressInterval)
+
+      if (response.ok && result.success) {
+        setUploadProgress(100)
+        toast({ 
+          title: 'Upload successful', 
+          description: `${result.message || `Uploaded ${result.data.files.length} files`}. Use "Import Dataset" to load this data.`
+        })
+        // Reset form - note: we don't call fetchDatasets() since no dataset record was created
+        setUploadFormData({ name: '', description: '', projectId: '', format: 'COCO' })
+        setUploadFiles(null)
+        setUploadDialogOpen(false)
+      } else {
+        setUploadError(result.error || result.message || 'Upload failed')
+        toast({ 
+          title: 'Upload failed', 
+          description: result.error || result.message || 'Unknown error',
+          variant: 'destructive'
+        })
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      setUploadError(errorMsg)
+      toast({ 
+        title: 'Upload error', 
+        description: errorMsg,
+        variant: 'destructive'
+      })
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -643,6 +795,152 @@ export function DatasetsPage() {
               </form>
             </DialogContent>
           </Dialog>
+          <Dialog open={uploadDialogOpen} onOpenChange={(open) => {
+            setUploadDialogOpen(open)
+            if (!open) {
+              setUploadFormData({ name: '', description: '', projectId: '', format: 'COCO' })
+              setUploadFiles(null)
+              setUploadProgress(0)
+              setUploadError(null)
+              setUploadFolderMode(false)
+            }
+          }}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Upload className="w-4 h-4 mr-2" />
+                Upload Dataset
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Upload Dataset</DialogTitle>
+                <DialogDescription>
+                  Upload dataset files to your database directory. Supports COCO and Labelme formats.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleUpload}>
+                <div className="grid grid-cols-2 gap-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="upload-name">Dataset Name</Label>
+                    <Input
+                      id="upload-name"
+                      value={uploadFormData.name}
+                      onChange={(e) => setUploadFormData({ ...uploadFormData, name: e.target.value })}
+                      placeholder="my_dataset"
+                      required
+                      pattern="[a-zA-Z0-9_-]+"
+                      title="Only letters, numbers, underscores and hyphens allowed"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Folder will be created: {uploadFormData.format}/{uploadFormData.name || '[name]'}/data/
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="upload-format">Data Format</Label>
+                    <Select
+                      value={uploadFormData.format}
+                      onValueChange={(value: 'COCO' | 'labelme') => setUploadFormData({ ...uploadFormData, format: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="COCO">COCO</SelectItem>
+                        <SelectItem value="labelme">Labelme</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="upload-project">Project (Optional)</Label>
+                    <Select
+                      value={uploadFormData.projectId}
+                      onValueChange={(value) => setUploadFormData({ ...uploadFormData, projectId: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select project" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {projects.map((project) => (
+                          <SelectItem key={project.id} value={project.id}>
+                            {project.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="upload-description">Description</Label>
+                    <Textarea
+                      id="upload-description"
+                      value={uploadFormData.description}
+                      onChange={(e) => setUploadFormData({ ...uploadFormData, description: e.target.value })}
+                      placeholder="Describe your dataset..."
+                      rows={2}
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="upload-files">
+                        {uploadFolderMode ? 'Select Folder' : 'Select Files'}
+                      </Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setUploadFolderMode(!uploadFolderMode)
+                          setUploadFiles(null)
+                        }}
+                      >
+                        {uploadFolderMode ? 'Switch to Files' : 'Switch to Folder'}
+                      </Button>
+                    </div>
+                    <Input
+                      id="upload-files"
+                      type="file"
+                      {...(uploadFolderMode ? { webkitdirectory: '', directory: '' } : { multiple: true })}
+                      onChange={(e) => setUploadFiles(e.target.files)}
+                      disabled={uploading}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {uploadFolderMode
+                        ? 'Select a folder containing your dataset files (images, annotations, etc.)'
+                        : 'You can select multiple files (images, annotations, etc.)'}
+                    </p>
+                  </div>
+                  {uploadFiles && uploadFiles.length > 0 && (
+                    <div className="col-span-2">
+                      <p className="text-sm text-muted-foreground">
+                        Selected {uploadFiles.length} files, total size {((Array.from(uploadFiles).reduce((acc, f) => acc + f.size, 0)) / 1024 / 1024).toFixed(2)} MB
+                      </p>
+                    </div>
+                  )}
+                  {uploadError && (
+                    <div className="col-span-2">
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>{uploadError}</AlertDescription>
+                      </Alert>
+                    </div>
+                  )}
+                  {uploading && (
+                    <div className="col-span-2 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span>Upload Progress</span>
+                        <span>{uploadProgress}%</span>
+                      </div>
+                      <Progress value={uploadProgress} />
+                    </div>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={uploading || !uploadFiles || uploadFiles.length === 0}>
+                    {uploading ? 'Uploading...' : 'Start Upload'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
           <Dialog open={dialogOpen} onOpenChange={(open) => {
           setDialogOpen(open)
           if (!open) {
@@ -662,7 +960,7 @@ export function DatasetsPage() {
           }
         }}>
           <DialogTrigger asChild>
-            <Button>
+            <Button onClick={() => fetchAvailableDatasets()}>
               <Plus className="w-4 h-4 mr-2" />
               Import Dataset
             </Button>
@@ -671,21 +969,55 @@ export function DatasetsPage() {
             <DialogHeader>
               <DialogTitle>{editingDataset ? 'Edit Dataset' : 'Import COCO Dataset'}</DialogTitle>
               <DialogDescription>
-                {editingDataset ? 'Update dataset configuration.' : 'Import a COCO format dataset by specifying the paths.'}
+                {editingDataset ? 'Update dataset configuration.' : 'Select a dataset folder from your COCO directory.'}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit}>
               <div className="grid grid-cols-2 gap-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Dataset Name</Label>
-                  <Input
-                    id="name"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="My Dataset"
-                    required
-                  />
-                </div>
+                {!editingDataset && (
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Dataset Folder</Label>
+                    <Select
+                      value={formData.name}
+                      onValueChange={handleDatasetSelect}
+                      disabled={loadingAvailableDatasets}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select folder"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableDatasets.length === 0 ? (
+                          <SelectItem value="__empty__" disabled>
+                            No folders found in COCO directory
+                          </SelectItem>
+                        ) : (
+                          availableDatasets.map((dataset) => (
+                            <SelectItem key={dataset.name} value={dataset.name}>
+                              {dataset.name} {!dataset.hasTrain && !dataset.hasVal && !dataset.hasAnnotations ? '(invalid)' : ''}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {availableDatasets.length === 0 && !loadingAvailableDatasets && (
+                      <p className="text-xs text-amber-600">
+                        No dataset folders found. Please upload a dataset first.
+                      </p>
+                    )}
+                  </div>
+                )}
+                {editingDataset && (
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Dataset Name</Label>
+                    <Input
+                      id="name"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="My Dataset"
+                      required
+                    />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="project">Project</Label>
                   <Select
@@ -725,7 +1057,6 @@ export function DatasetsPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="COCO">COCO</SelectItem>
-                      <SelectItem value="VOC">VOC</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -734,9 +1065,12 @@ export function DatasetsPage() {
                   <Input
                     id="datasetDir"
                     value={formData.datasetDir}
-                    onChange={(e) => setFormData({ ...formData, datasetDir: e.target.value })}
-                    placeholder="dataset/my_dataset"
+                    disabled
+                    className="bg-muted"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    COCO/{formData.name}/
+                  </p>
                 </div>
                 {/* Train Set Paths */}
                 <div className="col-span-2 pt-2 border-t">
@@ -747,25 +1081,32 @@ export function DatasetsPage() {
                   <Input
                     id="trainImagePath"
                     value={formData.trainImagePath}
-                    onChange={(e) => setFormData({ ...formData, trainImagePath: e.target.value })}
-                    placeholder="images/train"
+                    disabled
+                    className="bg-muted"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="trainAnnoPath">Train Annotations Path</Label>
-                  <div className="relative">
-                    <Input
-                      id="trainAnnoPath"
-                      value={formData.trainAnnoPath}
-                      onChange={(e) => setFormData({ ...formData, trainAnnoPath: e.target.value })}
-                      placeholder="annotations/train.json"
-                    />
-                    {detectingClasses && (
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                        <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
-                      </div>
-                    )}
-                  </div>
+                  <Select
+                    value={formData.trainAnnoPath}
+                    onValueChange={(value) => setFormData({ ...formData, trainAnnoPath: value })}
+                    disabled={availableDatasets.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select annotation file"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableDatasets.find(d => d.name === formData.name)?.trainAnnotations.map((file) => (
+                        <SelectItem key={file} value={file}>
+                          {file}
+                        </SelectItem>
+                      )) || (
+                        <SelectItem value="__empty__" disabled>
+                          No annotation files found
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
                 {/* Eval Set Paths */}
                 <div className="col-span-2 pt-2 border-t">
@@ -776,18 +1117,32 @@ export function DatasetsPage() {
                   <Input
                     id="evalImagePath"
                     value={formData.evalImagePath}
-                    onChange={(e) => setFormData({ ...formData, evalImagePath: e.target.value })}
-                    placeholder="images/val"
+                    disabled
+                    className="bg-muted"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="evalAnnoPath">Eval Annotations Path</Label>
-                  <Input
-                    id="evalAnnoPath"
+                  <Select
                     value={formData.evalAnnoPath}
-                    onChange={(e) => setFormData({ ...formData, evalAnnoPath: e.target.value })}
-                    placeholder="annotations/val.json"
-                  />
+                    onValueChange={(value) => setFormData({ ...formData, evalAnnoPath: value })}
+                    disabled={availableDatasets.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select annotation file"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableDatasets.find(d => d.name === formData.name)?.valAnnotations.map((file) => (
+                        <SelectItem key={file} value={file}>
+                          {file}
+                        </SelectItem>
+                      )) || (
+                        <SelectItem value="__empty__" disabled>
+                          No annotation files found
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
                 {/* Detected Classes Display */}
                 {formData.numClasses > 0 && (
@@ -799,7 +1154,9 @@ export function DatasetsPage() {
                 )}
               </div>
               <DialogFooter>
-                <Button type="submit">{editingDataset ? 'Update' : 'Import'}</Button>
+                <Button type="submit" disabled={!editingDataset && availableDatasets.length === 0}>
+                  {editingDataset ? 'Update' : 'Import'}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>

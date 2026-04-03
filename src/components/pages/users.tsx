@@ -30,13 +30,14 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from '@/hooks/use-toast'
-import { Plus, Pencil, Trash2, Loader2, Users, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, Users, Search, HardDrive } from 'lucide-react'
 
 interface User {
   id: string
   username: string
   role: 'admin' | 'user'
   status: 'active' | 'disabled'
+  maxStorageQuota: string
   createdAt: string
   updatedAt: string
 }
@@ -53,6 +54,7 @@ export function UserManagementPage() {
     password: '',
     role: 'user' as 'admin' | 'user',
     status: 'active' as 'active' | 'disabled',
+    maxStorageQuota: 200, // Default 200GB
   })
 
   useEffect(() => {
@@ -94,6 +96,7 @@ export function UserManagementPage() {
       password: '',
       role: 'user',
       status: 'active',
+      maxStorageQuota: 200,
     })
     setDialogOpen(true)
   }
@@ -105,6 +108,7 @@ export function UserManagementPage() {
       password: '',
       role: user.role,
       status: user.status,
+      maxStorageQuota: Math.floor(Number(user.maxStorageQuota) / 1024 / 1024 / 1024), // Convert bytes to GB
     })
     setDialogOpen(true)
   }
@@ -118,6 +122,7 @@ export function UserManagementPage() {
         username: formData.username,
         role: formData.role,
         status: formData.status,
+        maxStorageQuota: BigInt(formData.maxStorageQuota * 1024 * 1024 * 1024).toString(), // Convert GB to bytes
       }
       
       // Only include password if provided (for updates) or required (for new users)
@@ -239,6 +244,7 @@ export function UserManagementPage() {
                 <TableHead>Username</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Storage Quota</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -246,7 +252,7 @@ export function UserManagementPage() {
             <TableBody>
               {filteredUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     No users found
                   </TableCell>
                 </TableRow>
@@ -263,6 +269,12 @@ export function UserManagementPage() {
                       <Badge variant={user.status === 'active' ? 'outline' : 'destructive'}>
                         {user.status}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1 text-muted-foreground">
+                        <HardDrive className="h-3.5 w-3.5" />
+                        {Math.floor(Number(user.maxStorageQuota) / 1024 / 1024 / 1024)} GB
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(user.createdAt).toLocaleDateString()}
@@ -356,6 +368,21 @@ export function UserManagementPage() {
                   <SelectItem value="disabled">Disabled</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxStorageQuota">Storage Quota (GB)</Label>
+              <Input
+                id="maxStorageQuota"
+                type="number"
+                min={1}
+                max={10000}
+                value={formData.maxStorageQuota}
+                onChange={(e) => setFormData({ ...formData, maxStorageQuota: parseInt(e.target.value) || 200 })}
+                placeholder="Enter storage quota in GB"
+              />
+              <p className="text-xs text-muted-foreground">
+                Maximum storage space for this user&apos;s datasets
+              </p>
             </div>
           </div>
           <DialogFooter>

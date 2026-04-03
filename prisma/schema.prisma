@@ -17,6 +17,7 @@ model User {
   password    String   // Hashed password
   role        String   @default("user") // admin, user
   status      String   @default("active") // active, disabled
+  maxStorageQuota BigInt @default(214748364800) // Default 200GB in bytes
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   

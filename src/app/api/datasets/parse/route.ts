@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import { db } from '@/lib/db';
 import * as fs from 'fs';
 import * as path from 'path';
+import { sessions } from '../../auth/route';
 
 const execAsync = promisify(exec);
 
@@ -97,6 +98,36 @@ function calculateStats(cocoData: CocoDataset) {
 // POST /api/datasets/parse - Parse COCO dataset and update statistics
 export async function POST(request: NextRequest) {
   try {
+    // Get current user from session
+    const token = request.cookies.get("auth-token")?.value;
+    if (!token || !sessions.has(token)) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    const session = sessions.get(token)!;
+    const userId = session.userId;
+
+    // Get user info
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, role: true },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Get system config for userDatabasePath
+    const systemConfig = await db.systemConfig.findFirst();
+    const userDatabasePath = (systemConfig as any)?.userDatabasePath;
+
+    if (!userDatabasePath) {
+      return NextResponse.json(
+        { error: "User database path not configured" },
+        { status: 500 }
+      );
+    }
+
     const body = await request.json();
     const { datasetId, annotationPath, imageDir } = body;
 
@@ -120,10 +151,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine annotation file path
-    const annoPath = annotationPath || 
-      (dataset.datasetDir && dataset.trainAnnoPath 
-        ? path.join(dataset.datasetDir, dataset.trainAnnoPath)
-        : null);
+    let annoPath: string | null = null;
+    
+    if (annotationPath) {
+      // If absolute path provided, use it; otherwise build absolute path
+      annoPath = path.isAbsolute(annotationPath) 
+        ? annotationPath 
+        : path.join(userDatabasePath, user.username, annotationPath);
+    } else if (dataset.datasetDir && dataset.trainAnnoPath) {
+      // Build absolute path: {userDatabasePath}/{username}/{datasetDir}/{trainAnnoPath}
+      annoPath = path.join(userDatabasePath, user.username, dataset.datasetDir, dataset.trainAnnoPath);
+    }
 
     if (!annoPath) {
       return NextResponse.json(
@@ -137,7 +175,7 @@ export async function POST(request: NextRequest) {
     
     if (!cocoData) {
       return NextResponse.json(
-        { success: false, error: 'Failed to parse COCO file. Check if the file exists and is valid JSON.' },
+        { success: false, error: `Failed to parse COCO file at ${annoPath}. Check if the file exists and is valid JSON.` },
         { status: 400 }
       );
     }
@@ -150,7 +188,8 @@ export async function POST(request: NextRequest) {
     let evalClassStats: Array<{ id: number; name: string; count: number; imageCount: number }> = [];
     
     if (dataset.datasetDir && dataset.evalAnnoPath) {
-      const evalPath = path.join(dataset.datasetDir, dataset.evalAnnoPath);
+      // Build absolute path for eval annotation
+      const evalPath = path.join(userDatabasePath, user.username, dataset.datasetDir, dataset.evalAnnoPath);
       const evalData = await parseCocoFile(evalPath);
       if (evalData) {
         numEvalImages = evalData.images.length;
@@ -205,8 +244,39 @@ export async function POST(request: NextRequest) {
 // GET /api/datasets/parse - Parse COCO dataset file (without updating database)
 export async function GET(request: NextRequest) {
   try {
+    // Get current user from session
+    const token = request.cookies.get("auth-token")?.value;
+    if (!token || !sessions.has(token)) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    const session = sessions.get(token)!;
+    const userId = session.userId;
+
+    // Get user info
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, role: true },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Get system config for userDatabasePath
+    const systemConfig = await db.systemConfig.findFirst();
+    const userDatabasePath = (systemConfig as any)?.userDatabasePath;
+
+    if (!userDatabasePath) {
+      return NextResponse.json(
+        { error: "User database path not configured" },
+        { status: 500 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const filePath = searchParams.get('path');
+    const datasetDir = searchParams.get('datasetDir');
 
     if (!filePath) {
       return NextResponse.json(
@@ -215,11 +285,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const cocoData = await parseCocoFile(filePath);
+    // Build absolute path
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : datasetDir
+        ? path.join(userDatabasePath, user.username, datasetDir, filePath)
+        : path.join(userDatabasePath, user.username, filePath);
+
+    const cocoData = await parseCocoFile(absolutePath);
     
     if (!cocoData) {
       return NextResponse.json(
-        { success: false, error: 'Failed to parse COCO file' },
+        { success: false, error: `Failed to parse COCO file at ${absolutePath}` },
         { status: 400 }
       );
     }

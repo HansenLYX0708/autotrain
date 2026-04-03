@@ -69,6 +69,13 @@ interface EnvironmentCheck {
   allValid: boolean
 }
 
+interface StorageInfo {
+  maxStorageQuota: number
+  usedStorage: number
+  availableStorage: number
+  userDatabasePath: string | null
+}
+
 const chartConfig = {
   gpu: {
     label: "GPU Utilization",
@@ -103,6 +110,8 @@ export function DashboardPage() {
   const [envCheckLoading, setEnvCheckLoading] = useState(false)
   const [occupiedGpuIds, setOccupiedGpuIds] = useState<number[]>([])
   const [gpuUsageMap, setGpuUsageMap] = useState<Map<number, string[]>>(new Map())
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
+  const [storageLoading, setStorageLoading] = useState(true)
 
   // Fetch GPU usage info from running jobs
   const fetchGpuUsage = async () => {
@@ -151,6 +160,29 @@ export function DashboardPage() {
       console.error('Failed to fetch GPU info:', error)
     } finally {
       setGpuLoading(false)
+    }
+  }
+
+  // Fetch storage info
+  const fetchStorageInfo = async () => {
+    try {
+      setStorageLoading(true)
+      const response = await fetch('/api/users/storage')
+      if (response.ok) {
+        const result = await response.json()
+        if (result.success && result.data) {
+          setStorageInfo({
+            maxStorageQuota: Number(result.data.maxStorageQuota),
+            usedStorage: result.data.usedStorage,
+            availableStorage: result.data.availableStorage,
+            userDatabasePath: result.data.userDatabasePath,
+          })
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch storage info:', error)
+    } finally {
+      setStorageLoading(false)
     }
   }
 
@@ -220,6 +252,7 @@ export function DashboardPage() {
     fetchEnvironmentCheck()
     fetchGpuInfo()
     fetchGpuUsage()
+    fetchStorageInfo()
 
     // Poll GPU info every 30 seconds
     const interval = setInterval(() => {
@@ -244,6 +277,19 @@ export function DashboardPage() {
     return `${mb} MB`
   }
 
+  const formatBytes = (bytes: number) => {
+    if (bytes >= 1024 * 1024 * 1024 * 1024) {
+      return `${(bytes / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`
+    }
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+    }
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+    }
+    return `${bytes} B`
+  }
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -254,7 +300,7 @@ export function DashboardPage() {
             Overview of your training platform
           </p>
         </div>
-        <Button onClick={() => { fetchGpuInfo(); fetchGpuUsage(); }}>
+        <Button onClick={() => { fetchGpuInfo(); fetchGpuUsage(); fetchStorageInfo(); }}>
           <RefreshCw className="w-4 h-4 mr-2" />
           Refresh
         </Button>
@@ -439,15 +485,88 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* System Configuration */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Terminal className="w-5 h-5" />
-              System Environment
-            </CardTitle>
-            <CardDescription>Version compatibility check</CardDescription>
-          </CardHeader>
+        {/* System Configuration & Storage */}
+        <div className="space-y-6">
+          {/* Storage Usage Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <HardDrive className="w-5 h-5" />
+                Storage Usage
+              </CardTitle>
+              <CardDescription>Your dataset storage quota</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {storageLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : storageInfo ? (
+                <>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Used</span>
+                      <span className="font-medium">{formatBytes(storageInfo.usedStorage)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Total</span>
+                      <span className="font-medium">{formatBytes(storageInfo.maxStorageQuota)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Available</span>
+                      <span className="font-medium text-emerald-600">
+                        {formatBytes(storageInfo.availableStorage)}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <Progress 
+                      value={storageInfo.maxStorageQuota > 0 
+                        ? (storageInfo.usedStorage / storageInfo.maxStorageQuota) * 100 
+                        : 0
+                      } 
+                      className="h-2"
+                    />
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>
+                        {storageInfo.maxStorageQuota > 0 
+                          ? ((storageInfo.usedStorage / storageInfo.maxStorageQuota) * 100).toFixed(1) 
+                          : 0}% used
+                      </span>
+                      <span className={storageInfo.availableStorage < 10 * 1024 * 1024 * 1024 ? 'text-red-500 font-medium' : ''}>
+                        {storageInfo.availableStorage < 10 * 1024 * 1024 * 1024 && 'Low space warning'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {storageInfo.userDatabasePath && (
+                    <div className="pt-2 border-t">
+                      <div className="text-xs text-muted-foreground">Storage Path</div>
+                      <div className="text-xs font-mono truncate text-muted-foreground" title={storageInfo.userDatabasePath}>
+                        {storageInfo.userDatabasePath}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-4 text-center">
+                  <AlertCircle className="w-8 h-8 text-muted-foreground mb-2" />
+                  <p className="text-sm text-muted-foreground">Failed to load storage info</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* System Configuration */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Terminal className="w-5 h-5" />
+                System Environment
+              </CardTitle>
+              <CardDescription>Version compatibility check</CardDescription>
+            </CardHeader>
           <CardContent className="space-y-4">
             {/* Python Check */}
             <div className={`p-3 rounded-lg border ${environmentCheck?.python?.isValid ? 'border-emerald-500/30 bg-emerald-50/30' : environmentCheck?.python?.exists ? 'border-red-500/30 bg-red-50/30' : 'border-yellow-500/30 bg-yellow-50/30'}`}>
@@ -544,7 +663,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
-
+</div>
       {/* Recent Activity */}
       <Card>
         <CardHeader>

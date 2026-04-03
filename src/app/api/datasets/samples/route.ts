@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { db } from '@/lib/db';
+import { sessions } from '../../auth/route';
 
 interface CocoAnnotation {
   id: number;
@@ -72,6 +73,36 @@ async function parseCocoFile(filePath: string): Promise<CocoDataset | null> {
 // GET /api/datasets/samples?datasetId=xxx&categoryId=xxx&limit=20
 export async function GET(request: NextRequest) {
   try {
+    // Get current user from session
+    const token = request.cookies.get("auth-token")?.value;
+    if (!token || !sessions.has(token)) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    const session = sessions.get(token)!;
+    const userId = session.userId;
+
+    // Get user info
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, role: true },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Get system config for userDatabasePath
+    const systemConfig = await db.systemConfig.findFirst();
+    const userDatabasePath = (systemConfig as any)?.userDatabasePath;
+
+    if (!userDatabasePath) {
+      return NextResponse.json(
+        { error: "User database path not configured" },
+        { status: 500 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const datasetId = searchParams.get('datasetId');
     const categoryId = searchParams.get('categoryId');
@@ -96,14 +127,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Determine annotation file path
-    const annoPath = dataset.datasetDir && dataset.trainAnnoPath 
-      ? path.join(dataset.datasetDir, dataset.trainAnnoPath)
-      : null;
+    // Build absolute annotation file path
+    let annoPath: string | null = null;
+    if (dataset.datasetDir && dataset.trainAnnoPath) {
+      annoPath = path.join(userDatabasePath, user.username, dataset.datasetDir, dataset.trainAnnoPath);
+    }
 
     if (!annoPath || !fs.existsSync(annoPath)) {
       return NextResponse.json(
-        { success: false, error: 'Annotation file not found' },
+        { success: false, error: `Annotation file not found at ${annoPath}` },
         { status: 404 }
       );
     }
@@ -146,11 +178,12 @@ export async function GET(request: NextRequest) {
       imageMap.set(img.id, img);
     }
 
-    // Build samples
+    // Build samples with absolute image paths
     const samples: SampleImage[] = [];
-    const imageDir = dataset.datasetDir && dataset.trainImagePath
-      ? path.join(dataset.datasetDir, dataset.trainImagePath)
-      : null;
+    let imageDir: string | null = null;
+    if (dataset.datasetDir && dataset.trainImagePath) {
+      imageDir = path.join(userDatabasePath, user.username, dataset.datasetDir, dataset.trainImagePath);
+    }
 
     for (const imageId of imageIds) {
       const image = imageMap.get(imageId);

@@ -31,13 +31,20 @@ export async function GET(request: NextRequest) {
         username: true,
         role: true,
         status: true,
+        maxStorageQuota: true,
         createdAt: true,
         updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     });
 
-    return NextResponse.json({ success: true, data: users });
+    // Convert BigInt to string for JSON serialization
+    const serializedUsers = users.map(user => ({
+      ...user,
+      maxStorageQuota: user.maxStorageQuota.toString(),
+    }));
+
+    return NextResponse.json({ success: true, data: serializedUsers });
   } catch (error) {
     console.error("Error listing users:", error);
     return NextResponse.json(
@@ -55,7 +62,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { username, password, role = "user" } = body;
+    const { username, password, role = "user", maxStorageQuota } = body;
 
     if (!username || !password) {
       return NextResponse.json({ error: "Username and password are required" }, { status: 400 });
@@ -77,12 +84,14 @@ export async function POST(request: NextRequest) {
         password: hashPassword(password),
         role,
         status: "active",
+        maxStorageQuota: maxStorageQuota ? BigInt(maxStorageQuota) : undefined,
       },
       select: {
         id: true,
         username: true,
         role: true,
         status: true,
+        maxStorageQuota: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -92,7 +101,13 @@ export async function POST(request: NextRequest) {
     await createUserConfigFolders(username);
     await createUserDatabaseFolder(username);
 
-    return NextResponse.json({ success: true, data: user });
+    // Convert BigInt to string for JSON serialization
+    const serializedUser = {
+      ...user,
+      maxStorageQuota: user.maxStorageQuota.toString(),
+    };
+
+    return NextResponse.json({ success: true, data: serializedUser });
   } catch (error) {
     console.error("Error creating user:", error);
     return NextResponse.json(
@@ -117,7 +132,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { username, role, status, password } = body;
+    const { username, role, status, password, maxStorageQuota } = body;
 
     // Check if user exists
     const existing = await db.user.findUnique({ where: { id: userId } });
@@ -136,6 +151,9 @@ export async function PUT(request: NextRequest) {
       }
       updateData.password = hashPassword(password);
     }
+    if (maxStorageQuota !== undefined) {
+      updateData.maxStorageQuota = BigInt(maxStorageQuota);
+    }
 
     const user = await db.user.update({
       where: { id: userId },
@@ -145,12 +163,19 @@ export async function PUT(request: NextRequest) {
         username: true,
         role: true,
         status: true,
+        maxStorageQuota: true,
         createdAt: true,
         updatedAt: true,
       },
     });
 
-    return NextResponse.json({ success: true, data: user });
+    // Convert BigInt to string for JSON serialization
+    const serializedUser = {
+      ...user,
+      maxStorageQuota: user.maxStorageQuota.toString(),
+    };
+
+    return NextResponse.json({ success: true, data: serializedUser });
   } catch (error) {
     console.error("Error updating user:", error);
     return NextResponse.json(
