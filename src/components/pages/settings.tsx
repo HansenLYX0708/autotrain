@@ -31,14 +31,14 @@ interface GpuPythonMapping {
 }
 
 interface SystemConfig {
-  pythonPath: string
   condaEnv: string
   condaPath: string
   pythonEnvsBasePath: string
   gpuPythonMappings: GpuPythonMapping[]
+  userConfigsPath: string
+  userDatabasePath: string
   paddleDetectionPath: string
   paddleClasPath: string
-  defaultGpu: number
   defaultFramework: string
 }
 
@@ -46,14 +46,14 @@ export function SettingsPage() {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth()
   const router = useRouter()
   const [config, setConfig] = useState<SystemConfig>({
-    pythonPath: '',
     condaEnv: '',
     condaPath: '',
     pythonEnvsBasePath: '',
     gpuPythonMappings: [],
+    userConfigsPath: '',
+    userDatabasePath: '',
     paddleDetectionPath: '',
     paddleClasPath: '',
-    defaultGpu: 0,
     defaultFramework: 'PaddleDetection',
   })
   const [loading, setLoading] = useState(true)
@@ -115,14 +115,14 @@ export function SettingsPage() {
             }
             
             setConfig({
-              pythonPath: data.pythonPath || '',
               condaEnv: data.condaEnv || '',
               condaPath: data.condaPath || '',
               pythonEnvsBasePath: data.pythonEnvsBasePath || '',
               gpuPythonMappings: mappings,
+              userConfigsPath: data.userConfigsPath || '',
+              userDatabasePath: data.userDatabasePath || '',
               paddleDetectionPath: data.paddleDetectionPath || '',
               paddleClasPath: data.paddleClasPath || '',
-              defaultGpu: data.defaultGpu ?? 0,
               defaultFramework: data.defaultFramework || 'PaddleDetection',
             })
           }
@@ -160,8 +160,15 @@ export function SettingsPage() {
       })
       
       const payload = {
-        ...config,
-        gpuPythonMappings: JSON.stringify(mappingsObject)
+        condaEnv: config.condaEnv,
+        condaPath: config.condaPath,
+        pythonEnvsBasePath: config.pythonEnvsBasePath,
+        gpuPythonMappings: JSON.stringify(mappingsObject),
+        userConfigsPath: config.userConfigsPath,
+        userDatabasePath: config.userDatabasePath,
+        paddleDetectionPath: config.paddleDetectionPath,
+        paddleClasPath: config.paddleClasPath,
+        defaultFramework: config.defaultFramework,
       }
       
       const response = await fetch('/api/settings', {
@@ -301,37 +308,36 @@ export function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Python/Conda Configuration */}
+          {/* Conda Configuration */}
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="pythonPath">Python Path</Label>
+              <Label htmlFor="condaEnv">Conda Environment Name</Label>
+              <Input
+                id="condaEnv"
+                value={config.condaEnv}
+                onChange={(e) => setConfig({ ...config, condaEnv: e.target.value })}
+                placeholder="paddle or paddle_env"
+              />
+              <p className="text-xs text-muted-foreground">
+                Name of the conda environment with PaddlePaddle installed (optional)
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="condaPath">Conda Executable Path</Label>
               <div className="flex gap-2">
                 <Input
-                  id="pythonPath"
-                  value={config.pythonPath}
-                  onChange={(e) => setConfig({ ...config, pythonPath: e.target.value })}
-                  placeholder="python or C:\\Python39\\python.exe"
+                  id="condaPath"
+                  value={config.condaPath}
+                  onChange={(e) => setConfig({ ...config, condaPath: e.target.value })}
+                  placeholder="C:\\Users\\name\\anaconda3\\Scripts\\conda.exe"
                 />
                 <Button variant="outline" size="icon">
                   <FolderOpen className="w-4 h-4" />
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Path to Python executable. Leave empty if using conda.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="defaultGpu">Default GPU</Label>
-              <Input
-                id="defaultGpu"
-                type="number"
-                value={config.defaultGpu}
-                onChange={(e) => setConfig({ ...config, defaultGpu: parseInt(e.target.value) || 0 })}
-                min={0}
-              />
-              <p className="text-xs text-muted-foreground">
-                GPU ID to use by default
+                Full path to conda.exe (Windows) or conda (Linux/Mac)
               </p>
             </div>
           </div>
@@ -439,6 +445,58 @@ export function SettingsPage() {
               </div>
               <p className="text-xs text-muted-foreground">
                 Path to PaddleDetection repository
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* User Storage Paths */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FolderOpen className="w-5 h-5" />
+            User Storage Paths
+          </CardTitle>
+          <CardDescription>
+            Configure base paths for user-specific configs and database storage
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="userConfigsPath">User Configs Base Path</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="userConfigsPath"
+                  value={config.userConfigsPath}
+                  onChange={(e) => setConfig({ ...config, userConfigsPath: e.target.value })}
+                  placeholder="C:\\configs or /opt/configs"
+                />
+                <Button variant="outline" size="icon">
+                  <FolderOpen className="w-4 h-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Base directory for user-specific training configurations. Each user will have a subfolder containing training config files (replaces PaddleDetection\configs\autotrain).
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="userDatabasePath">User Database Base Path</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="userDatabasePath"
+                  value={config.userDatabasePath}
+                  onChange={(e) => setConfig({ ...config, userDatabasePath: e.target.value })}
+                  placeholder="C:\\user_data or /opt/user_data"
+                />
+                <Button variant="outline" size="icon">
+                  <FolderOpen className="w-4 h-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Base directory for storing user database and related data files.
               </p>
             </div>
           </div>

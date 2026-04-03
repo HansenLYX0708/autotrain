@@ -4,14 +4,14 @@ import { requireAdmin } from "@/lib/auth";
 
 // Default configuration values
 const DEFAULT_CONFIG = {
-  pythonPath: "python",  // Use 'python' command, works on Windows
   condaEnv: "",  // Conda environment name
   condaPath: "",  // Path to conda executable
   pythonEnvsBasePath: "",  // Base path for multiple Python environments
   gpuPythonMappings: "",  // JSON string for GPU to Python path mappings
+  userConfigsPath: "",  // Base path for user-specific training configs
+  userDatabasePath: "",  // Base path for user database storage
   paddleDetectionPath: "",
   paddleClasPath: "",
-  defaultGpu: 0,
   defaultFramework: "PaddleDetection",
 };
 
@@ -75,14 +75,14 @@ export async function PUT(request: NextRequest) {
       // Create new config with provided values
       config = await db.systemConfig.create({
         data: {
-          pythonPath: body.pythonPath ?? DEFAULT_CONFIG.pythonPath,
           condaEnv: body.condaEnv ?? DEFAULT_CONFIG.condaEnv,
           condaPath: body.condaPath ?? DEFAULT_CONFIG.condaPath,
           pythonEnvsBasePath: body.pythonEnvsBasePath ?? DEFAULT_CONFIG.pythonEnvsBasePath,
           gpuPythonMappings: body.gpuPythonMappings ?? DEFAULT_CONFIG.gpuPythonMappings,
+          userConfigsPath: body.userConfigsPath ?? DEFAULT_CONFIG.userConfigsPath,
+          userDatabasePath: body.userDatabasePath ?? DEFAULT_CONFIG.userDatabasePath,
           paddleDetectionPath: body.paddleDetectionPath ?? DEFAULT_CONFIG.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath ?? DEFAULT_CONFIG.paddleClasPath,
-          defaultGpu: body.defaultGpu ?? DEFAULT_CONFIG.defaultGpu,
           defaultFramework: body.defaultFramework ?? DEFAULT_CONFIG.defaultFramework,
         },
       });
@@ -91,14 +91,14 @@ export async function PUT(request: NextRequest) {
       config = await db.systemConfig.update({
         where: { id: config.id },
         data: {
-          pythonPath: body.pythonPath,
           condaEnv: body.condaEnv,
           condaPath: body.condaPath,
           pythonEnvsBasePath: body.pythonEnvsBasePath,
           gpuPythonMappings: body.gpuPythonMappings,
+          userConfigsPath: body.userConfigsPath,
+          userDatabasePath: body.userDatabasePath,
           paddleDetectionPath: body.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath,
-          defaultGpu: body.defaultGpu,
           defaultFramework: body.defaultFramework,
         },
       });

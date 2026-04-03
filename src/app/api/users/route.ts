@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import * as crypto from "crypto";
 import { sessions } from "../auth/route";
+import { createUserConfigFolders, deleteUserConfigFolders, createUserDatabaseFolder, deleteUserDatabaseFolder } from "@/lib/user-folders";
 
 // Helper to hash password
 function hashPassword(password: string): string {
@@ -86,6 +87,10 @@ export async function POST(request: NextRequest) {
         updatedAt: true,
       },
     });
+
+    // Create user config folders and database folder
+    await createUserConfigFolders(username);
+    await createUserDatabaseFolder(username);
 
     return NextResponse.json({ success: true, data: user });
   } catch (error) {
@@ -191,6 +196,10 @@ export async function DELETE(request: NextRequest) {
         sessions.delete(token);
       }
     }
+
+    // Delete user config folders and database folder
+    await deleteUserConfigFolders(existing.username);
+    await deleteUserDatabaseFolder(existing.username);
 
     return NextResponse.json({ success: true, message: "User deleted successfully" });
   } catch (error) {

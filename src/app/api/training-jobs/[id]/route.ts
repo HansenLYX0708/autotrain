@@ -187,15 +187,14 @@ export async function PUT(
       // Get system config for paths
       const systemConfig = await db.systemConfig.findFirst();
       
-      // Determine Python path based on GPU selection
-      let pythonPath = systemConfig?.pythonPath || "python";
-      
       // Parse GPU IDs from training params
       const gpuIdsStr = (trainingParams.gpuIds as string) || '0';
       const gpuIds = gpuIdsStr.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
       const primaryGpuId = gpuIds[0] || 0;
       
-      // Check if there's a GPU-specific Python mapping
+      // Determine Python path based on GPU mapping - MUST be configured
+      let pythonPath: string | null = null;
+      
       if (systemConfig?.gpuPythonMappings) {
         try {
           const gpuMappings = JSON.parse(systemConfig.gpuPythonMappings) as Record<string, string>;
@@ -203,8 +202,6 @@ export async function PUT(
           if (gpuSpecificPath && gpuSpecificPath.trim()) {
             pythonPath = gpuSpecificPath.trim();
             console.log(`[Job ${id}] Using GPU ${primaryGpuId} specific Python path: ${pythonPath}`);
-          } else {
-            console.log(`[Job ${id}] No GPU-specific Python path for GPU ${primaryGpuId}, using default: ${pythonPath}`);
           }
         } catch (e) {
           console.error(`[Job ${id}] Failed to parse GPU Python mappings:`, e);
@@ -215,7 +212,6 @@ export async function PUT(
       console.log(`[Job ${id}] Command: ${existingJob.command}`);
       console.log(`[Job ${id}] System config found: ${!!systemConfig}`);
       console.log(`[Job ${id}] Selected GPUs: ${gpuIdsStr}, Primary GPU: ${primaryGpuId}`);
-      console.log(`[Job ${id}] Python path: ${pythonPath}`);
       
       if (!existingJob.command) {
         console.error(`[Job ${id}] No command found for job`);
@@ -227,6 +223,11 @@ export async function PUT(
         updateData.status = "failed";
         updateData.errorMessage = "System configuration not found. Please configure paths in Settings.";
         updateData.completedAt = new Date();
+      } else if (!pythonPath) {
+        console.error(`[Job ${id}] No Python path configured for GPU ${primaryGpuId}`);
+        updateData.status = "failed";
+        updateData.errorMessage = `No Python environment configured for GPU ${primaryGpuId}. Please configure GPU Python mapping in Settings.`;
+        updateData.completedAt = new Date();
       } else {
         const framework = existingJob.project?.framework || "PaddleDetection";
         const workDir = framework === "PaddleClas" 
@@ -235,7 +236,7 @@ export async function PUT(
 
         console.log(`[Job ${id}] Framework: ${framework}`);
         console.log(`[Job ${id}] Work directory: ${workDir}`);
-        console.log(`[Job ${id}] Python path: ${systemConfig.pythonPath || "python"}`);
+        console.log(`[Job ${id}] Python path: ${pythonPath}`);
         console.log(`[Job ${id}] Conda env: ${systemConfig.condaEnv || "not set"}`);
 
         if (!workDir) {

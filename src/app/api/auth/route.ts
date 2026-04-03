@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import * as crypto from "crypto";
+import { createUserConfigFolders, createUserDatabaseFolder } from "@/lib/user-folders";
 
 // Simple in-memory session store (in production, use Redis or similar)
 const sessions = new Map<string, { userId: string; role: string }>();
@@ -139,6 +140,10 @@ async function handleRegister({ username, password }: { username: string; passwo
       status: "active",
     },
   });
+
+  // Create user config folders and database folder
+  await createUserConfigFolders(username);
+  await createUserDatabaseFolder(username);
 
   return NextResponse.json({
     success: true,
