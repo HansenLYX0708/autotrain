@@ -291,9 +291,11 @@ export function JobsPage() {
       const response = await fetch('/api/system/gpu')
       if (response.ok) {
         const data = await response.json()
-        if (data.success && data.data && Array.isArray(data.data)) {
+        // API returns { success: true, data: { gpus: [...], cpu: {...} } }
+        const gpuArray = data.data?.gpus || data.data
+        if (data.success && Array.isArray(gpuArray)) {
           // Determine GPU status based on utilization/memory usage
-          const gpusWithStatus = data.data.map((gpu: GPUInfo) => {
+          const gpusWithStatus = gpuArray.map((gpu: GPUInfo) => {
             const memoryUsagePercent = (gpu.memoryUsed / gpu.memoryTotal) * 100
             const isOccupied = memoryUsagePercent >= 50 || gpu.utilization >= 30
             return {
