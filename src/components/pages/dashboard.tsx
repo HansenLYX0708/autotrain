@@ -23,6 +23,16 @@ import {
   XCircle,
   Terminal,
   AlertTriangle,
+  Plus,
+  Upload,
+  FileJson,
+  Box,
+  Play,
+  Pause,
+  RotateCcw,
+  Trash2,
+  LogIn,
+  LogOut,
 } from 'lucide-react'
 import {
   ChartConfig,
@@ -82,6 +92,16 @@ interface StorageInfo {
   userDatabasePath: string | null
 }
 
+interface ActivityLog {
+  id: string
+  action: string
+  entityType: string
+  entityId: string | null
+  entityName: string | null
+  details: string | null
+  createdAt: string
+}
+
 const chartConfig = {
   gpu: {
     label: "GPU Utilization",
@@ -118,6 +138,8 @@ export function DashboardPage() {
   const [gpuUsageMap, setGpuUsageMap] = useState<Map<number, string[]>>(new Map())
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
   const [storageLoading, setStorageLoading] = useState(true)
+  const [activities, setActivities] = useState<ActivityLog[]>([])
+  const [activitiesLoading, setActivitiesLoading] = useState(true)
 
   // Fetch GPU usage info from running jobs
   const fetchGpuUsage = async () => {
@@ -192,6 +214,24 @@ export function DashboardPage() {
     }
   }
 
+  // Fetch recent activities
+  const fetchActivities = async () => {
+    try {
+      setActivitiesLoading(true)
+      const response = await fetch('/api/activity-logs')
+      if (response.ok) {
+        const result = await response.json()
+        if (result.success && result.data) {
+          setActivities(result.data)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch activities:', error)
+    } finally {
+      setActivitiesLoading(false)
+    }
+  }
+
   useEffect(() => {
     // Fetch dashboard stats
     const fetchStats = async () => {
@@ -259,6 +299,7 @@ export function DashboardPage() {
     fetchGpuInfo()
     fetchGpuUsage()
     fetchStorageInfo()
+    fetchActivities()
 
     // Poll GPU info every 30 seconds
     const interval = setInterval(() => {
@@ -294,6 +335,87 @@ export function DashboardPage() {
       return `${(bytes / 1024 / 1024).toFixed(2)} MB`
     }
     return `${bytes} B`
+  }
+
+  // Helper to get activity display name
+  const getActivityDisplayName = (action: string): string => {
+    const displayNames: Record<string, string> = {
+      create_project: 'Created Project',
+      update_project: 'Updated Project',
+      delete_project: 'Deleted Project',
+      import_dataset: 'Imported Dataset',
+      update_dataset: 'Updated Dataset',
+      delete_dataset: 'Deleted Dataset',
+      import_model: 'Imported Model',
+      update_model: 'Updated Model',
+      delete_model: 'Deleted Model',
+      import_config: 'Imported Config',
+      update_config: 'Updated Config',
+      delete_config: 'Deleted Config',
+      create_job: 'Created Training Job',
+      start_training: 'Started Training',
+      stop_training: 'Stopped Training',
+      restart_training: 'Restarted Training',
+      delete_job: 'Deleted Job',
+      create_validation: 'Created Validation',
+      start_validation: 'Started Validation',
+      login: 'Logged In',
+      logout: 'Logged Out',
+    }
+    return displayNames[action] || action
+  }
+
+  // Helper to get activity icon
+  const getActivityIcon = (action: string) => {
+    if (action.includes('project')) return Plus
+    if (action.includes('dataset')) return Upload
+    if (action.includes('model')) return Box
+    if (action.includes('config')) return FileJson
+    if (action.includes('job')) return Plus
+    if (action.includes('training') && action.includes('start')) return Play
+    if (action.includes('training') && action.includes('stop')) return Pause
+    if (action.includes('training') && action.includes('restart')) return RotateCcw
+    if (action.includes('delete')) return Trash2
+    if (action.includes('login')) return LogIn
+    if (action.includes('logout')) return LogOut
+    return Activity
+  }
+
+  // Helper to get activity color
+  const getActivityColor = (action: string): string => {
+    if (action.includes('create') || action.includes('import')) {
+      return 'text-emerald-600 bg-emerald-50 border-emerald-200'
+    }
+    if (action.includes('update')) {
+      return 'text-blue-600 bg-blue-50 border-blue-200'
+    }
+    if (action.includes('delete')) {
+      return 'text-red-600 bg-red-50 border-red-200'
+    }
+    if (action.includes('start')) {
+      return 'text-green-600 bg-green-50 border-green-200'
+    }
+    if (action.includes('stop')) {
+      return 'text-orange-600 bg-orange-50 border-orange-200'
+    }
+    return 'text-gray-600 bg-gray-50 border-gray-200'
+  }
+
+  // Format relative time
+  const formatRelativeTime = (dateString: string): string => {
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffSecs = Math.floor(diffMs / 1000)
+    const diffMins = Math.floor(diffSecs / 60)
+    const diffHours = Math.floor(diffMins / 60)
+    const diffDays = Math.floor(diffHours / 24)
+
+    if (diffSecs < 60) return 'Just now'
+    if (diffMins < 60) return `${diffMins}m ago`
+    if (diffHours < 24) return `${diffHours}h ago`
+    if (diffDays < 7) return `${diffDays}d ago`
+    return date.toLocaleDateString()
   }
 
   return (
@@ -701,7 +823,11 @@ export function DashboardPage() {
           <CardDescription>Your latest training activities</CardDescription>
         </CardHeader>
         <CardContent>
-          {stats.runningJobs === 0 && stats.completedJobs === 0 ? (
+          {activitiesLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : activities.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <AlertCircle className="w-12 h-12 text-muted-foreground mb-4" />
               <h3 className="text-lg font-medium">No activity yet</h3>
@@ -710,8 +836,36 @@ export function DashboardPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {/* Activity items would go here */}
+            <div className="space-y-3">
+              {activities.map((activity) => {
+                const ActivityIcon = getActivityIcon(activity.action)
+                const colorClass = getActivityColor(activity.action)
+                return (
+                  <div
+                    key={activity.id}
+                    className="flex items-start gap-3 p-3 rounded-lg border bg-card/50 hover:bg-card transition-colors"
+                  >
+                    <div className={`p-2 rounded-md border ${colorClass}`}>
+                      <ActivityIcon className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-sm">
+                          {getActivityDisplayName(activity.action)}
+                        </span>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          {formatRelativeTime(activity.createdAt)}
+                        </span>
+                      </div>
+                      {activity.entityName && (
+                        <p className="text-sm text-muted-foreground mt-0.5 truncate">
+                          {activity.entityType}: {activity.entityName}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </CardContent>

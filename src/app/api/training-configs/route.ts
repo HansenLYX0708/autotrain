@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
+import { logActivity } from "@/lib/activity-log";
 
 // GET /api/training-configs - Get all training configs (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
@@ -129,6 +130,15 @@ export async function POST(request: NextRequest) {
         // YAML config
         yamlConfig: body.yamlConfig,
       },
+    });
+
+    // Log activity
+    await logActivity(userId, {
+      action: 'import_config',
+      entityType: 'config',
+      entityId: config.id,
+      entityName: config.name,
+      details: { projectId: body.projectId, projectName: project.name },
     });
 
     return NextResponse.json(config, { status: 201 });

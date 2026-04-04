@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
+import { logActivity } from "@/lib/activity-log";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -320,6 +321,15 @@ export async function POST(request: NextRequest) {
         model: { select: { id: true, name: true, architecture: true } },
         config: { select: { id: true, name: true } },
       },
+    });
+
+    // Log activity
+    await logActivity(userId, {
+      action: 'create_job',
+      entityType: 'job',
+      entityId: job.id,
+      entityName: job.name,
+      details: { projectId: body.projectId, projectName: project.name },
     });
 
     return NextResponse.json({ ...job, configPath }, { status: 201 });

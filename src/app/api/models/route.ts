@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
+import { logActivity } from "@/lib/activity-log";
 
 // GET /api/models - Get all models with project info (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
@@ -142,6 +143,15 @@ export async function POST(request: Request) {
           },
         },
       },
+    });
+
+    // Log activity
+    await logActivity(userId, {
+      action: 'import_model',
+      entityType: 'model',
+      entityId: model.id,
+      entityName: model.name,
+      details: { projectId, projectName: project.name },
     });
 
     return NextResponse.json(

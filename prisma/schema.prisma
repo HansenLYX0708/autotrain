@@ -27,6 +27,7 @@ model User {
   trainingConfigs TrainingConfig[]
   trainingJobs  TrainingJob[]
   validationJobs ValidationJob[]
+  activityLogs  ActivityLog[]
 }
 model SystemConfig {
   id                    String   @id @default(cuid())
@@ -322,4 +323,21 @@ model GpuMetric {
   temperature Int     // Celsius
   
   timestamp   DateTime @default(now())
+}
+
+// User Activity Log
+model ActivityLog {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  action      String   // create_project, import_dataset, import_model, import_config, create_job, start_training, stop_training, etc.
+  entityType  String   // project, dataset, model, config, job, etc.
+  entityId    String?  // Related entity ID
+  entityName  String?  // Related entity name for display
+  details     String?  // JSON string for additional details
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([userId, createdAt])
 }

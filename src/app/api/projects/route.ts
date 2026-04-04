@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
+import { logActivity } from '@/lib/activity-log';
 
 // GET /api/projects - Get all projects with counts (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
@@ -102,6 +103,14 @@ export async function POST(request: NextRequest) {
           },
         },
       },
+    });
+
+    // Log activity
+    await logActivity(userId, {
+      action: 'create_project',
+      entityType: 'project',
+      entityId: project.id,
+      entityName: project.name,
     });
 
     return NextResponse.json(

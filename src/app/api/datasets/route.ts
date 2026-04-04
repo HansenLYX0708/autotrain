@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
+import { logActivity } from '@/lib/activity-log';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -342,6 +343,15 @@ export async function POST(request: NextRequest) {
       fs.writeFileSync(configFilePath, yamlConfig, 'utf-8');
       console.log(`[Dataset] Saved config to: ${configFilePath}`);
     }
+
+    // Log activity
+    await logActivity(userId, {
+      action: 'import_dataset',
+      entityType: 'dataset',
+      entityId: dataset.id,
+      entityName: dataset.name,
+      details: { projectId: body.projectId, projectName: project.name },
+    });
 
     return NextResponse.json(
       {

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { spawn } from "child_process";
 import { exec } from "child_process";
+import { logActivity } from "@/lib/activity-log";
+import { getCurrentUser } from "@/lib/auth";
 
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
@@ -184,6 +186,17 @@ export async function PUT(
     if (body.status === "running" && existingJob.status !== "running") {
       updateData.startedAt = new Date();
       
+      // Log activity
+      const user = await getCurrentUser(request);
+      if (user) {
+        await logActivity(user.userId, {
+          action: 'start_training',
+          entityType: 'job',
+          entityId: existingJob.id,
+          entityName: existingJob.name,
+        });
+      }
+      
       // Get system config for paths
       const systemConfig = await db.systemConfig.findFirst();
       
@@ -269,16 +282,22 @@ export async function PUT(
 
     // Handle status change to stopped - kill running process
     if (body.status === "stopped" && existingJob.status === "running") {
+      // Log activity
+      const user = await getCurrentUser(request);
+      if (user) {
+        await logActivity(user.userId, {
+          action: 'stop_training',
+          entityType: 'job',
+          entityId: existingJob.id,
+          entityName: existingJob.name,
+        });
+      }
+      
       const process = runningProcesses.get(id);
       if (process) {
-		console.log(`stop test, run stdin`);
-		//process.stdin.write('\x03');
-		console.log(`stop test, run kill SIGINT`);
-        //process.kill('SIGINT');
-		
-		if (process?.pid) {
-			killProcessTree(process.pid);
-		}
+        if (process?.pid) {
+          killProcessTree(process.pid);
+        }
         runningProcesses.delete(id);
       }
     }
@@ -352,6 +371,17 @@ export async function DELETE(
     if (process) {
       process.kill();
       runningProcesses.delete(id);
+    }
+
+    // Log activity
+    const user = await getCurrentUser(request);
+    if (user) {
+      await logActivity(user.userId, {
+        action: 'delete_job',
+        entityType: 'job',
+        entityId: existingJob.id,
+        entityName: existingJob.name,
+      });
     }
 
     // Delete the job (logs will be cascade deleted)
