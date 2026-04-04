@@ -8,13 +8,51 @@ import { join, basename, extname } from 'path';
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
 
-// Quote path if it contains spaces
-function quotePath(path: string): string {
-  if (!path) return '';
-  if (path.includes(' ')) {
-    return `"${path}"`;
+// Helper function to get Python path for a job based on GPU configuration
+async function getPythonPathForJob(trainingJobId: string): Promise<string> {
+  let pythonPath = 'python';
+  
+  if (!trainingJobId) return pythonPath;
+  
+  try {
+    // Get training job to find GPU info
+    const job = await db.trainingJob.findUnique({
+      where: { id: trainingJobId },
+      select: { trainingParams: true },
+    });
+    
+    if (!job?.trainingParams) return pythonPath;
+    
+    // Parse training params for GPU info
+    let trainingParams: Record<string, unknown> = {};
+    try {
+      trainingParams = JSON.parse(job.trainingParams as string);
+    } catch {
+      return pythonPath;
+    }
+    
+    const gpuIdsStr = (trainingParams.gpuIds as string) || '0';
+    const gpuIds = gpuIdsStr.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
+    const primaryGpuId = gpuIds[0] || 0;
+    
+    // Get system config for GPU Python mappings
+    const systemConfig = await db.systemConfig.findFirst();
+    if (systemConfig?.gpuPythonMappings) {
+      try {
+        const gpuMappings = JSON.parse(systemConfig.gpuPythonMappings) as Record<string, { pythonPath: string }>;
+        const mapping = gpuMappings[primaryGpuId.toString()];
+        if (mapping?.pythonPath) {
+          pythonPath = mapping.pythonPath;
+        }
+      } catch (e) {
+        console.error('Failed to parse GPU Python mappings:', e);
+      }
+    }
+  } catch (error) {
+    console.error('Error getting Python path for job:', error);
   }
-  return path;
+  
+  return pythonPath;
 }
 
 // Check if path is likely a file (has image extension)
@@ -180,26 +218,29 @@ export async function POST(request: NextRequest) {
       ? systemConfig?.paddleClasPath
       : systemConfig?.paddleDetectionPath;
 
+    // Get Python path based on training job's GPU configuration
+    const pythonPath = body.trainingJobId 
+      ? await getPythonPathForJob(body.trainingJobId)
+      : 'python';
+
     // Build command based on type - use customCommand if provided
     let command = body.customCommand || '';
     
     if (!command) {
       if (body.type === 'eval') {
-        const configPath = quotePath(body.configPath || '');
-        const weightsPath = quotePath(body.weightsPath || '');
-        command = `python tools/eval.py -c ${configPath} -o weights=${weightsPath}`;
+        const configPath = body.configPath || '';
+        const weightsPath = body.weightsPath || '';
+        command = `${pythonPath} tools/eval.py -c ${configPath} -o weights=${weightsPath}`;
       } else if (body.type === 'infer') {
-        const configPath = quotePath(body.configPath || '');
-        const weightsPath = quotePath(body.weightsPath || '');
+        const configPath = body.configPath || '';
+        const weightsPath = body.weightsPath || '';
         const inputPath = body.inferInputPath || '';
-        const outputPath = body.inferOutputPath ? quotePath(body.inferOutputPath) : 'output/infer_results';
+        const outputPath = body.inferOutputPath || 'output/infer_results';
         
         // Determine if input is a file or directory
-        // Use --infer_img for single image files, --infer_dir for directories
         const inputParam = isImageFile(inputPath) ? '--infer_img' : '--infer_dir';
-        const quotedInputPath = quotePath(inputPath);
         
-        command = `python tools/infer.py -c ${configPath} -o weights=${weightsPath} ${inputParam}=${quotedInputPath} --output_dir=${outputPath}`;
+        command = `${pythonPath} tools/infer.py -c ${configPath} -o weights=${weightsPath} ${inputParam}=${inputPath} --output_dir=${outputPath}`;
       }
     }
 
@@ -237,7 +278,7 @@ export async function POST(request: NextRequest) {
         validationJob.id,
         command,
         workDir,
-        systemConfig?.pythonPath || 'python',
+        pythonPath,
         systemConfig?.condaEnv || null,
         systemConfig?.condaPath || null,
         body.type || 'eval'
@@ -271,6 +312,7 @@ function startValidationProcess(
   console.log(`[Validation ${jobId}] Type: ${type}`);
   console.log(`[Validation ${jobId}] Command: ${command}`);
   console.log(`[Validation ${jobId}] Working directory: ${workDir}`);
+  console.log(`[Validation ${jobId}] Python path: ${pythonPath}`);
 
   // Collect output
   let outputCollector: string[] = [];
@@ -279,47 +321,18 @@ function startValidationProcess(
   const env: Record<string, string> = {
     ...process.env,
     PYTHONUNBUFFERED: '1',
+    PYTHONPATH: workDir,
   };
 
-  // Detect conda environment
-  let detectedCondaEnv: string | null = condaEnv;
+  // Parse command into args
+  // Command format: pythonPath tools/eval.py -c configPath -o weights=weightsPath
+  // or: pythonPath tools/infer.py -c configPath -o weights=weightsPath --infer_img=inputPath --output_dir=outputPath
+  const commandParts = command.split(' ');
+  const execPythonPath = commandParts[0];
+  const args = commandParts.slice(1);
 
-  if (!detectedCondaEnv && pythonPath) {
-    const patterns = [
-      /[\/\\](?:anaconda3|miniconda3|anaconda|miniconda)[\/\\]envs[\/\\]([^\/\\]+)/i,
-      /[\/\\]\.condax[\/\\]([^\/\\]+)/i,
-      /[\/\\]envs[\/\\]([^\/\\]+)/i,
-    ];
-
-    for (const pattern of patterns) {
-      const match = pythonPath.match(pattern);
-      if (match) {
-        detectedCondaEnv = match[1];
-        break;
-      }
-    }
-  }
-
-  // Build final command
-  let fullCommand = command;
-
-  if (detectedCondaEnv) {
-    const condaExec = condaPath || 'conda';
-    const isWindows = workDir.includes('\\') || workDir.match(/^[A-Z]:\\/i);
-    if (isWindows) {
-      fullCommand = `"${condaExec}" run -n ${detectedCondaEnv} --no-capture-output ${fullCommand}`;
-    } else {
-      fullCommand = `${condaExec} run -n ${detectedCondaEnv} --no-capture-output ${fullCommand}`;
-    }
-  } else {
-    let pythonExec = pythonPath || 'python';
-    if (pythonExec.includes(' ')) {
-      pythonExec = `"${pythonExec}"`;
-    }
-    fullCommand = fullCommand.replace(/^python\b/, pythonExec);
-  }
-
-  console.log(`[Validation ${jobId}] Final command: ${fullCommand}`);
+  console.log(`[Validation ${jobId}] Python: ${execPythonPath}`);
+  console.log(`[Validation ${jobId}] Args: ${JSON.stringify(args)}`);
 
   // Update job status to running
   db.validationJob.update({
@@ -327,9 +340,9 @@ function startValidationProcess(
     data: { status: 'running', startedAt: new Date() },
   }).catch(console.error);
 
-  const childProcess = spawn(fullCommand, [], {
+  // Use spawn with args array (Windows compatible)
+  const childProcess = spawn(execPythonPath, args, {
     cwd: workDir,
-    shell: true,
     env,
   });
 

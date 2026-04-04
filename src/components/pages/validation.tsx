@@ -547,29 +547,29 @@ export function ValidationPage() {
     }
   }
 
-  // Generate eval command with proper path quoting
+  // Generate eval command - paths will be quoted by backend if needed
   const generateEvalCommand = () => {
     if (!selectedJob?.configPath || !selectedCheckpoint) return null
     const pythonPath = getPythonPathForJob(selectedJob)
-    const configPath = quotePath(selectedJob.configPath)
-    const weightsPath = quotePath(selectedCheckpoint)
+    const configPath = selectedJob.absoluteConfigPath || selectedJob.configPath
+    const weightsPath = selectedCheckpoint
     return `${pythonPath} tools/eval.py -c ${configPath} -o weights=${weightsPath}`
   }
 
-  // Generate infer command with proper path quoting
+  // Generate infer command - paths will be handled by backend
   const generateInferCommand = () => {
     if (!selectedJob?.configPath || !selectedCheckpoint || !inferInputPath) return null
     const pythonPath = getPythonPathForJob(selectedJob)
-    const configPath = quotePath(selectedJob.configPath)
-    const weightsPath = quotePath(selectedCheckpoint)
-    const inputPath = quotePath(inferInputPath)
+    const configPath = selectedJob.absoluteConfigPath || selectedJob.configPath
+    const weightsPath = selectedCheckpoint
+    const inputPath = inferInputPath
 
     // Use --infer_img for single image files, --infer_dir for directories
     const inputParam = isImageFile(inferInputPath) ? '--infer_img' : '--infer_dir'
 
     let cmd = `${pythonPath} tools/infer.py -c ${configPath} -o weights=${weightsPath} ${inputParam}=${inputPath}`
     if (inferOutputPath) {
-      cmd += ` --output_dir=${quotePath(inferOutputPath)}`
+      cmd += ` --output_dir=${inferOutputPath}`
     }
     return cmd
   }
@@ -591,8 +591,9 @@ export function ValidationPage() {
           trainingJobId: selectedJob.id,
           name: `Eval: ${selectedJob.name}`,
           type: 'eval',
-          configPath: selectedJob.configPath,
+          configPath: selectedJob.absoluteConfigPath || selectedJob.configPath,
           weightsPath: selectedCheckpoint,
+          saveDir: saveDir,
           customCommand: generateEvalCommand(),
           runImmediately: true,
         }),
@@ -629,7 +630,7 @@ export function ValidationPage() {
           trainingJobId: selectedJob.id,
           name: `Infer: ${selectedJob.name}`,
           type: 'infer',
-          configPath: selectedJob.configPath,
+          configPath: selectedJob.absoluteConfigPath || selectedJob.configPath,
           weightsPath: selectedCheckpoint,
           inferInputPath,
           inferOutputPath: inferOutputPath || undefined,
