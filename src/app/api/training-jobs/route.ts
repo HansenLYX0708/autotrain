@@ -185,6 +185,7 @@ export async function POST(request: NextRequest) {
     const systemConfig = await db.systemConfig.findFirst();
     const workDir = systemConfig?.paddleDetectionPath;
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
+    const userDatabasePath = (systemConfig as any)?.userDatabasePath;
 
     // Get current user info for username
     const currentUser = await db.user.findUnique({
@@ -225,7 +226,17 @@ export async function POST(request: NextRequest) {
       yamlParts.push(`# Model Configuration\n${modelYaml}`);
     }
     
-    const mergedYaml = yamlParts.join('\n\n');
+    let mergedYaml = yamlParts.join('\n\n');
+
+    // Update save_dir to absolute path: {userDatabasePath}/{username}/jobs/{job_name}
+    if (userDatabasePath && currentUser.username) {
+      const absoluteSaveDir = path.join(userDatabasePath, currentUser.username, 'jobs', jobName);
+      // Replace save_dir line with absolute path
+      mergedYaml = mergedYaml.replace(
+        /^save_dir:\s*.+$/gm,
+        `save_dir: ${absoluteSaveDir}`
+      );
+    }
 
     // Save to userConfigsPath/{username}/jobs folder, fallback to old path if not set
     let configFilePath: string;

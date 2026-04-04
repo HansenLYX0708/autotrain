@@ -123,8 +123,9 @@ function AppContent() {
         if (envResponse.ok) {
           const envData = await envResponse.json()
           if (envData.success && envData.data) {
+            // New API: check validGpus count and paddleDetection validity
             currentEnvCheck = {
-              pythonValid: envData.data.python?.isValid || false,
+              pythonValid: (envData.data.validGpus || 0) > 0,
               paddleValid: envData.data.paddleDetection?.isValid || false,
             }
             setEnvCheck(currentEnvCheck)

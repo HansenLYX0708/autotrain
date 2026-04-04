@@ -47,6 +47,15 @@ interface GpuInfo {
   temperature: number
 }
 
+interface GpuEnvironmentCheck {
+  gpuId: number
+  pythonPath: string
+  exists: boolean
+  version: string | null
+  isValid: boolean
+  error?: string
+}
+
 interface SystemConfig {
   pythonPath: string
   paddleDetectionPath: string
@@ -54,19 +63,16 @@ interface SystemConfig {
 }
 
 interface EnvironmentCheck {
-  python: {
-    exists: boolean
-    version: string | null
-    isValid: boolean
-    error?: string
-  }
   paddleDetection: {
     exists: boolean
     version: string | null
     isValid: boolean
     error?: string
   }
-  allValid: boolean
+  gpuEnvironments: GpuEnvironmentCheck[]
+  totalGpus: number
+  configuredGpus: number
+  validGpus: number
 }
 
 interface StorageInfo {
@@ -568,40 +574,62 @@ export function DashboardPage() {
               <CardDescription>Version compatibility check</CardDescription>
             </CardHeader>
           <CardContent className="space-y-4">
-            {/* Python Check */}
-            <div className={`p-3 rounded-lg border ${environmentCheck?.python?.isValid ? 'border-emerald-500/30 bg-emerald-50/30' : environmentCheck?.python?.exists ? 'border-red-500/30 bg-red-50/30' : 'border-yellow-500/30 bg-yellow-50/30'}`}>
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5">
-                  {environmentCheck?.python?.isValid ? (
-                    <CheckCircle className="w-5 h-5 text-emerald-500" />
-                  ) : environmentCheck?.python?.exists ? (
-                    <XCircle className="w-5 h-5 text-red-500" />
-                  ) : (
-                    <AlertTriangle className="w-5 h-5 text-yellow-500" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm">Python</span>
-                    {environmentCheck?.python?.version && (
-                      <Badge variant="outline" className="text-xs">
-                        {environmentCheck.python.version}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {environmentCheck?.python?.isValid ? (
-                      <span className="text-emerald-600">Version compatible (3.7 - 3.10)</span>
-                    ) : environmentCheck?.python?.error ? (
-                      <span className="text-red-600">{environmentCheck.python.error}</span>
-                    ) : envCheckLoading ? (
-                      <span>Checking...</span>
-                    ) : (
-                      <span>Not configured</span>
-                    )}
-                  </div>
-                </div>
+            {/* GPU Python Environments */}
+            <div className="space-y-3">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                GPU Python Environments
               </div>
+              {environmentCheck?.gpuEnvironments && environmentCheck.gpuEnvironments.length > 0 ? (
+                environmentCheck.gpuEnvironments.map((gpuEnv) => (
+                  <div key={gpuEnv.gpuId} className={`p-3 rounded-lg border ${gpuEnv.isValid ? 'border-emerald-500/30 bg-emerald-50/30' : gpuEnv.exists ? 'border-red-500/30 bg-red-50/30' : 'border-yellow-500/30 bg-yellow-50/30'}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5">
+                        {gpuEnv.isValid ? (
+                          <CheckCircle className="w-5 h-5 text-emerald-500" />
+                        ) : gpuEnv.exists ? (
+                          <XCircle className="w-5 h-5 text-red-500" />
+                        ) : (
+                          <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-sm">GPU {gpuEnv.gpuId}</span>
+                          {gpuEnv.version && (
+                            <Badge variant="outline" className="text-xs">
+                              {gpuEnv.version}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {gpuEnv.isValid ? (
+                            <span className="text-emerald-600">Python {gpuEnv.version} ready</span>
+                          ) : gpuEnv.error ? (
+                            <span className="text-red-600">{gpuEnv.error}</span>
+                          ) : (
+                            <span>Not configured</span>
+                          )}
+                        </div>
+                        <div className="text-xs font-mono truncate text-muted-foreground mt-1" title={gpuEnv.pythonPath}>
+                          {gpuEnv.pythonPath || 'No path configured'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-3 rounded-lg border border-yellow-500/30 bg-yellow-50/30">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-yellow-500 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-sm">No GPU Environments Configured</span>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Configure GPU Python mappings in Settings to enable training
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* PaddleDetection Check */}
@@ -637,10 +665,6 @@ export function DashboardPage() {
 
             {/* Path Info */}
             <div className="space-y-2 pt-2">
-              <div className="text-xs text-muted-foreground">Python Path</div>
-              <div className="text-xs font-mono truncate text-muted-foreground" title={systemConfig.pythonPath}>
-                {systemConfig.pythonPath || 'Not configured'}
-              </div>
               <div className="text-xs text-muted-foreground">PaddleDetection Path</div>
               <div className="text-xs font-mono truncate text-muted-foreground" title={systemConfig.paddleDetectionPath}>
                 {systemConfig.paddleDetectionPath || 'Not configured'}
@@ -650,13 +674,19 @@ export function DashboardPage() {
             {/* Overall Status */}
             <div className="pt-2 border-t">
               <div className="flex items-center gap-2 text-sm">
-                <div className={`w-2 h-2 rounded-full ${environmentCheck?.allValid ? 'bg-emerald-500' : environmentCheck ? 'bg-red-500' : 'bg-yellow-500'}`} />
+                <div className={`w-2 h-2 rounded-full ${
+                  environmentCheck?.validGpus && environmentCheck?.validGpus > 0 && environmentCheck?.paddleDetection?.isValid
+                    ? 'bg-emerald-500' 
+                    : environmentCheck?.configuredGpus && environmentCheck?.configuredGpus > 0 
+                      ? 'bg-red-500' 
+                      : 'bg-yellow-500'
+                }`} />
                 <span>
-                  {environmentCheck?.allValid 
-                    ? 'Environment Ready' 
-                    : environmentCheck 
-                      ? 'Environment Issues Detected' 
-                      : 'Configure paths in Settings'}
+                  {environmentCheck?.validGpus && environmentCheck?.validGpus > 0 && environmentCheck?.paddleDetection?.isValid
+                    ? `${environmentCheck.validGpus} GPU${environmentCheck.validGpus > 1 ? 's' : ''} Ready` 
+                    : environmentCheck?.configuredGpus && environmentCheck?.configuredGpus > 0 
+                      ? `${environmentCheck.configuredGpus - (environmentCheck.validGpus || 0)} GPU${(environmentCheck.configuredGpus - (environmentCheck.validGpus || 0)) > 1 ? 's' : ''} Have Issues` 
+                      : 'Configure GPU Environments in Settings'}
                 </span>
               </div>
             </div>

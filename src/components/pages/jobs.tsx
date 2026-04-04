@@ -429,6 +429,18 @@ export function JobsPage() {
       return
     }
 
+    // Check for duplicate job name
+    const trimmedName = formData.name.trim()
+    const existingJob = jobs.find(job => job.name.trim() === trimmedName)
+    if (existingJob) {
+      toast({
+        title: 'Duplicate Job Name',
+        description: `A job with name "${trimmedName}" already exists. Please use a different name.`,
+        variant: 'destructive',
+      })
+      return
+    }
+
     setSubmitting(true)
     try {
       const response = await fetch('/api/training-jobs', {
@@ -491,6 +503,52 @@ export function JobsPage() {
 
   const handleUpdateJobStatus = async (jobId: string, status: string) => {
     try {
+      // If starting training, check GPU status first
+      if (status === 'running') {
+        const job = jobs.find(j => j.id === jobId)
+        if (!job) {
+          toast({
+            title: 'Error',
+            description: 'Job not found',
+            variant: 'destructive',
+          })
+          return
+        }
+
+        // Get GPU IDs from job's training params
+        const gpuIdsStr = (job.trainingParams?.gpuIds as string) || '0'
+        const gpuIds = gpuIdsStr.split(',').map(id => parseInt(id.trim(), 10))
+
+        // Check GPU status - only idle GPUs can start training
+        const nonIdleGpus = gpuIds.filter(gpuId => {
+          const gpu = gpus.find(g => g.id === gpuId)
+          const isOccupiedBySystem = occupiedGpuIds.includes(gpuId)
+          return !gpu || gpu.status !== 'idle' || isOccupiedBySystem
+        })
+
+        if (nonIdleGpus.length > 0) {
+          const gpuInfo = nonIdleGpus.map(gpuId => {
+            const gpu = gpus.find(g => g.id === gpuId)
+            const isOccupiedBySystem = occupiedGpuIds.includes(gpuId)
+            if (isOccupiedBySystem) {
+              const jobNames = gpuUsageMap.get(gpuId) || []
+              return `GPU ${gpuId}: In Training${jobNames.length > 0 ? ` (${jobNames.join(', ')})` : ''}`
+            }
+            if (!gpu) {
+              return `GPU ${gpuId}: Not Found`
+            }
+            return `GPU ${gpuId}: ${gpu.status === 'occupied' ? 'Occupied' : 'Unknown'}`
+          }).join(', ')
+
+          toast({
+            title: 'Cannot Start Training',
+            description: `Selected GPU(s) are not idle: ${gpuInfo}. Please wait for current training to complete or select idle GPUs.`,
+            variant: 'destructive',
+          })
+          return
+        }
+      }
+
       const response = await fetch(`/api/training-jobs/${jobId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

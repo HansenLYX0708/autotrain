@@ -7,6 +7,15 @@ import * as path from 'path';
 
 const execAsync = promisify(exec);
 
+interface GpuEnvironmentCheck {
+  gpuId: number;
+  pythonPath: string;
+  exists: boolean;
+  version: string | null;
+  isValid: boolean;
+  error?: string;
+}
+
 interface VersionCheckResult {
   exists: boolean;
   version: string | null;
@@ -15,12 +24,15 @@ interface VersionCheckResult {
 }
 
 interface EnvironmentCheck {
-  python: VersionCheckResult;
   paddleDetection: VersionCheckResult;
+  gpuEnvironments: GpuEnvironmentCheck[];
+  totalGpus: number;
+  configuredGpus: number;
+  validGpus: number;
 }
 
 // Check Python version
-async function checkPythonVersion(pythonPath: string): Promise<VersionCheckResult> {
+async function checkPythonVersion(pythonPath: string): Promise<Omit<GpuEnvironmentCheck, 'gpuId' | 'pythonPath'>> {
   if (!pythonPath || !fs.existsSync(pythonPath)) {
     return {
       exists: false,
@@ -111,7 +123,7 @@ async function checkPaddleDetectionVersion(paddlePath: string): Promise<VersionC
   };
 }
 
-// GET /api/system/environment-check - Check Python and PaddleDetection versions
+// GET /api/system/environment-check - Check Python environments for each GPU and PaddleDetection
 export async function GET(request: NextRequest) {
   try {
     // Get system config
@@ -122,25 +134,57 @@ export async function GET(request: NextRequest) {
         success: false,
         error: 'System configuration not found',
         data: {
-          python: { exists: false, version: null, isValid: false, error: 'Not configured' },
           paddleDetection: { exists: false, version: null, isValid: false, error: 'Not configured' },
+          gpuEnvironments: [],
+          totalGpus: 0,
+          configuredGpus: 0,
+          validGpus: 0,
         },
       });
     }
 
-    const [python, paddleDetection] = await Promise.all([
-      checkPythonVersion(systemConfig.pythonPath || ''),
-      checkPaddleDetectionVersion(systemConfig.paddleDetectionPath || ''),
-    ]);
+    // Check PaddleDetection
+    const paddleDetection = await checkPaddleDetectionVersion(systemConfig.paddleDetectionPath || '');
 
-    const allValid = python.isValid && paddleDetection.isValid;
+    // Parse GPU Python mappings
+    let gpuPythonMappings: Record<string, string> = {};
+    const gpuMappingsConfig = (systemConfig as any).gpuPythonMappings;
+    if (gpuMappingsConfig) {
+      try {
+        gpuPythonMappings = JSON.parse(gpuMappingsConfig);
+      } catch (e) {
+        console.error('Failed to parse gpuPythonMappings:', e);
+      }
+    }
+
+    // Check each GPU's Python environment
+    const gpuEnvironments: GpuEnvironmentCheck[] = [];
+    const gpuEntries = Object.entries(gpuPythonMappings);
+    
+    for (const [gpuIdStr, pythonPath] of gpuEntries) {
+      const gpuId = parseInt(gpuIdStr, 10);
+      if (isNaN(gpuId)) continue;
+
+      const check = await checkPythonVersion(pythonPath);
+      gpuEnvironments.push({
+        gpuId,
+        pythonPath,
+        ...check,
+      });
+    }
+
+    const totalGpus = gpuEnvironments.length;
+    const configuredGpus = gpuEnvironments.filter(g => g.exists).length;
+    const validGpus = gpuEnvironments.filter(g => g.isValid).length;
 
     return NextResponse.json({
       success: true,
       data: {
-        python,
         paddleDetection,
-        allValid,
+        gpuEnvironments,
+        totalGpus,
+        configuredGpus,
+        validGpus,
       },
     });
   } catch (error) {
@@ -150,8 +194,11 @@ export async function GET(request: NextRequest) {
       error: 'Failed to check environment',
       message: error instanceof Error ? error.message : 'Unknown error',
       data: {
-        python: { exists: false, version: null, isValid: false, error: 'Check failed' },
         paddleDetection: { exists: false, version: null, isValid: false, error: 'Check failed' },
+        gpuEnvironments: [],
+        totalGpus: 0,
+        configuredGpus: 0,
+        validGpus: 0,
       },
     }, { status: 500 });
   }
