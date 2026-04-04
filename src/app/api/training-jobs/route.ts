@@ -86,8 +86,25 @@ export async function GET(request: NextRequest) {
       db.trainingJob.count({ where }),
     ]);
 
+    // Get system config for userConfigsPath
+    const systemConfig = await db.systemConfig.findFirst();
+    const userConfigsPath = (systemConfig as any)?.userConfigsPath;
+
+    // Transform jobs to include absolute config paths
+    const transformedJobs = jobs.map(job => {
+      // If configPath is relative and userConfigsPath exists, convert to absolute
+      let absoluteConfigPath = job.configPath;
+      if (userConfigsPath && job.configPath && !path.isAbsolute(job.configPath)) {
+        absoluteConfigPath = path.join(userConfigsPath, job.configPath);
+      }
+      return {
+        ...job,
+        absoluteConfigPath,
+      };
+    });
+
     return NextResponse.json({
-      data: jobs,
+      data: transformedJobs,
       pagination: {
         page,
         limit,

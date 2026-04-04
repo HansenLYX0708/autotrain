@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useToast } from '@/hooks/use-toast'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -51,6 +52,8 @@ import {
   Trash2,
   ChevronDown,
   ChevronUp,
+  Download,
+  FileDown,
 } from 'lucide-react'
 
 // Types
@@ -61,8 +64,10 @@ interface TrainingJob {
   evalCommand: string | null
   inferCommand: string | null
   configPath: string | null
+  absoluteConfigPath?: string | null
   outputDir: string | null
   yamlConfig: string | null
+  trainingParams?: string | null
   project: {
     id: string
     name: string
@@ -77,6 +82,16 @@ interface TrainingJob {
     name: string
     architecture: string
   }
+}
+
+interface GpuPythonMapping {
+  gpuId: string
+  pythonPath: string
+}
+
+interface SystemConfig {
+  paddleDetectionPath: string
+  gpuPythonMappings?: GpuPythonMapping[] | Record<string, { pythonPath: string }>
 }
 
 interface ValidationJob {
@@ -345,6 +360,9 @@ function MetricsDisplay({ result, compact = false }: { result: EvalMetrics; comp
 }
 
 export function ValidationPage() {
+  // Toast hook
+  const { toast } = useToast()
+
   // State
   const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([])
   const [validationJobs, setValidationJobs] = useState<ValidationJob[]>([])
@@ -378,6 +396,75 @@ export function ValidationPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [jobToDelete, setJobToDelete] = useState<ValidationJob | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Export state
+  const [exportRunning, setExportRunning] = useState(false)
+  const [exportedFiles, setExportedFiles] = useState<string[]>([])
+  const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null)
+
+  // Fetch system config for GPU Python mappings
+  const fetchSystemConfig = useCallback(async () => {
+    try {
+      const response = await fetch('/api/settings')
+      if (response.ok) {
+        const data = await response.json()
+        setSystemConfig(data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch system config:', error)
+    }
+  }, [])
+
+  // Get Python path for a job based on its GPU configuration
+  const getPythonPathForJob = (job: TrainingJob | null): string => {
+    if (!job) return 'python'
+
+    const gpuMappings = systemConfig?.gpuPythonMappings
+    if (!gpuMappings) return 'python'
+
+    // Parse trainingParams to get GPU IDs
+    let gpuIds = '0'
+    if (job.trainingParams) {
+      try {
+        const params = JSON.parse(job.trainingParams)
+        gpuIds = params.gpuIds || '0'
+      } catch {
+        // Use default
+      }
+    }
+
+    const primaryGpuId = String(gpuIds).split(',')[0].trim()
+
+    // Handle array format
+    if (Array.isArray(gpuMappings)) {
+      const mapping = gpuMappings.find(m => String(m.gpuId) === primaryGpuId)
+      if (mapping?.pythonPath) return mapping.pythonPath
+      // Fallback to first mapping
+      const fallback = gpuMappings[0]
+      if (fallback?.pythonPath) return fallback.pythonPath
+      return 'python'
+    }
+
+    // Handle object format
+    if (typeof gpuMappings === 'object') {
+      const mapping = gpuMappings[primaryGpuId] ||
+                      gpuMappings[parseInt(primaryGpuId)] ||
+                      gpuMappings['0'] ||
+                      gpuMappings[0]
+      if (mapping?.pythonPath) return mapping.pythonPath
+    }
+
+    return 'python'
+  }
+
+  // Generate export TRT command with absolute paths
+  const generateExportCommand = () => {
+    if (!selectedJob?.absoluteConfigPath || !selectedCheckpoint) return null
+    const pythonPath = getPythonPathForJob(selectedJob)
+    const configPath = selectedJob.absoluteConfigPath
+    const checkpointPath = selectedCheckpoint
+    return `${pythonPath} tools/export_model.py -c "${configPath}" -o weights="${checkpointPath}" trt=True --output_dir "${saveDir}/export_model"`
+  }
 
   // Expanded jobs in history
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set())
@@ -414,7 +501,8 @@ export function ValidationPage() {
   useEffect(() => {
     fetchTrainingJobs()
     fetchValidationJobs()
-  }, [fetchTrainingJobs, fetchValidationJobs])
+    fetchSystemConfig()
+  }, [fetchTrainingJobs, fetchValidationJobs, fetchSystemConfig])
 
   // Update selected job
   useEffect(() => {
@@ -462,22 +550,24 @@ export function ValidationPage() {
   // Generate eval command with proper path quoting
   const generateEvalCommand = () => {
     if (!selectedJob?.configPath || !selectedCheckpoint) return null
+    const pythonPath = getPythonPathForJob(selectedJob)
     const configPath = quotePath(selectedJob.configPath)
     const weightsPath = quotePath(selectedCheckpoint)
-    return `python tools/eval.py -c ${configPath} -o weights=${weightsPath}`
+    return `${pythonPath} tools/eval.py -c ${configPath} -o weights=${weightsPath}`
   }
 
   // Generate infer command with proper path quoting
   const generateInferCommand = () => {
     if (!selectedJob?.configPath || !selectedCheckpoint || !inferInputPath) return null
+    const pythonPath = getPythonPathForJob(selectedJob)
     const configPath = quotePath(selectedJob.configPath)
     const weightsPath = quotePath(selectedCheckpoint)
     const inputPath = quotePath(inferInputPath)
-    
+
     // Use --infer_img for single image files, --infer_dir for directories
     const inputParam = isImageFile(inferInputPath) ? '--infer_img' : '--infer_dir'
-    
-    let cmd = `python tools/infer.py -c ${configPath} -o weights=${weightsPath} ${inputParam}=${inputPath}`
+
+    let cmd = `${pythonPath} tools/infer.py -c ${configPath} -o weights=${weightsPath} ${inputParam}=${inputPath}`
     if (inferOutputPath) {
       cmd += ` --output_dir=${quotePath(inferOutputPath)}`
     }
@@ -665,6 +755,63 @@ export function ValidationPage() {
       }
       return next
     })
+  }
+
+  // Export checkpoint to TensorRT
+  const exportCheckpoint = async () => {
+    if (!selectedJob || !selectedCheckpoint) return
+
+    setExportRunning(true)
+    setExportedFiles([])
+
+    try {
+      const response = await fetch('/api/checkpoints/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: selectedJob.id,
+          checkpointPath: selectedCheckpoint,
+          checkpointName: checkpoints.find(cp => cp.relativePath === selectedCheckpoint)?.name || 'model',
+          configPath: selectedJob.absoluteConfigPath,
+          outputDir: saveDir,
+        }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setExportedFiles(data.exportedFiles || [])
+        toast({
+          title: 'Export completed',
+          description: `Model exported to ${data.outputDir}`,
+        })
+      } else {
+        const error = await response.json()
+        toast({
+          title: 'Export failed',
+          description: error.error || 'Unknown error',
+          variant: 'destructive',
+        })
+      }
+    } catch (error) {
+      console.error('Failed to export checkpoint:', error)
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    } finally {
+      setExportRunning(false)
+    }
+  }
+
+  // Download exported file
+  const downloadExportedFile = (filePath: string) => {
+    const link = document.createElement('a')
+    link.href = `/api/checkpoints/export?path=${encodeURIComponent(filePath)}`
+    link.download = filePath.split('/').pop() || 'model.trt'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
   }
 
   if (loading) {
@@ -897,6 +1044,45 @@ export function ValidationPage() {
                     </>
                   )}
                 </Button>
+
+                <div className="p-4 rounded-lg border bg-muted/50">
+                  <div className="text-sm font-medium mb-2">Export TRT Command</div>
+                  <code className="text-xs break-all block">
+                    {generateExportCommand() || 'Select a training job and checkpoint first'}
+                  </code>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={exportCheckpoint}
+                    disabled={!selectedJob || !selectedCheckpoint || exportRunning}
+                  >
+                    {exportRunning ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Exporting...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4 mr-2" />
+                        Export to TRT
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      if (exportedFiles.length > 0) {
+                        downloadExportedFile(exportedFiles[0])
+                      }
+                    }}
+                    disabled={exportedFiles.length === 0}
+                  >
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Download
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 

@@ -73,6 +73,7 @@ export function getActivityDisplayName(action: ActivityAction): string {
     delete_job: 'Deleted Job',
     create_validation: 'Created Validation',
     start_validation: 'Started Validation',
+    export_model: 'Exported Model to TensorRT',
     login: 'Logged In',
     logout: 'Logged Out',
   }

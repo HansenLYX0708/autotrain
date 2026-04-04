@@ -8,6 +8,41 @@ import { getCurrentUser } from "@/lib/auth";
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
 
+// Helper function to get Python path for a job
+async function getPythonPathForJob(job: any): Promise<string> {
+  const systemConfig = await db.systemConfig.findFirst();
+  
+  // Parse training params for GPU info
+  let trainingParams: Record<string, unknown> = {};
+  try {
+    trainingParams = job?.trainingParams 
+      ? JSON.parse(job.trainingParams as string) 
+      : {};
+  } catch {
+    // Ignore parse errors
+  }
+  
+  const gpuIdsStr = (trainingParams.gpuIds as string) || '0';
+  const gpuIds = gpuIdsStr.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
+  const primaryGpuId = gpuIds[0] || 0;
+  
+  let pythonPath = 'python';
+  
+  if (systemConfig?.gpuPythonMappings) {
+    try {
+      const gpuMappings = JSON.parse(systemConfig.gpuPythonMappings) as Record<string, string>;
+      const gpuSpecificPath = gpuMappings[primaryGpuId.toString()];
+      if (gpuSpecificPath && gpuSpecificPath.trim()) {
+        pythonPath = gpuSpecificPath.trim();
+      }
+    } catch (e) {
+      console.error(`Failed to parse GPU Python mappings:`, e);
+    }
+  }
+  
+  return pythonPath;
+}
+
 // GET /api/training-jobs/[id] - Get a single training job
 export async function GET(
   request: NextRequest,
@@ -108,7 +143,10 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(job);
+    // Get Python path for this job
+    const pythonPath = await getPythonPathForJob(job);
+
+    return NextResponse.json({ ...job, pythonPath });
   } catch (error) {
     console.error("Error fetching training job:", error);
     return NextResponse.json(
