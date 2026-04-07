@@ -281,7 +281,11 @@ export async function POST(request: NextRequest) {
         pythonPath,
         systemConfig?.condaEnv || null,
         systemConfig?.condaPath || null,
-        body.type || 'eval'
+        body.type || 'eval',
+        body.configPath,
+        body.weightsPath,
+        body.inferInputPath,
+        body.inferOutputPath
       );
     }
 
@@ -306,7 +310,11 @@ function startValidationProcess(
   pythonPath: string,
   condaEnv: string | null,
   condaPath: string | null,
-  type: string
+  type: string,
+  configPath?: string,
+  weightsPath?: string,
+  inferInputPath?: string,
+  inferOutputPath?: string
 ) {
   console.log(`\n========== VALIDATION PROCESS START ==========`);
   console.log(`[Validation ${jobId}] Type: ${type}`);
@@ -324,14 +332,30 @@ function startValidationProcess(
     PYTHONPATH: workDir,
   };
 
-  // Parse command into args
-  // Command format: pythonPath tools/eval.py -c configPath -o weights=weightsPath
-  // or: pythonPath tools/infer.py -c configPath -o weights=weightsPath --infer_img=inputPath --output_dir=outputPath
-  const commandParts = command.split(' ');
-  const execPythonPath = commandParts[0];
-  const args = commandParts.slice(1);
+  // Build args array properly to handle spaces in paths
+  // Use the provided pythonPath directly (should be absolute path to python.exe)
+  let args: string[] = [];
+  
+  if (type === 'eval') {
+    // eval: python tools/eval.py -c configPath -o weights=weightsPath
+    args = [
+      'tools/eval.py',
+      '-c', configPath || '',
+      '-o', `weights=${weightsPath || ''}`,
+    ];
+  } else if (type === 'infer') {
+    // infer: python tools/infer.py -c configPath -o weights=weightsPath --infer_img/inputPath --output_dir=outputPath
+    const inputParam = inferInputPath && isImageFile(inferInputPath) ? '--infer_img' : '--infer_dir';
+    args = [
+      'tools/infer.py',
+      '-c', configPath || '',
+      '-o', `weights=${weightsPath || ''}`,
+      `${inputParam}=${inferInputPath || ''}`,
+      `--output_dir=${inferOutputPath || 'output/infer_results'}`,
+    ];
+  }
 
-  console.log(`[Validation ${jobId}] Python: ${execPythonPath}`);
+  console.log(`[Validation ${jobId}] Python: ${pythonPath}`);
   console.log(`[Validation ${jobId}] Args: ${JSON.stringify(args)}`);
 
   // Update job status to running
@@ -341,7 +365,7 @@ function startValidationProcess(
   }).catch(console.error);
 
   // Use spawn with args array (Windows compatible)
-  const childProcess = spawn(execPythonPath, args, {
+  const childProcess = spawn(pythonPath, args, {
     cwd: workDir,
     env,
   });
