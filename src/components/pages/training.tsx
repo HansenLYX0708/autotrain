@@ -1130,10 +1130,6 @@ ${config.outputDir ? `output_dir: ${config.outputDir}` : ''}${config.weights ? `
                       <Copy className="w-4 h-4 mr-2" />
                       Copy
                     </Button>
-                    <Button variant="outline" className="flex-1">
-                      <Download className="w-4 h-4 mr-2" />
-                      Download
-                    </Button>
                   </div>
                 </div>
               ) : (
