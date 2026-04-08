@@ -125,6 +125,7 @@ interface Checkpoint {
   size: number
   mtime: string
   epoch?: number
+  exportedFiles?: string[]
 }
 
 // Eval metrics interface
@@ -524,9 +525,9 @@ export function ValidationPage() {
   const fetchCheckpoints = async (jobId: string, dir?: string) => {
     setCheckpointsLoading(true)
     try {
-      let url = `/api/checkpoints?jobId=${jobId}`
+      let url = `/api/checkpoints?jobId=${jobId}&checkExported=true`
       if (dir) {
-        url = `/api/checkpoints?dir=${encodeURIComponent(dir)}`
+        url = `/api/checkpoints?dir=${encodeURIComponent(dir)}&checkExported=true`
       }
       
       const response = await fetch(url)
@@ -535,9 +536,17 @@ export function ValidationPage() {
         setSaveDir(data.saveDir || '')
         setCheckpoints(data.checkpoints || [])
         if (data.checkpoints && data.checkpoints.length > 0) {
-          setSelectedCheckpoint(data.checkpoints[0].relativePath)
+          const firstCheckpoint = data.checkpoints[0]
+          setSelectedCheckpoint(firstCheckpoint.relativePath)
+          // Auto-populate exported files if they exist for the first checkpoint
+          if (firstCheckpoint.exportedFiles && firstCheckpoint.exportedFiles.length > 0) {
+            setExportedFiles(firstCheckpoint.exportedFiles)
+          } else {
+            setExportedFiles([])
+          }
         } else {
           setSelectedCheckpoint('')
+          setExportedFiles([])
         }
       }
     } catch (error) {
@@ -547,7 +556,17 @@ export function ValidationPage() {
     }
   }
 
-  // Generate eval command - paths will be quoted by backend if needed
+  // Handle checkpoint selection change
+  const handleCheckpointChange = (value: string) => {
+    setSelectedCheckpoint(value)
+    // Find the selected checkpoint and check if it has exported files
+    const selectedCp = checkpoints.find(cp => cp.relativePath === value)
+    if (selectedCp?.exportedFiles && selectedCp.exportedFiles.length > 0) {
+      setExportedFiles(selectedCp.exportedFiles)
+    } else {
+      setExportedFiles([])
+    }
+  }
   const generateEvalCommand = () => {
     if (!selectedJob?.configPath || !selectedCheckpoint) return null
     const pythonPath = getPythonPathForJob(selectedJob)
@@ -805,14 +824,58 @@ export function ValidationPage() {
     }
   }
 
-  // Download exported file
-  const downloadExportedFile = (filePath: string) => {
-    const link = document.createElement('a')
-    link.href = `/api/checkpoints/export?path=${encodeURIComponent(filePath)}`
-    link.download = filePath.split('/').pop() || 'model.trt'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+  // Download exported model folder as zip
+  const downloadExportedFile = async (folderPath: string) => {
+    try {
+      const response = await fetch(`/api/checkpoints/export?path=${encodeURIComponent(folderPath)}&folder=true`)
+      
+      if (!response.ok) {
+        const error = await response.json()
+        toast({
+          title: 'Download failed',
+          description: error.error || 'Failed to download model',
+          variant: 'destructive',
+        })
+        return
+      }
+      
+      // Get filename from Content-Disposition header or use default
+      const contentDisposition = response.headers.get('Content-Disposition')
+      let filename = 'model.zip'
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="([^"]+)"/)
+        if (match) {
+          filename = match[1]
+        }
+      }
+      
+      // Create blob from response
+      const blob = await response.blob()
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      // Clean up
+      window.URL.revokeObjectURL(url)
+      
+      toast({
+        title: 'Download started',
+        description: `Downloading ${filename}`,
+      })
+    } catch (error) {
+      console.error('Download error:', error)
+      toast({
+        title: 'Download failed',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    }
   }
 
   if (loading) {
@@ -943,7 +1006,7 @@ export function ValidationPage() {
                 <Label>Select Checkpoint</Label>
                 <Select 
                   value={selectedCheckpoint} 
-                  onValueChange={setSelectedCheckpoint}
+                  onValueChange={handleCheckpointChange}
                   disabled={checkpointsLoading || checkpoints.length === 0}
                 >
                   <SelectTrigger className="mt-1.5">
@@ -1067,7 +1130,7 @@ export function ValidationPage() {
                     ) : (
                       <>
                         <Download className="w-4 h-4 mr-2" />
-                        Export to TRT
+                        Export
                       </>
                     )}
                   </Button>
@@ -1084,6 +1147,25 @@ export function ValidationPage() {
                     Download
                   </Button>
                 </div>
+                {exportedFiles.length === 0 && selectedCheckpoint && (
+                  <div className="p-3 rounded-lg border bg-amber-50 border-amber-200">
+                    <div className="flex items-center gap-2 text-sm text-amber-700">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <span>No exported TRT model found. Click "Export" to generate it first.</span>
+                    </div>
+                  </div>
+                )}
+                {exportedFiles.length > 0 && (
+                  <div className="p-2 rounded text-xs text-muted-foreground">
+                    <span>File will download to your browser&apos;s default download folder. </span>
+                    <span className="text-blue-600 cursor-pointer hover:underline" onClick={() => {
+                      // Open browser download settings
+                      window.open('chrome://settings/downloads', '_blank')
+                    }}>
+                      Change in browser settings
+                    </span>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

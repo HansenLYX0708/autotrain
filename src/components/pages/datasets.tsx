@@ -153,6 +153,8 @@ export function DatasetsPage() {
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
   const [parsing, setParsing] = useState(false)
   const [detectingClasses, setDetectingClasses] = useState(false)
+  const [deletingFolderDataset, setDeletingFolderDataset] = useState<string | null>(null)
+  const [manageDatasetsDialogOpen, setManageDatasetsDialogOpen] = useState(false)
   const { user } = useAuth()
   const [filterProjectId, setFilterProjectId] = useState<string>('__all__')
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
@@ -342,6 +344,40 @@ export function DatasetsPage() {
       }
     } catch (error) {
       toast({ title: 'Error saving dataset', variant: 'destructive' })
+    }
+  }
+
+  const handleDeleteFolderDataset = async (datasetName: string) => {
+    if (!confirm(`Are you sure you want to delete the dataset folder "${datasetName}"?\n\nThis will permanently delete all files in this folder.`)) {
+      return
+    }
+
+    setDeletingFolderDataset(datasetName)
+    try {
+      const response = await fetch(`/api/datasets/available?name=${encodeURIComponent(datasetName)}`, {
+        method: 'DELETE',
+      })
+      const result = await response.json()
+
+      if (result.success) {
+        toast({ title: `Dataset "${datasetName}" deleted successfully` })
+        // Refresh the available datasets list
+        fetchAvailableDatasets()
+      } else {
+        toast({ 
+          title: 'Failed to delete dataset', 
+          description: result.error || 'Unknown error',
+          variant: 'destructive' 
+        })
+      }
+    } catch (error) {
+      toast({ 
+        title: 'Error deleting dataset', 
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive' 
+      })
+    } finally {
+      setDeletingFolderDataset(null)
     }
   }
 
@@ -809,7 +845,6 @@ export function DatasetsPage() {
               setUploadFiles(null)
               setUploadProgress(0)
               setUploadError(null)
-              setUploadFolderMode(false)
             }
           }}>
             <DialogTrigger asChild>
@@ -886,33 +921,17 @@ export function DatasetsPage() {
                     />
                   </div>
                   <div className="col-span-2 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="upload-files">
-                        {uploadFolderMode ? 'Select Folder' : 'Select Files'}
-                      </Label>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setUploadFolderMode(!uploadFolderMode)
-                          setUploadFiles(null)
-                        }}
-                      >
-                        {uploadFolderMode ? 'Switch to Files' : 'Switch to Folder'}
-                      </Button>
-                    </div>
-                    <Input
+                    <Label htmlFor="upload-files">Select Folder</Label>
+                    <input
                       id="upload-files"
                       type="file"
-                      {...(uploadFolderMode ? { webkitdirectory: '', directory: '' } : { multiple: true })}
+                      {...({ webkitdirectory: '', directory: '' } as any)}
                       onChange={(e) => setUploadFiles(e.target.files)}
                       disabled={uploading}
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                     />
                     <p className="text-xs text-muted-foreground">
-                      {uploadFolderMode
-                        ? 'Select a folder containing your dataset files (images, annotations, etc.)'
-                        : 'You can select multiple files (images, annotations, etc.)'}
+                      Select a folder containing your dataset files (images, annotations, etc.)
                     </p>
                   </div>
                   {uploadFiles && uploadFiles.length > 0 && (
@@ -946,6 +965,77 @@ export function DatasetsPage() {
                   </Button>
                 </DialogFooter>
               </form>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={manageDatasetsDialogOpen} onOpenChange={(open) => {
+            setManageDatasetsDialogOpen(open)
+            if (open) {
+              fetchAvailableDatasets()
+            }
+          }}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <FolderOpen className="w-4 h-4 mr-2" />
+                Manage Uploaded
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Manage Uploaded Datasets</DialogTitle>
+                <DialogDescription>
+                  Delete dataset folders from your COCO directory. This action cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4">
+                {loadingAvailableDatasets ? (
+                  <div className="flex items-center justify-center py-8">
+                    <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
+                    <span className="ml-2 text-muted-foreground">Loading datasets...</span>
+                  </div>
+                ) : availableDatasets.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <FolderOpen className="w-12 h-12 text-muted-foreground mb-4" />
+                    <p className="text-muted-foreground">No dataset folders found in COCO directory</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {availableDatasets.map((dataset) => (
+                      <div key={dataset.name} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <Database className="w-5 h-5 text-muted-foreground" />
+                          <div>
+                            <p className="font-medium">{dataset.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {dataset.hasTrain && <span className="mr-2">Train</span>}
+                              {dataset.hasVal && <span className="mr-2">Val</span>}
+                              {dataset.hasAnnotations && <span>Annotations</span>}
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => handleDeleteFolderDataset(dataset.name)}
+                          disabled={deletingFolderDataset === dataset.name}
+                        >
+                          {deletingFolderDataset === dataset.name ? (
+                            <RefreshCw className="w-4 h-4 animate-spin mr-1" />
+                          ) : (
+                            <Trash2 className="w-4 h-4 mr-1" />
+                          )}
+                          Delete
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setManageDatasetsDialogOpen(false)}>
+                  Close
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
           <Dialog open={dialogOpen} onOpenChange={(open) => {

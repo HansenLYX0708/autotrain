@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,6 +40,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
+import { useAuth } from '@/contexts/auth-context'
 
 interface BoundingBox {
   id: string
@@ -92,6 +94,21 @@ function getInitialLabels(): string[] {
 }
 
 export function AnnotationPage() {
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth()
+  const router = useRouter()
+
+  // Check if user is admin
+  useEffect(() => {
+    if (!authLoading && isAuthenticated && user?.role !== 'admin') {
+      toast({
+        title: 'Access Denied',
+        description: 'Only administrators can access the annotation page.',
+        variant: 'destructive',
+      })
+      router.push('/')
+    }
+  }, [authLoading, isAuthenticated, user, router])
+
   // Image list state
   const [images, setImages] = useState<ImageFile[]>([])
   const [currentIndex, setCurrentIndex] = useState(-1)

@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { promisify } from 'util';
 import { requireAuth, buildUserFilter, getCurrentUser } from '@/lib/auth';
 import { logActivity } from '@/lib/activity-log';
+
+const execAsync = promisify(exec);
 
 // POST /api/checkpoints/export - Export checkpoint to TensorRT format
 export async function POST(request: NextRequest) {
@@ -141,19 +144,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Prepare output directory - use provided outputDir or fallback to job.outputDir
-    // Frontend sends saveDir which is the absolute checkpoint directory
-    const outputDir = providedOutputDir 
-      ? path.join(providedOutputDir, 'export_model')
-      : job.outputDir 
-        ? path.join(job.outputDir, 'export_model')
-        : path.join(
-            process.env.DATABASE_PATH || process.cwd(),
-            'export_model',
-            user?.username || 'default',
-            job.name,
-            (checkpointName || 'model').replace('.pdparams', '')
-          );
+    // Export API: 统一使用标准路径 {userDatabasePath}/{username}/jobs/{jobName}/export_model
+    const userDatabasePath = (systemConfig as any)?.userDatabasePath || process.env.DATABASE_PATH || process.cwd();
+    const username = user?.username || 'default';
+    const outputDir = path.join(userDatabasePath, username, 'jobs', job.name, 'export_model');
 
     // Ensure output directory exists
     if (!fs.existsSync(outputDir)) {
@@ -210,13 +204,13 @@ export async function POST(request: NextRequest) {
 
       exportProcess.on('close', (code) => {
         if (code === 0) {
-          // Find the exported model files
-          const exportedFiles: string[] = [];
+          // Find the exported model folders (子文件夹即为导出的模型)
+          const exportedFolders: string[] = [];
           if (fs.existsSync(outputDir)) {
-            const files = fs.readdirSync(outputDir);
-            files.forEach((file) => {
-              if (file.endsWith('.trt') || file.includes('trt')) {
-                exportedFiles.push(path.join(outputDir, file));
+            const entries = fs.readdirSync(outputDir, { withFileTypes: true });
+            entries.forEach((entry) => {
+              if (entry.isDirectory()) {
+                exportedFolders.push(path.join(outputDir, entry.name));
               }
             });
           }
@@ -226,7 +220,7 @@ export async function POST(request: NextRequest) {
               success: true,
               message: 'Export completed successfully',
               outputDir,
-              exportedFiles,
+              exportedFiles: exportedFolders, // 返回文件夹路径
               jobId,
               checkpointName,
             })
@@ -289,16 +283,18 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
-    const filePath = searchParams.get('path');
+    const folderPath = searchParams.get('path');
+    const isFolder = searchParams.get('folder') === 'true';
 
-    if (!filePath) {
-      return NextResponse.json({ error: 'File path required' }, { status: 400 });
+    if (!folderPath) {
+      return NextResponse.json({ error: 'Path required' }, { status: 400 });
     }
 
-    // Security check - ensure file is within user's export_model directory
-    const basePath = process.env.DATABASE_PATH || process.cwd();
-    const allowedBase = path.join(basePath, 'export_model', user.username || 'default');
-    const resolvedPath = path.resolve(filePath);
+    // Security check - ensure file is within user's jobs directory
+    const systemConfig = await db.systemConfig.findFirst();
+    const userDatabasePath = (systemConfig as any)?.userDatabasePath || process.env.DATABASE_PATH || process.cwd();
+    const allowedBase = path.join(userDatabasePath, user.username || 'default', 'jobs');
+    const resolvedPath = path.resolve(folderPath);
     const resolvedAllowed = path.resolve(allowedBase);
 
     if (!resolvedPath.startsWith(resolvedAllowed)) {
@@ -306,9 +302,67 @@ export async function GET(request: NextRequest) {
     }
 
     if (!fs.existsSync(resolvedPath)) {
-      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Path not found' }, { status: 404 });
     }
 
+    // If it's a folder, create a zip file
+    if (isFolder && fs.statSync(resolvedPath).isDirectory()) {
+      try {
+        const files = fs.readdirSync(resolvedPath);
+        if (files.length === 0) {
+          return NextResponse.json({ error: 'Folder is empty' }, { status: 404 });
+        }
+        
+        // Create a temporary zip file
+        const tempDir = path.join(process.cwd(), 'temp');
+        if (!fs.existsSync(tempDir)) {
+          fs.mkdirSync(tempDir, { recursive: true });
+        }
+        
+        const folderName = path.basename(resolvedPath);
+        const zipFileName = `${folderName}.zip`;
+        const zipFilePath = path.join(tempDir, zipFileName);
+        
+        // Use PowerShell on Windows to create zip (built-in)
+        const isWindows = process.platform === 'win32';
+        let zipCommand: string;
+        
+        if (isWindows) {
+          // Windows PowerShell Compress-Archive
+          zipCommand = `powershell.exe -Command "Compress-Archive -Path '${resolvedPath.replace(/'/g, "''")}\\*' -DestinationPath '${zipFilePath.replace(/'/g, "''")}' -Force"`;
+        } else {
+          // Linux/Mac use zip command
+          zipCommand = `cd "${resolvedPath}" && zip -r "${zipFilePath}" .`;
+        }
+        
+        await execAsync(zipCommand);
+        
+        // Read the zip file
+        const zipBuffer = fs.readFileSync(zipFilePath);
+        
+        // Clean up temp file
+        try {
+          fs.unlinkSync(zipFilePath);
+        } catch {
+          // Ignore cleanup errors
+        }
+        
+        return new NextResponse(zipBuffer, {
+          headers: {
+            'Content-Type': 'application/zip',
+            'Content-Disposition': `attachment; filename="${zipFileName}"`,
+          },
+        });
+      } catch (error) {
+        console.error('Failed to create zip:', error);
+        return NextResponse.json(
+          { error: 'Failed to create zip archive', details: error instanceof Error ? error.message : 'Unknown error' },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Single file download
     const fileBuffer = fs.readFileSync(resolvedPath);
     const fileName = path.basename(resolvedPath);
 

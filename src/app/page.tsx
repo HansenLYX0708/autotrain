@@ -56,6 +56,7 @@ import { UserManagementPage } from '@/components/pages/users'
 import { ChangePasswordDialog } from '@/components/change-password-dialog'
 import { AuthProvider } from '@/contexts/auth-context'
 
+// 基础导航（所有用户可见）
 const navigation = [
   { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
   { id: 'projects', name: 'Projects', icon: FolderKanban },
@@ -65,7 +66,12 @@ const navigation = [
   { id: 'jobs', name: 'Jobs', icon: ListTodo },
   { id: 'monitoring', name: 'Monitoring', icon: Activity },
   { id: 'validation', name: 'Validation', icon: CheckCircle2 },
+]
+
+// 管理员专属导航
+const adminNavigation = [
   { id: 'annotation', name: 'Annotation', icon: PencilRuler },
+  { id: 'users', name: 'User Management', icon: Users },
 ]
 
 const pageComponents: Record<string, React.ComponentType> = {
@@ -203,9 +209,9 @@ function AppContent() {
 
   const isAdmin = user?.role === 'admin'
 
-  // Add user management for admin
+  // 合并导航：管理员看到所有，普通用户只看到基础导航
   const allNavigation = isAdmin
-    ? [...navigation, { id: 'users', name: 'User Management', icon: Users }]
+    ? [...navigation, ...adminNavigation]
     : navigation
 
   const PageComponent = pageComponents[currentPage]
@@ -227,7 +233,7 @@ function AppContent() {
                 <Bot className="w-5 h-5 text-white" />
               </div>
               {!sidebarCollapsed && (
-                <span className="font-semibold text-lg">HawkeyePlus</span>
+                <span className="font-semibold text-lg">Hawkeye+</span>
               )}
             </div>
           </div>

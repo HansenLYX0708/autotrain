@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const jobId = searchParams.get('jobId');
     const customDir = searchParams.get('dir');
+    const checkExported = searchParams.get('checkExported') === 'true';
 
     let saveDir = customDir;
 
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest) {
       const job = await db.trainingJob.findUnique({
         where: { id: jobId },
         include: {
-          project: { select: { name: true } },
+          project: { select: { name: true, user: { select: { username: true } } } },
         },
       });
 
@@ -100,10 +101,33 @@ export async function GET(request: NextRequest) {
       size: number;
       mtime: string;
       epoch?: number;
+      exportedFiles?: string[];
     }> = [];
 
     // Read directory contents
     const files = fs.readdirSync(fullPath);
+    
+    // Check for exported files - 统一检查 {userDatabasePath}/{username}/jobs/{jobName}/export_model
+    let hasExportDir = false;
+    let exportModelDir = '';
+    
+    if (checkExported && jobId) {
+      // 重新获取 job 信息以确定正确的 job name
+      const jobForExport = await db.trainingJob.findUnique({
+        where: { id: jobId },
+        select: { name: true, project: { select: { user: { select: { username: true } } } } }
+      });
+      
+      if (jobForExport) {
+        const systemConfig = await db.systemConfig.findFirst();
+        const userDatabasePath = (systemConfig as any)?.userDatabasePath || process.env.DATABASE_PATH || process.cwd();
+        const jobUsername = jobForExport.project?.user?.username || 'default';
+        
+        // 统一路径: {userDatabasePath}/{username}/jobs/{jobName}/export_model
+        exportModelDir = path.join(userDatabasePath, jobUsername, 'jobs', jobForExport.name, 'export_model');
+        hasExportDir = fs.existsSync(exportModelDir);
+      }
+    }
     
     for (const file of files) {
       if (file.endsWith('.pdparams')) {
@@ -119,14 +143,33 @@ export async function GET(request: NextRequest) {
           ? filePath 
           : path.join(saveDir, file);
 
-        checkpoints.push({
+        const checkpoint: typeof checkpoints[0] = {
           name: file,
           path: filePath,
           relativePath: relativePath.replace(/\\/g, '/'),
           size: stats.size,
           mtime: stats.mtime.toISOString(),
           epoch,
-        });
+        };
+        
+        // Check for exported model folders - 扫描 export_model 下的子文件夹
+        if (hasExportDir) {
+          try {
+            const exportEntries = fs.readdirSync(exportModelDir, { withFileTypes: true });
+            // 只获取子文件夹（每个子文件夹是一个导出的模型）
+            const modelFolders = exportEntries
+              .filter(entry => entry.isDirectory())
+              .map(entry => path.join(exportModelDir, entry.name));
+            
+            if (modelFolders.length > 0) {
+              checkpoint.exportedFiles = modelFolders;
+            }
+          } catch {
+            // Ignore errors reading export directory
+          }
+        }
+
+        checkpoints.push(checkpoint);
       }
     }
 
@@ -147,6 +190,7 @@ export async function GET(request: NextRequest) {
       fullPath,
       checkpoints,
       count: checkpoints.length,
+      exportModelDir: hasExportDir ? exportModelDir : undefined,
     });
   } catch (error) {
     console.error('Error getting checkpoints:', error);

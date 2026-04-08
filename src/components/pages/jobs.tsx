@@ -53,6 +53,7 @@ import {
   Cpu,
   Filter,
   X,
+  FileX,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 
@@ -157,6 +158,7 @@ export function JobsPage() {
   const [gpus, setGpus] = useState<GPUInfo[]>([])
   const [occupiedGpuIds, setOccupiedGpuIds] = useState<number[]>([])
   const [gpuUsageMap, setGpuUsageMap] = useState<Map<number, string[]>>(new Map())
+  const [deletingJobFiles, setDeletingJobFiles] = useState<string | null>(null)
 
   // Fetch GPU usage info from running jobs
   const fetchGpuUsage = async () => {
@@ -482,16 +484,57 @@ export function JobsPage() {
     }
   }
 
-  const handleDeleteJob = async (jobId: string) => {
-    if (!confirm('Are you sure you want to delete this training job?')) {
+  const handleDeleteJobFiles = async (jobId: string, jobName: string) => {
+    if (!confirm(`Are you sure you want to delete all checkpoint and export model files for job "${jobName}"?\n\nThis will permanently delete the entire job folder.`)) {
+      return
+    }
+    setDeletingJobFiles(jobId)
+    try {
+      const response = await fetch(`/api/training-jobs/${jobId}/files`, {
+        method: 'DELETE',
+      })
+      const result = await response.json()
+      if (result.success) {
+        toast({ 
+          title: 'Job files deleted successfully',
+          description: result.message || `Deleted folder: ${result.path}`
+        })
+      } else {
+        throw new Error(result.error || 'Failed to delete job files')
+      }
+    } catch (error) {
+      toast({ 
+        title: 'Error deleting job files', 
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive' 
+      })
+    } finally {
+      setDeletingJobFiles(null)
+    }
+  }
+
+  const handleDeleteJob = async (jobId: string, jobName: string) => {
+    if (!confirm(`Are you sure you want to delete this training job "${jobName}"?\n\nThis will also delete all checkpoint and export model files associated with this job.`)) {
       return
     }
     try {
+      // First delete all job files (checkpoints and export models)
+      const filesResponse = await fetch(`/api/training-jobs/${jobId}/files`, {
+        method: 'DELETE',
+      })
+      const filesResult = await filesResponse.json()
+      
+      // Then delete the job from database
       const response = await fetch(`/api/training-jobs/${jobId}`, {
         method: 'DELETE',
       })
       if (response.ok) {
-        toast({ title: 'Job deleted successfully' })
+        toast({ 
+          title: 'Job deleted successfully',
+          description: filesResult.success 
+            ? `Job record and all associated files have been deleted.`
+            : `Job record deleted (files may not exist).`
+        })
         fetchJobs()
       } else {
         throw new Error('Failed to delete job')
@@ -1121,12 +1164,24 @@ export function JobsPage() {
                               <Copy className="w-4 h-4 mr-2" />
                               Copy Command
                             </DropdownMenuItem>
+                            <DropdownMenuItem 
+                              className="text-amber-600"
+                              onClick={() => handleDeleteJobFiles(job.id, job.name)}
+                              disabled={deletingJobFiles === job.id}
+                            >
+                              {deletingJobFiles === job.id ? (
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              ) : (
+                                <FileX className="w-4 h-4 mr-2" />
+                              )}
+                              Delete Files
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               className="text-destructive"
-                              onClick={() => handleDeleteJob(job.id)}
+                              onClick={() => handleDeleteJob(job.id, job.name)}
                             >
                               <Trash2 className="w-4 h-4 mr-2" />
-                              Delete
+                              Delete Job
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
