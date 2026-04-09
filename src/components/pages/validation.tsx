@@ -804,6 +804,7 @@ export function ValidationPage() {
           title: 'Export completed',
           description: `Model exported to ${data.outputDir}`,
         })
+        return data
       } else {
         const error = await response.json()
         toast({
@@ -821,6 +822,23 @@ export function ValidationPage() {
       })
     } finally {
       setExportRunning(false)
+    }
+  }
+
+  // Combined export and download function
+  const handleExportAndDownload = async () => {
+    if (!selectedJob || !selectedCheckpoint) return
+
+    // If already exported, download directly
+    if (exportedFiles.length > 0) {
+      await downloadExportedFile(exportedFiles[0])
+      return
+    }
+
+    // Otherwise, export first then download
+    const data = await exportCheckpoint()
+    if (data?.exportedFiles && data.exportedFiles.length > 0) {
+      await downloadExportedFile(data.exportedFiles[0])
     }
   }
 
@@ -1116,42 +1134,28 @@ export function ValidationPage() {
                   </code>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={exportCheckpoint}
-                    disabled={!selectedJob || !selectedCheckpoint || exportRunning}
-                  >
-                    {exportRunning ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Exporting...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4 mr-2" />
-                        Export
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      if (exportedFiles.length > 0) {
-                        downloadExportedFile(exportedFiles[0])
-                      }
-                    }}
-                    disabled={exportedFiles.length === 0}
-                  >
-                    <FileDown className="w-4 h-4 mr-2" />
-                    Download
-                  </Button>
-                </div>
+                <Button
+                  className="w-full"
+                  onClick={handleExportAndDownload}
+                  disabled={!selectedJob || !selectedCheckpoint || exportRunning}
+                >
+                  {exportRunning ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Exporting & Downloading...
+                    </>
+                  ) : (
+                    <>
+                      <FileDown className="w-4 h-4 mr-2" />
+                      Download
+                    </>
+                  )}
+                </Button>
                 {exportedFiles.length === 0 && selectedCheckpoint && (
                   <div className="p-3 rounded-lg border bg-amber-50 border-amber-200">
                     <div className="flex items-center gap-2 text-sm text-amber-700">
                       <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                      <span>No exported TRT model found. Click "Export" to generate it first.</span>
+                      <span>No exported TRT model found. Click "Download" to export and download.</span>
                     </div>
                   </div>
                 )}
