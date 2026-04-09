@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useState } from 'react'
+import { useAuth } from '@/contexts/auth-context'
 import {
   Tooltip,
   TooltipContent,
@@ -66,6 +67,8 @@ const navigation = [
 export function AppSidebar() {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -122,24 +125,26 @@ export function AppSidebar() {
 
         {/* Settings & Collapse */}
         <div className="border-t border-border p-2 space-y-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Link
-                href="/settings"
-                className={cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors'
-                )}
-              >
-                <Settings className="w-5 h-5 flex-shrink-0" />
-                {!collapsed && <span>Settings</span>}
-              </Link>
-            </TooltipTrigger>
-            {collapsed && (
-              <TooltipContent side="right">
-                Settings
-              </TooltipContent>
-            )}
-          </Tooltip>
+          {isAdmin && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  href="/settings"
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors'
+                  )}
+                >
+                  <Settings className="w-5 h-5 flex-shrink-0" />
+                  {!collapsed && <span>Settings</span>}
+                </Link>
+              </TooltipTrigger>
+              {collapsed && (
+                <TooltipContent side="right">
+                  Settings
+                </TooltipContent>
+              )}
+            </Tooltip>
+          )}
           
           <Button
             variant="ghost"

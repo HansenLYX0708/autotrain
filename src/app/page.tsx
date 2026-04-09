@@ -23,6 +23,7 @@ import {
   LogOut,
   Lock,
   AlertCircle,
+  BookOpen,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -53,6 +54,7 @@ import { ValidationPage } from '@/components/pages/validation'
 import { SettingsPage } from '@/components/pages/settings'
 import { AnnotationPage } from '@/components/pages/annotation'
 import { UserManagementPage } from '@/components/pages/users'
+import { UserManualPage } from '@/components/pages/user-manual'
 import { ChangePasswordDialog } from '@/components/change-password-dialog'
 import { AuthProvider } from '@/contexts/auth-context'
 
@@ -86,12 +88,14 @@ const pageComponents: Record<string, React.ComponentType> = {
   annotation: AnnotationPage,
   settings: SettingsPage,
   users: UserManagementPage,
+  manual: UserManualPage,
 }
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('dashboard')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [showManual, setShowManual] = useState(false)
   const { setTheme, theme } = useTheme()
   const { user, isLoading, isAuthenticated, logout } = useAuth()
   
@@ -271,25 +275,27 @@ function AppContent() {
 
           {/* Settings & Collapse */}
           <div className="border-t border-border p-2 space-y-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setCurrentPage('settings')}
-                  className={cn(
-                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors',
-                    currentPage === 'settings' && 'bg-accent text-accent-foreground'
-                  )}
-                >
-                  <Settings className="w-5 h-5 flex-shrink-0" />
-                  {!sidebarCollapsed && <span>Settings</span>}
-                </button>
-              </TooltipTrigger>
-              {sidebarCollapsed && (
-                <TooltipContent side="right">
-                  Settings
-                </TooltipContent>
-              )}
-            </Tooltip>
+            {isAdmin && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setCurrentPage('settings')}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors',
+                      currentPage === 'settings' && 'bg-accent text-accent-foreground'
+                    )}
+                  >
+                    <Settings className="w-5 h-5 flex-shrink-0" />
+                    {!sidebarCollapsed && <span>Settings</span>}
+                  </button>
+                </TooltipTrigger>
+                {sidebarCollapsed && (
+                  <TooltipContent side="right">
+                    Settings
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            )}
             
             <Button
               variant="ghost"
@@ -334,6 +340,17 @@ function AppContent() {
                     Admin
                   </Badge>
                 )}
+
+                {/* User Manual Button */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowManual(true)}
+                >
+                  <BookOpen className="w-4 h-4" />
+                  <span className="hidden sm:inline">Manual</span>
+                </Button>
 
                 {/* Status indicator */}
                 {(() => {
@@ -444,12 +461,27 @@ function AppContent() {
 
           {/* Page Content */}
           <main className="flex-1 p-6 overflow-auto">
-            {PageComponent && <PageComponent />}
+            {showManual ? (
+              <UserManualPage onBack={() => setShowManual(false)} />
+            ) : (
+              PageComponent && <PageComponent />
+            )}
           </main>
 
           {/* Footer */}
           <footer className="h-10 border-t border-border bg-card/50 flex items-center justify-between px-6 text-xs text-muted-foreground shrink-0">
-            <div>HawkeyePlus v1.0.0</div>
+            <div className="flex items-center gap-4">
+              <span>HawkeyePlus v1.0.0</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs gap-1"
+                onClick={() => setShowManual(true)}
+              >
+                <BookOpen className="w-3 h-3" />
+                User Manual
+              </Button>
+            </div>
             <div className="flex items-center gap-4">
               <span>AutoTrain Platform</span>
             </div>
