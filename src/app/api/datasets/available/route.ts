@@ -44,6 +44,48 @@ async function scanAnnotations(annotationsPath: string): Promise<string[]> {
   return jsonFiles;
 }
 
+// Scan a directory for JSON files in labelme format
+async function scanLabelmeJsons(jsonsPath: string): Promise<string[]> {
+  const jsonFiles: string[] = [];
+  try {
+    if (!existsSync(jsonsPath)) {
+      return jsonFiles;
+    }
+    const entries = await readdir(jsonsPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.json')) {
+        jsonFiles.push(entry.name);
+      }
+    }
+  } catch (error) {
+    console.error('Error scanning labelme jsons:', error);
+  }
+  return jsonFiles;
+}
+
+// Scan a directory for image files
+async function scanImages(imgsPath: string): Promise<string[]> {
+  const imageFiles: string[] = [];
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+  try {
+    if (!existsSync(imgsPath)) {
+      return imageFiles;
+    }
+    const entries = await readdir(imgsPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const ext = entry.name.slice(entry.name.lastIndexOf('.')).toLowerCase();
+        if (imageExtensions.includes(ext)) {
+          imageFiles.push(entry.name);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error scanning images:', error);
+  }
+  return imageFiles;
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Get current user from session
@@ -76,81 +118,128 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Build the COCO path: {userDatabasePath}/{username}/COCO
+    // Build paths for both COCO and labelme formats
     const cocoPath = join(userDatabasePath, user.username, "COCO");
+    const labelmePath = join(userDatabasePath, user.username, "labelme");
 
-    // Check if COCO directory exists
-    if (!existsSync(cocoPath)) {
-      return NextResponse.json({
-        success: true,
-        datasets: [],
-        message: "COCO directory does not exist"
-      });
-    }
-
-    // Read all dataset directories in COCO folder
-    // Each dataset folder should contain a "data" subfolder with train/val/annotations
+    // Read all dataset directories from both COCO and labelme folders
     const datasets: Array<{
       name: string;
       path: string;
+      format: 'COCO' | 'labelme';
       hasTrain: boolean;
       hasVal: boolean;
       hasAnnotations: boolean;
+      hasImgs: boolean;
+      hasJsons: boolean;
       trainAnnotations: string[];
       valAnnotations: string[];
+      images: string[];
+      jsons: string[];
     }> = [];
 
-    const entries = await readdir(cocoPath, { withFileTypes: true });
+    // Scan COCO format datasets
+    if (existsSync(cocoPath)) {
+      const cocoEntries = await readdir(cocoPath, { withFileTypes: true });
 
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const datasetPath = join(cocoPath, entry.name);
-        const dataPath = join(datasetPath, "data");
-        
-        // Check if data subfolder exists
-        if (!existsSync(dataPath)) {
-          continue; // Skip folders without data subfolder
-        }
-        
-        const trainPath = join(dataPath, "train");
-        const valPath = join(dataPath, "val");
-        const annotationsPath = join(dataPath, "annotations");
+      for (const entry of cocoEntries) {
+        if (entry.isDirectory()) {
+          const datasetPath = join(cocoPath, entry.name);
+          const dataPath = join(datasetPath, "data");
 
-        const hasTrain = existsSync(trainPath);
-        const hasVal = existsSync(valPath);
-        const hasAnnotations = existsSync(annotationsPath);
+          // Check if data subfolder exists
+          if (!existsSync(dataPath)) {
+            continue;
+          }
 
-        // Scan for annotation files
-        const trainAnnotations: string[] = [];
-        const valAnnotations: string[] = [];
+          const trainPath = join(dataPath, "train");
+          const valPath = join(dataPath, "val");
+          const annotationsPath = join(dataPath, "annotations");
 
-        if (hasAnnotations) {
-          const annoFiles = await scanAnnotations(annotationsPath);
-          for (const file of annoFiles) {
-            if (file.toLowerCase().includes('train')) {
-              trainAnnotations.push(`data/annotations/${file}`);
-            } else if (file.toLowerCase().includes('val') || file.toLowerCase().includes('valid')) {
-              valAnnotations.push(`data/annotations/${file}`);
+          const hasTrain = existsSync(trainPath);
+          const hasVal = existsSync(valPath);
+          const hasAnnotations = existsSync(annotationsPath);
+
+          // Scan for annotation files
+          const trainAnnotations: string[] = [];
+          const valAnnotations: string[] = [];
+
+          if (hasAnnotations) {
+            const annoFiles = await scanAnnotations(annotationsPath);
+            for (const file of annoFiles) {
+              if (file.toLowerCase().includes('train')) {
+                trainAnnotations.push(`data/annotations/${file}`);
+              } else if (file.toLowerCase().includes('val') || file.toLowerCase().includes('valid')) {
+                valAnnotations.push(`data/annotations/${file}`);
+              }
             }
           }
-        }
 
-        datasets.push({
-          name: entry.name,
-          path: datasetPath,
-          hasTrain,
-          hasVal,
-          hasAnnotations,
-          trainAnnotations,
-          valAnnotations,
-        });
+          datasets.push({
+            name: entry.name,
+            path: datasetPath,
+            format: 'COCO',
+            hasTrain,
+            hasVal,
+            hasAnnotations,
+            hasImgs: false,
+            hasJsons: false,
+            trainAnnotations,
+            valAnnotations,
+            images: [],
+            jsons: [],
+          });
+        }
+      }
+    }
+
+    // Scan labelme format datasets
+    if (existsSync(labelmePath)) {
+      const labelmeEntries = await readdir(labelmePath, { withFileTypes: true });
+
+      for (const entry of labelmeEntries) {
+        if (entry.isDirectory()) {
+          const datasetPath = join(labelmePath, entry.name);
+          const dataPath = join(datasetPath, "data");
+
+          // Check if data subfolder exists
+          if (!existsSync(dataPath)) {
+            continue;
+          }
+
+          const imgsPath = join(dataPath, "imgs");
+          const jsonsPath = join(dataPath, "jsons");
+
+          const hasImgs = existsSync(imgsPath);
+          const hasJsons = existsSync(jsonsPath);
+
+          // Scan for images and json files
+          const images: string[] = hasImgs ? await scanImages(imgsPath) : [];
+          const jsons: string[] = hasJsons ? await scanLabelmeJsons(jsonsPath) : [];
+
+          datasets.push({
+            name: entry.name,
+            path: datasetPath,
+            format: 'labelme',
+            hasTrain: false,
+            hasVal: false,
+            hasAnnotations: false,
+            hasImgs,
+            hasJsons,
+            trainAnnotations: [],
+            valAnnotations: [],
+            images,
+            jsons,
+          });
+        }
       }
     }
 
     return NextResponse.json({
       success: true,
       datasets,
-      cocoPath,
+      cocoPath: existsSync(cocoPath) ? cocoPath : null,
+      labelmePath: existsSync(labelmePath) ? labelmePath : null,
     });
 
   } catch (error) {
@@ -206,13 +295,25 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Build the dataset path: {userDatabasePath}/{username}/COCO/{datasetName}
-    const datasetPath = join(userDatabasePath, user.username, "COCO", datasetName);
+    // Try to find dataset in both COCO and labelme paths
+    const cocoDatasetPath = join(userDatabasePath, user.username, "COCO", datasetName);
+    const labelmeDatasetPath = join(userDatabasePath, user.username, "labelme", datasetName);
 
-    // Check if dataset directory exists
-    if (!existsSync(datasetPath)) {
+    let datasetPath: string | null = null;
+    let format: 'COCO' | 'labelme' | null = null;
+
+    if (existsSync(cocoDatasetPath)) {
+      datasetPath = cocoDatasetPath;
+      format = 'COCO';
+    } else if (existsSync(labelmeDatasetPath)) {
+      datasetPath = labelmeDatasetPath;
+      format = 'labelme';
+    }
+
+    // Check if dataset directory exists in either location
+    if (!datasetPath) {
       return NextResponse.json(
-        { error: "Dataset not found", path: datasetPath },
+        { error: "Dataset not found", searchedPaths: [cocoDatasetPath, labelmeDatasetPath] },
         { status: 404 }
       );
     }
@@ -220,12 +321,13 @@ export async function DELETE(request: NextRequest) {
     // Delete the dataset directory recursively
     await deleteDirectory(datasetPath);
 
-    console.log(`[Dataset Delete] Deleted dataset folder: ${datasetPath}`);
+    console.log(`[Dataset Delete] Deleted ${format} dataset folder: ${datasetPath}`);
 
     return NextResponse.json({
       success: true,
-      message: `Dataset "${datasetName}" deleted successfully`,
+      message: `Dataset "${datasetName}" (${format} format) deleted successfully`,
       path: datasetPath,
+      format,
     });
 
   } catch (error) {
