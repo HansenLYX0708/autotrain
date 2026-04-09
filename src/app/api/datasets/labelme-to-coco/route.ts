@@ -79,9 +79,9 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // Validate required fields
-    if (!projectId || !name || !labelmeImagesPath || !labelmeAnnotationsPath) {
+    if (!name || !labelmeImagesPath || !labelmeAnnotationsPath) {
       return NextResponse.json(
-        { error: 'Missing required fields: projectId, name, labelmeImagesPath, labelmeAnnotationsPath' },
+        { error: 'Missing required fields: name, labelmeImagesPath, labelmeAnnotationsPath' },
         { status: 400 }
       );
     }
@@ -99,24 +99,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (train <= 0 || val <= 0 || train + val >= 1.0) {
+    if (train <= 0 || val <= 0) {
       return NextResponse.json(
-        { error: 'Train and Val ratios must be positive and less than 1.0' },
+        { error: 'Train and Val ratios must be positive' },
         { status: 400 }
       );
     }
 
-    // Get project and verify user access
-    const project = await db.project.findFirst({
-      where: role === 'admin' 
-        ? { id: projectId }
-        : { id: projectId, userId },
-    });
-
-    if (!project) {
+    if (train + val > 1.0) {
       return NextResponse.json(
-        { error: 'Project not found or access denied' },
-        { status: 404 }
+        { error: 'Train + Val ratios must not exceed 1.0' },
+        { status: 400 }
       );
     }
 
@@ -155,17 +148,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check if dataset name already exists in COCO directory
+    const cocoBasePath = path.join(workDir, 'dataset', 'COCO');
+    const existingDatasetPath = path.join(cocoBasePath, name);
+    
+    if (fs.existsSync(existingDatasetPath)) {
+      return NextResponse.json(
+        { error: `Dataset "${name}" already exists in COCO directory. Please choose a different name.` },
+        { status: 400 }
+      );
+    }
+
     // Generate output paths
-    const datasetDir = outputDatasetDir || `dataset/${name.toLowerCase().replace(/\s+/g, '_')}`;
+    const datasetDir = outputDatasetDir || `dataset/COCO/${name}`;
     const absoluteDatasetDir = path.isAbsolute(datasetDir)
       ? datasetDir
       : path.join(workDir, datasetDir);
 
     // Create output directories
-    const trainImagesDir = path.join(absoluteDatasetDir, 'images', 'train');
-    const valImagesDir = path.join(absoluteDatasetDir, 'images', 'val');
-    const testImagesDir = path.join(absoluteDatasetDir, 'images', 'test');
-    const annotationsDir = path.join(absoluteDatasetDir, 'annotations');
+    const trainImagesDir = path.join(absoluteDatasetDir, 'data', 'train');
+    const valImagesDir = path.join(absoluteDatasetDir, 'data', 'val');
+    const testImagesDir = path.join(absoluteDatasetDir, 'data', 'test');
+    const annotationsDir = path.join(absoluteDatasetDir, 'data', 'annotations');
 
     [trainImagesDir, valImagesDir, testImagesDir, annotationsDir].forEach(dir => {
       if (!fs.existsSync(dir)) {
@@ -310,16 +314,16 @@ export async function POST(request: NextRequest) {
 
     // Save annotation files
     fs.writeFileSync(
-      path.join(annotationsDir, 'train.json'),
+      path.join(annotationsDir, 'instance_train.json'),
       JSON.stringify(createCocoDataset(trainData.images, trainData.annotations), null, 2)
     );
     fs.writeFileSync(
-      path.join(annotationsDir, 'val.json'),
+      path.join(annotationsDir, 'instance_val.json'),
       JSON.stringify(createCocoDataset(valData.images, valData.annotations), null, 2)
     );
     if (testData.images.length > 0) {
       fs.writeFileSync(
-        path.join(annotationsDir, 'test.json'),
+        path.join(annotationsDir, 'instance_test.json'),
         JSON.stringify(createCocoDataset(testData.images, testData.annotations), null, 2)
       );
     }
@@ -350,31 +354,12 @@ export async function POST(request: NextRequest) {
       imageCount: classImageDistribution[name]?.size || 0,
     }));
 
-    // Create dataset record in database
-    const dataset = await db.dataset.create({
-      data: {
-        name,
-        description: description || `Converted from Labelme format. Train: ${trainCount}, Val: ${valCount}, Test: ${testCount}`,
-        format: 'COCO',
-        projectId,
-        userId,
-        trainImagePath: path.join(datasetDir, 'images', 'train'),
-        trainAnnoPath: path.join(datasetDir, 'annotations', 'train.json'),
-        evalImagePath: path.join(datasetDir, 'images', 'val'),
-        evalAnnoPath: path.join(datasetDir, 'annotations', 'val.json'),
-        datasetDir,
-        numClasses: categories.size,
-        numAnnotations: totalAnnotations,
-        numTrainImages: trainData.imageCount,
-        numEvalImages: valData.imageCount,
-        classStats: JSON.stringify(classStats),
-      },
-    });
-
+    // Return success without creating database record
+    // User can import the converted COCO dataset using Import COCO Dataset feature
     return NextResponse.json({
       success: true,
-      data: dataset,
       message: `Successfully converted ${labelmeFiles.length} Labelme files to COCO format`,
+      outputPath: absoluteDatasetDir,
       stats: {
         totalFiles: labelmeFiles.length,
         trainCount: trainData.imageCount,
@@ -382,6 +367,7 @@ export async function POST(request: NextRequest) {
         testCount: testData.imageCount,
         categories: categories.size,
         totalAnnotations,
+        classStats,
       },
     });
 

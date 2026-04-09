@@ -493,7 +493,7 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
                       id="importName"
                       value={importForm.name}
                       onChange={(e) => setImportForm({ ...importForm, name: e.target.value })}
-                      placeholder="PPYOLOE-Plus-S"
+                      placeholder="Hawkeye or inspectIQ model"
                     />
                   </div>
                 </div>
@@ -619,7 +619,7 @@ ${formData.pretrainWeights ? `pretrain_weights: ${formData.pretrainWeights}` : '
                         id="name"
                         value={formData.name}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                        placeholder="PPYOLOE-Plus-S"
+                        placeholder="Hawkeye or inspectIQ model"
                         required
                       />
                     </div>

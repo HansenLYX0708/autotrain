@@ -1,6 +1,6 @@
 Set WshShell = CreateObject("WScript.Shell")
 
-projectPath = "D:\_work\projects\autoTraining\AutoTrain"
+projectPath = "D:\_work\projects\autoTraining\AutoTrain_g"
 url = "http://localhost:3000"
 port = "3000"
 

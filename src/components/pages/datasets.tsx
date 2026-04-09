@@ -141,7 +141,7 @@ export function DatasetsPage() {
   const [labelmeFormData, setLabelmeFormData] = useState({
     name: '',
     description: '',
-    projectId: '',
+    selectedLabelmeDataset: '',
     labelmeImagesPath: '',
     labelmeAnnotationsPath: '',
     outputDatasetDir: '',
@@ -179,11 +179,16 @@ export function DatasetsPage() {
   const [availableDatasets, setAvailableDatasets] = useState<Array<{
     name: string;
     path: string;
+    format: 'COCO' | 'labelme';
     hasTrain: boolean;
     hasVal: boolean;
     hasAnnotations: boolean;
+    hasImgs: boolean;
+    hasJsons: boolean;
     trainAnnotations: string[];
     valAnnotations: string[];
+    images: string[];
+    jsons: string[];
   }>>([])
   const [loadingAvailableDatasets, setLoadingAvailableDatasets] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -481,16 +486,72 @@ export function DatasetsPage() {
     }
   }
 
+  // Handle labelme dataset selection - auto-fill paths
+  const handleLabelmeDatasetSelect = (datasetName: string) => {
+    const selectedDataset = availableDatasets.find(
+      d => d.name === datasetName && d.format === 'labelme'
+    )
+    if (selectedDataset) {
+      // Extract base path from dataset path (remove /data suffix if exists)
+      const basePath = selectedDataset.path.replace(/[/\\]data$/, '')
+      setLabelmeFormData(prev => ({
+        ...prev,
+        selectedLabelmeDataset: datasetName,
+        labelmeImagesPath: `${basePath}/data/imgs`,
+        labelmeAnnotationsPath: `${basePath}/data/jsons`,
+        // Auto-generate output directory based on dataset name
+        outputDatasetDir: prev.name
+          ? `${basePath.replace(/[/\\]labelme[/\\][^/\\]+$/, '')}/COCO/${prev.name}`
+          : '',
+      }))
+    } else {
+      setLabelmeFormData(prev => ({
+        ...prev,
+        selectedLabelmeDataset: datasetName,
+      }))
+    }
+  }
+
+  // Update output directory when name changes if a labelme dataset is selected
+  const handleLabelmeNameChange = (name: string) => {
+    const selectedDataset = availableDatasets.find(
+      d => d.name === labelmeFormData.selectedLabelmeDataset && d.format === 'labelme'
+    )
+    let outputDir = ''
+    if (selectedDataset && name) {
+      const basePath = selectedDataset.path.replace(/[/\\]data$/, '')
+      outputDir = `${basePath.replace(/[/\\]labelme[/\\][^/\\]+$/, '')}/COCO/${name}`
+    }
+    setLabelmeFormData(prev => ({
+      ...prev,
+      name,
+      outputDatasetDir: outputDir,
+    }))
+  }
+
   const handleLabelmeConvert = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     // Validate ratios sum to 1
     const total = labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio
     if (Math.abs(total - 1.0) > 0.001) {
-      toast({ 
-        title: 'Invalid ratios', 
+      toast({
+        title: 'Invalid ratios',
         description: `Train + Val + Test must equal 1.0 (current: ${total.toFixed(2)})`,
-        variant: 'destructive' 
+        variant: 'destructive'
+      })
+      return
+    }
+
+    // Check if dataset name already exists in COCO format
+    const existingCocoDataset = availableDatasets.find(
+      d => d.name === labelmeFormData.name && d.format === 'COCO'
+    )
+    if (existingCocoDataset) {
+      toast({
+        title: 'Dataset name already exists',
+        description: `A COCO dataset named "${labelmeFormData.name}" already exists. Please choose a different name.`,
+        variant: 'destructive'
       })
       return
     }
@@ -514,7 +575,7 @@ export function DatasetsPage() {
         setLabelmeFormData({
           name: '',
           description: '',
-          projectId: '',
+          selectedLabelmeDataset: '',
           labelmeImagesPath: '',
           labelmeAnnotationsPath: '',
           outputDatasetDir: '',
@@ -851,7 +912,12 @@ export function DatasetsPage() {
         </div>
         <div className="flex items-center gap-2">
           {/* Labelme to COCO Dialog */}
-          <Dialog open={labelmeDialogOpen} onOpenChange={setLabelmeDialogOpen}>
+          <Dialog open={labelmeDialogOpen} onOpenChange={(open) => {
+              setLabelmeDialogOpen(open)
+              if (open) {
+                fetchAvailableDatasets()
+              }
+            }}>
             <DialogTrigger asChild>
               <Button variant="outline">
                 <FileJson className="w-4 h-4 mr-2" />
@@ -867,33 +933,38 @@ export function DatasetsPage() {
               </DialogHeader>
               <form onSubmit={handleLabelmeConvert}>
                 <div className="grid grid-cols-2 gap-4 py-4">
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="lm-dataset-select">Select Labelme Dataset</Label>
+                    <Select
+                      value={labelmeFormData.selectedLabelmeDataset}
+                      onValueChange={handleLabelmeDatasetSelect}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose an uploaded labelme dataset" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableDatasets
+                          .filter(d => d.format === 'labelme')
+                          .map((dataset) => (
+                            <SelectItem key={dataset.name} value={dataset.name}>
+                              {dataset.name} ({dataset.images.length} images, {dataset.jsons.length} jsons)
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Selecting a dataset will auto-fill the paths below
+                    </p>
+                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="lm-name">Dataset Name</Label>
                     <Input
                       id="lm-name"
                       value={labelmeFormData.name}
-                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, name: e.target.value })}
+                      onChange={(e) => handleLabelmeNameChange(e.target.value)}
                       placeholder="My Dataset"
                       required
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lm-project">Project</Label>
-                    <Select
-                      value={labelmeFormData.projectId}
-                      onValueChange={(value) => setLabelmeFormData({ ...labelmeFormData, projectId: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select project" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {projects.map((project) => (
-                          <SelectItem key={project.id} value={project.id}>
-                            {project.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
                   </div>
                   <div className="col-span-2 space-y-2">
                     <Label htmlFor="lm-description">Description</Label>
@@ -1268,11 +1339,13 @@ export function DatasetsPage() {
                             No folders found in COCO directory
                           </SelectItem>
                         ) : (
-                          availableDatasets.map((dataset) => (
-                            <SelectItem key={dataset.name} value={dataset.name}>
-                              {dataset.name} {!dataset.hasTrain && !dataset.hasVal && !dataset.hasAnnotations ? '(invalid)' : ''}
-                            </SelectItem>
-                          ))
+                          availableDatasets
+                            .filter(d => d.format === 'COCO')
+                            .map((dataset) => (
+                              <SelectItem key={dataset.name} value={dataset.name}>
+                                {dataset.name} {!dataset.hasTrain && !dataset.hasVal && !dataset.hasAnnotations ? '(invalid)' : ''}
+                              </SelectItem>
+                            ))
                         )}
                       </SelectContent>
                     </Select>
