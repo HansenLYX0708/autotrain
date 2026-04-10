@@ -212,6 +212,10 @@ export function DatasetsPage() {
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'initializing' | 'uploading' | 'completing' | 'completed' | 'error'>('idle')
   const [currentFile, setCurrentFile] = useState<string>('')
   const abortControllerRef = useRef<AbortController | null>(null)
+  // Labelme overwrite confirmation state
+  const [confirmOverwriteOpen, setConfirmOverwriteOpen] = useState(false)
+  const [confirmOverwriteMessage, setConfirmOverwriteMessage] = useState('')
+  const [pendingUploadSession, setPendingUploadSession] = useState<any>(null)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -663,15 +667,55 @@ export function DatasetsPage() {
       }
 
       const session = await initResponse.json()
-      setUploadSession(session)
-      setUploadStatus('uploading')
 
+      // Check if requires confirmation (labelme overwrite)
+      if (session.requiresConfirmation) {
+        setConfirmOverwriteMessage(session.message)
+        setPendingUploadSession(session)
+        setConfirmOverwriteOpen(true)
+        setUploading(false)
+        setUploadStatus('idle')
+        return
+      }
+
+      await executeChunkUpload(session)
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        toast({ 
+          title: 'Upload cancelled', 
+          description: 'Upload was cancelled by user',
+        })
+      } else {
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+        setUploadError(errorMsg)
+        setUploadStatus('error')
+        toast({ 
+          title: 'Upload error', 
+          description: errorMsg,
+          variant: 'destructive'
+        })
+      }
+    } finally {
+      setUploading(false)
+      abortControllerRef.current = null
+    }
+  }
+
+  // Execute file chunk upload after confirmation
+  const executeChunkUpload = async (session: any) => {
+    if (!uploadFiles) return
+
+    setUploadSession(session)
+    setUploadStatus('uploading')
+    setUploading(true)
+
+    try {
       // Step 2: Upload chunks for each file
       let totalUploadedChunks = 0
       const totalExpectedChunks = session.files.reduce((acc: number, f: any) => acc + f.totalChunks, 0)
 
       for (const fileInfo of session.files) {
-        if (abortControllerRef.current.signal.aborted) {
+        if (abortControllerRef.current?.signal.aborted) {
           throw new Error('Upload cancelled')
         }
 
@@ -688,7 +732,7 @@ export function DatasetsPage() {
         const uploadedChunks = new Set(fileInfo.uploadedChunks)
         
         for (let chunkIndex = 0; chunkIndex < fileInfo.totalChunks; chunkIndex++) {
-          if (abortControllerRef.current.signal.aborted) {
+          if (abortControllerRef.current?.signal.aborted) {
             throw new Error('Upload cancelled')
           }
 
@@ -719,7 +763,7 @@ export function DatasetsPage() {
               const response = await fetch('/api/datasets/upload/chunk', {
                 method: 'POST',
                 body: chunkFormData,
-                signal: abortControllerRef.current.signal,
+                signal: abortControllerRef.current?.signal,
               })
 
               if (!response.ok) {
@@ -767,8 +811,9 @@ export function DatasetsPage() {
           files: session.files,
           format: uploadFormData.format,
           datasetName: uploadFormData.name,
+          overwrite: session.requiresConfirmation || false,
         }),
-        signal: abortControllerRef.current.signal,
+        signal: abortControllerRef.current?.signal,
       })
 
       if (!completeResponse.ok) {
@@ -820,6 +865,81 @@ export function DatasetsPage() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
+  }
+
+  // Handle user confirmation for labelme overwrite - re-init with confirmedOverwrite flag
+  const handleConfirmOverwrite = async () => {
+    setConfirmOverwriteOpen(false)
+    if (!uploadFiles) return
+
+    setUploading(true)
+    setUploadError(null)
+    setUploadStatus('initializing')
+    abortControllerRef.current = new AbortController()
+
+    try {
+      // Build file list with metadata
+      const files = Array.from(uploadFiles).map(file => {
+        const relativePath = (file as any).webkitRelativePath || file.name
+        return {
+          name: file.name,
+          relativePath: relativePath,
+          size: file.size,
+        }
+      })
+
+      const totalSize = files.reduce((acc, f) => acc + f.size, 0)
+
+      // Re-initialize upload session with confirmedOverwrite flag
+      const initResponse = await fetch('/api/datasets/upload/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          datasetName: uploadFormData.name,
+          format: uploadFormData.format,
+          totalFiles: files.length,
+          totalSize: totalSize,
+          files: files,
+          confirmedOverwrite: true,
+        }),
+        signal: abortControllerRef.current?.signal,
+      })
+
+      if (!initResponse.ok) {
+        const error = await initResponse.json()
+        throw new Error(error.error || 'Failed to initialize upload')
+      }
+
+      const session = await initResponse.json()
+      await executeChunkUpload(session)
+      setPendingUploadSession(null)
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        toast({
+          title: 'Upload cancelled',
+          description: 'Upload was cancelled by user',
+        })
+      } else {
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+        setUploadError(errorMsg)
+        setUploadStatus('error')
+        toast({
+          title: 'Upload error',
+          description: errorMsg,
+          variant: 'destructive'
+        })
+      }
+    } finally {
+      setUploading(false)
+      abortControllerRef.current = null
+    }
+  }
+
+  // Handle user cancellation for labelme overwrite
+  const handleCancelOverwrite = () => {
+    setConfirmOverwriteOpen(false)
+    setPendingUploadSession(null)
+    setConfirmOverwriteMessage('')
   }
 
   const filteredDatasets = datasets.filter(dataset => {
@@ -1068,6 +1188,26 @@ export function DatasetsPage() {
               </form>
             </DialogContent>
           </Dialog>
+          {/* Labelme Overwrite Confirmation Dialog */}
+          <Dialog open={confirmOverwriteOpen} onOpenChange={setConfirmOverwriteOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Confirm Overwrite</DialogTitle>
+                <DialogDescription>
+                  {confirmOverwriteMessage}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={handleCancelOverwrite}>
+                  Cancel
+                </Button>
+                <Button onClick={handleConfirmOverwrite}>
+                  Confirm Upload
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={uploadDialogOpen} onOpenChange={(open) => {
             setUploadDialogOpen(open)
             if (!open) {

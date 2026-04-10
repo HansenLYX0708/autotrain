@@ -4,6 +4,35 @@ import { requireAuth } from '@/lib/auth';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Helper to get folder size recursively
+function getFolderSize(folderPath: string): number {
+  let totalSize = 0;
+
+  if (!fs.existsSync(folderPath)) {
+    return 0;
+  }
+
+  const stats = fs.statSync(folderPath);
+
+  if (stats.isFile()) {
+    return stats.size;
+  }
+
+  const files = fs.readdirSync(folderPath);
+  for (const file of files) {
+    const filePath = path.join(folderPath, file);
+    const fileStats = fs.statSync(filePath);
+
+    if (fileStats.isDirectory()) {
+      totalSize += getFolderSize(filePath);
+    } else {
+      totalSize += fileStats.size;
+    }
+  }
+
+  return totalSize;
+}
+
 interface LabelmeShape {
   label: string;
   points: number[][];
@@ -151,12 +180,46 @@ export async function POST(request: NextRequest) {
     // Check if dataset name already exists in COCO directory
     const cocoBasePath = path.join(workDir, 'dataset', 'COCO');
     const existingDatasetPath = path.join(cocoBasePath, name);
-    
+
     if (fs.existsSync(existingDatasetPath)) {
       return NextResponse.json(
         { error: `Dataset "${name}" already exists in COCO directory. Please choose a different name.` },
         { status: 400 }
       );
+    }
+
+    // Get user info for storage quota check
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, maxStorageQuota: true },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Check storage quota
+    const userDatabasePath = (systemConfig as any)?.userDatabasePath;
+    if (userDatabasePath) {
+      const userFolderPath = path.join(userDatabasePath, user.username);
+      const usedStorage = getFolderSize(userFolderPath);
+      const maxQuota = Number(user.maxStorageQuota);
+
+      // Calculate required space (labelme images will be copied to COCO format)
+      const requiredSize = getFolderSize(absoluteImagesPath);
+
+      if (usedStorage + requiredSize > maxQuota) {
+        return NextResponse.json(
+          {
+            error: "存储空间不足",
+            message: `您已使用 ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB，配额为 ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB。本次转换需要 ${(requiredSize / 1024 / 1024).toFixed(2)} MB 空间来存储COCO格式数据。请联系管理员扩容或删除不需要的数据。`,
+            usedStorage,
+            maxStorageQuota: maxQuota,
+            requiredSpace: requiredSize
+          },
+          { status: 403 }
+        );
+      }
     }
 
     // Generate output paths

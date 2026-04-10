@@ -5,6 +5,35 @@ import { logActivity } from "@/lib/activity-log";
 import * as fs from "fs";
 import * as path from "path";
 
+// Helper to get folder size recursively
+function getFolderSize(folderPath: string): number {
+  let totalSize = 0;
+
+  if (!fs.existsSync(folderPath)) {
+    return 0;
+  }
+
+  const stats = fs.statSync(folderPath);
+
+  if (stats.isFile()) {
+    return stats.size;
+  }
+
+  const files = fs.readdirSync(folderPath);
+  for (const file of files) {
+    const filePath = path.join(folderPath, file);
+    const fileStats = fs.statSync(filePath);
+
+    if (fileStats.isDirectory()) {
+      totalSize += getFolderSize(filePath);
+    } else {
+      totalSize += fileStats.size;
+    }
+  }
+
+  return totalSize;
+}
+
 // GET /api/training-jobs - Get all training jobs with relations (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
   try {
@@ -205,14 +234,37 @@ export async function POST(request: NextRequest) {
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
     const userDatabasePath = (systemConfig as any)?.userDatabasePath;
 
-    // Get current user info for username
+    // Get current user info for username and storage quota
     const currentUser = await db.user.findUnique({
       where: { id: userId },
-      select: { id: true, username: true },
+      select: { id: true, username: true, maxStorageQuota: true },
     });
 
     if (!currentUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Check storage quota - training jobs need space for models, logs, etc.
+    if (userDatabasePath) {
+      const userFolderPath = path.join(userDatabasePath, currentUser.username);
+      const usedStorage = getFolderSize(userFolderPath);
+      const maxQuota = Number(currentUser.maxStorageQuota);
+
+      // Reserve 5GB for training job outputs (models, logs, etc.)
+      const requiredSize = 5 * 1024 * 1024 * 1024; // 5GB in bytes
+
+      if (usedStorage + requiredSize > maxQuota) {
+        return NextResponse.json(
+          {
+            error: "存储空间不足",
+            message: `您已使用 ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB，配额为 ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB。训练任务需要至少 5 GB 空间来存储模型和日志。请联系管理员扩容或删除不需要的数据。`,
+            usedStorage,
+            maxStorageQuota: maxQuota,
+            requiredSpace: requiredSize
+          },
+          { status: 403 }
+        );
+      }
     }
 
     if (!workDir) {

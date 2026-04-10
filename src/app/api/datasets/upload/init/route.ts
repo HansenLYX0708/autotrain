@@ -6,6 +6,37 @@ import { sessions } from "../../../auth/route";
 import { db } from "@/lib/db";
 import { randomUUID } from "crypto";
 
+// Helper to get folder size recursively
+function getFolderSize(folderPath: string): number {
+  let totalSize = 0;
+  
+  if (!existsSync(folderPath)) {
+    return 0;
+  }
+  
+  const fs = require("fs");
+  const path = require("path");
+  const stats = fs.statSync(folderPath);
+  
+  if (stats.isFile()) {
+    return stats.size;
+  }
+  
+  const files = fs.readdirSync(folderPath);
+  for (const file of files) {
+    const filePath = path.join(folderPath, file);
+    const fileStats = fs.statSync(filePath);
+    
+    if (fileStats.isDirectory()) {
+      totalSize += getFolderSize(filePath);
+    } else {
+      totalSize += fileStats.size;
+    }
+  }
+  
+  return totalSize;
+}
+
 // POST /api/datasets/upload/init - Initialize chunked upload
 export async function POST(request: NextRequest) {
   try {
@@ -19,7 +50,7 @@ export async function POST(request: NextRequest) {
 
     const user = await db.user.findUnique({
       where: { id: userId },
-      select: { id: true, username: true },
+      select: { id: true, username: true, maxStorageQuota: true },
     });
 
     if (!user) {
@@ -37,7 +68,26 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { datasetName, format, totalFiles, totalSize, files } = body;
+    const { datasetName, format, totalFiles, totalSize, files, confirmedOverwrite } = body;
+
+    // Check storage quota
+    const userFolderPath = join(userDatabasePath, user.username);
+    const usedStorage = getFolderSize(userFolderPath);
+    const maxQuota = Number(user.maxStorageQuota);
+    const requiredSize = totalSize || 0;
+
+    if (usedStorage + requiredSize > maxQuota) {
+      return NextResponse.json(
+        { 
+          error: "存储空间不足", 
+          message: `您已使用 ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB，配额为 ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB。本次上传需要 ${(requiredSize / 1024 / 1024).toFixed(2)} MB 空间。请联系管理员扩容或删除不需要的数据。`,
+          usedStorage,
+          maxStorageQuota: maxQuota,
+          requiredSpace: requiredSize
+        },
+        { status: 403 }
+      );
+    }
 
     if (!datasetName || !format) {
       return NextResponse.json(
@@ -73,10 +123,31 @@ export async function POST(request: NextRequest) {
 
     // Check if dataset already exists
     if (existsSync(targetDir)) {
-      return NextResponse.json(
-        { error: `Dataset "${datasetName}" already exists` },
-        { status: 400 }
-      );
+      // Labelme format allows overwrite with confirmation, COCO does not
+      if (format === "labelme") {
+        // If user has confirmed overwrite, proceed with normal flow
+        if (confirmedOverwrite) {
+          // Continue to normal upload flow
+        } else {
+          return NextResponse.json({
+            success: true,
+            requiresConfirmation: true,
+            message: `Dataset "${datasetName}" already exists. Uploading will overwrite existing files and may add new samples.`,
+            uploadId,
+            targetDir,
+            tempDir,
+            files: [],
+            overallProgress: 0,
+            chunkSize: 10 * 1024 * 1024, // 10MB
+          });
+        }
+      } else {
+        // COCO format: reject duplicate names
+        return NextResponse.json(
+          { error: `Dataset "${datasetName}" already exists` },
+          { status: 400 }
+        );
+      }
     }
 
     // Create temp directory

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir, readdir, readFile, unlink, rmdir } from "fs/promises";
+import { writeFile, mkdir, readdir, readFile, unlink, rmdir, rm } from "fs/promises";
 import { existsSync } from "fs";
 import { join, dirname } from "path";
 import { sessions } from "../../../auth/route";
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { uploadId, targetDir, files, format, datasetName } = body;
+    const { uploadId, targetDir, files, format, datasetName, overwrite } = body;
 
     if (!uploadId || !targetDir || !files) {
       return NextResponse.json(
@@ -49,6 +49,18 @@ export async function POST(request: NextRequest) {
     const allowedBase = join(userDatabasePath, user.username);
     if (!targetDir.startsWith(allowedBase)) {
       return NextResponse.json({ error: "Invalid target directory" }, { status: 403 });
+    }
+
+    // For labelme format with overwrite flag, clean up existing files first
+    if (overwrite && format === "labelme" && existsSync(targetDir)) {
+      try {
+        const existingFiles = await readdir(targetDir);
+        for (const file of existingFiles) {
+          await rm(join(targetDir, file), { recursive: true, force: true });
+        }
+      } catch (err) {
+        console.error("Error cleaning up existing directory:", err);
+      }
     }
 
     // Create target directory
