@@ -39,6 +39,10 @@ import {
   AlertCircle,
   CheckCircle,
   Info,
+  Terminal,
+  Wrench,
+  Package,
+  Monitor,
 } from 'lucide-react'
 
 interface UserManualPageProps {
@@ -57,6 +61,249 @@ interface StepSection {
 }
 
 const manualSections: StepSection[] = [
+  {
+    id: 'installation',
+    title: 'Installation Guide',
+    icon: Wrench,
+    description: 'Step-by-step installation and setup instructions',
+    substeps: [
+      {
+        title: 'System Requirements',
+        content: (
+          <div className="space-y-3">
+            <p>Before installing, ensure your system meets the following requirements:</p>
+            <div className="grid grid-cols-2 gap-4">
+              <Card className="bg-muted/50">
+                <CardContent className="p-4">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <Monitor className="w-4 h-4 text-blue-500" />
+                    Hardware Requirements
+                  </h4>
+                  <ul className="text-sm mt-2 space-y-1 list-disc list-inside">
+                    <li>Windows 10/11 (64-bit)</li>
+                    <li>4-core CPU (8-core recommended)</li>
+                    <li>8GB RAM (16GB+ recommended)</li>
+                    <li>20GB disk space (50GB+ SSD recommended)</li>
+                    <li>NVIDIA GPU optional (for GPU training)</li>
+                  </ul>
+                </CardContent>
+              </Card>
+              <Card className="bg-muted/50">
+                <CardContent className="p-4">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <Package className="w-4 h-4 text-green-500" />
+                    Software Requirements
+                  </h4>
+                  <ul className="text-sm mt-2 space-y-1 list-disc list-inside">
+                    <li>Node.js 18.x or higher</li>
+                    <li>Bun 1.0 or higher</li>
+                    <li>Python 3.8-3.12 (3.10 recommended)</li>
+                    <li>Git</li>
+                    <li>PaddlePaddle framework</li>
+                  </ul>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: 'Step 1: Install Node.js',
+        content: (
+          <div className="space-y-3">
+            <p>Node.js is required for running the web application.</p>
+            <h4 className="font-medium">Method 1: Using winget (Recommended)</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              winget install OpenJS.NodeJS.LTS
+            </div>
+            <h4 className="font-medium mt-4">Method 2: Official Installer</h4>
+            <ol className="list-decimal list-inside space-y-1 text-sm">
+              <li>Visit <a href="https://nodejs.org/" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">nodejs.org</a></li>
+              <li>Download LTS version (20.x or higher)</li>
+              <li>Run installer and follow prompts</li>
+            </ol>
+            <p className="text-sm text-muted-foreground mt-2">Verify installation:</p>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              node --version<br />
+              npm --version
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: 'Step 2: Install Bun',
+        content: (
+          <div className="space-y-3">
+            <p>Bun is the JavaScript runtime and package manager used by this project.</p>
+            <h4 className="font-medium">Install using PowerShell</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              powershell -c "irm bun.sh/install.ps1 | iex"
+            </div>
+            <h4 className="font-medium mt-4">Alternative: Using npm</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              npm install -g bun
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">Verify installation:</p>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              bun --version
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: 'Step 3: Install Python',
+        content: (
+          <div className="space-y-3">
+            <p>Python 3.8-3.12 is required (3.10 recommended) for PaddleDetection.</p>
+            <h4 className="font-medium">Method 1: Official Installer</h4>
+            <ol className="list-decimal list-inside space-y-1 text-sm">
+              <li>Visit <a href="https://python.org/downloads/" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">python.org/downloads</a></li>
+              <li>Download Python 3.10</li>
+              <li><strong>Important:</strong> Check "Add Python to PATH" during installation</li>
+            </ol>
+            <h4 className="font-medium mt-4">Method 2: Using Miniconda (Recommended)</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              conda create -n paddle python=3.10<br />
+              conda activate paddle
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">Verify installation:</p>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              python --version<br />
+              pip --version
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: 'Step 4: Install PaddlePaddle',
+        content: (
+          <div className="space-y-3">
+            <p>Install the deep learning framework.</p>
+            <h4 className="font-medium">CPU Version</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              pip install paddlepaddle
+            </div>
+            <h4 className="font-medium mt-4">GPU Version (CUDA 11.8)</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              pip install paddlepaddle-gpu==2.5.2 -i https://pypi.tuna.tsinghua.edu.cn/simple
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">Prerequisites for GPU:</p>
+            <ul className="list-disc list-inside text-sm text-muted-foreground">
+              <li>NVIDIA GPU drivers</li>
+              <li>CUDA Toolkit 11.8 or 12.x</li>
+              <li>cuDNN</li>
+            </ul>
+            <p className="text-sm text-muted-foreground mt-2">Verify installation:</p>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              python -c "import paddle; paddle.utils.run_check()"
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: 'Step 5: Install PaddleDetection',
+        content: (
+          <div className="space-y-3">
+            <p>Clone and setup PaddleDetection framework.</p>
+            <h4 className="font-medium">Clone Repository</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              cd D:\_work\projects<br />
+              git clone https://github.com/PaddlePaddle/PaddleDetection.git<br />
+              cd PaddleDetection<br />
+              git checkout release/2.6
+            </div>
+            <h4 className="font-medium mt-4">Install Dependencies</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              pip install -r requirements.txt<br />
+              pip install pycocotools-windows
+            </div>
+            <h4 className="font-medium mt-4">Create Config Directories</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              mkdir configs\autotrain\jobs<br />
+              mkdir configs\autotrain\training\default<br />
+              mkdir configs\autotrain\models
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: 'Step 6: Configure Project',
+        content: (
+          <div className="space-y-3">
+            <p>Setup the Auto Training Platform project.</p>
+            <h4 className="font-medium">Install Dependencies</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              cd D:\_work\projects\autotrain<br />
+              bun install
+            </div>
+            <h4 className="font-medium mt-4">Initialize Database</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              bunx prisma generate<br />
+              bunx prisma db push
+            </div>
+            <h4 className="font-medium mt-4">Create Environment File</h4>
+            <p className="text-sm">Create <code>.env.local</code> in project root:</p>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              DATABASE_URL="file:./db/custom.db"<br />
+              NEXT_PUBLIC_API_URL="http://localhost:3000"
+            </div>
+            <h4 className="font-medium mt-4">Start Development Server</h4>
+            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+              bun run dev
+            </div>
+            <p className="text-sm text-muted-foreground">Visit http://localhost:3000 to access the platform.</p>
+          </div>
+        ),
+      },
+      {
+        title: 'Step 7: Configure System Paths',
+        content: (
+          <div className="space-y-3">
+            <p>Configure required paths in the Settings page after first login.</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left py-2 px-3 font-medium">Setting</th>
+                    <th className="text-left py-2 px-3 font-medium">Example</th>
+                    <th className="text-left py-2 px-3 font-medium">Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b">
+                    <td className="py-2 px-3">Python Path</td>
+                    <td className="py-2 px-3 font-mono text-xs">C:\Python310\python.exe</td>
+                    <td className="py-2 px-3 text-muted-foreground">Python interpreter path</td>
+                  </tr>
+                  <tr className="border-b">
+                    <td className="py-2 px-3">PaddleDetection Path</td>
+                    <td className="py-2 px-3 font-mono text-xs">D:\_work\projects\PaddleDetection</td>
+                    <td className="py-2 px-3 text-muted-foreground">PaddleDetection root directory</td>
+                  </tr>
+                  <tr className="border-b">
+                    <td className="py-2 px-3">User Database Path</td>
+                    <td className="py-2 px-3 font-mono text-xs">D:\_work\database\users</td>
+                    <td className="py-2 px-3 text-muted-foreground">User data storage path</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-3">User Configs Path</td>
+                    <td className="py-2 px-3 font-mono text-xs">D:\_work\configs\users</td>
+                    <td className="py-2 px-3 text-muted-foreground">User config storage path</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-3">
+              <p className="text-sm text-blue-800 flex items-center gap-2">
+                <Info className="w-4 h-4" />
+                First registered user automatically becomes an admin.
+              </p>
+            </div>
+          </div>
+        ),
+      },
+    ],
+  },
   {
     id: 'overview',
     title: 'Platform Overview',
