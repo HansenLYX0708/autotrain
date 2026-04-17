@@ -429,6 +429,13 @@ function AppContent() {
                   </DropdownMenu>
                 )}
 
+                {/* Username display */}
+                {user?.username && (
+                  <span className="hidden sm:inline text-sm text-muted-foreground mr-1">
+                    {user.username}
+                  </span>
+                )}
+
                 {/* User Menu */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
