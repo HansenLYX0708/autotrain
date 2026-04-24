@@ -98,7 +98,6 @@ const manualSections: StepSection[] = [
                     <li>Node.js 18.x or higher</li>
                     <li>Bun 1.0 or higher</li>
                     <li>Python 3.8-3.12 (3.10 recommended)</li>
-                    <li>Git</li>
                     <li>PaddlePaddle framework</li>
                   </ul>
                 </CardContent>
@@ -175,59 +174,7 @@ const manualSections: StepSection[] = [
         ),
       },
       {
-        title: 'Step 4: Install PaddlePaddle',
-        content: (
-          <div className="space-y-3">
-            <p>Install the deep learning framework.</p>
-            <h4 className="font-medium">CPU Version</h4>
-            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
-              pip install paddlepaddle
-            </div>
-            <h4 className="font-medium mt-4">GPU Version (CUDA 11.8)</h4>
-            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
-              pip install paddlepaddle-gpu==2.5.2 -i https://pypi.tuna.tsinghua.edu.cn/simple
-            </div>
-            <p className="text-sm text-muted-foreground mt-2">Prerequisites for GPU:</p>
-            <ul className="list-disc list-inside text-sm text-muted-foreground">
-              <li>NVIDIA GPU drivers</li>
-              <li>CUDA Toolkit 11.8 or 12.x</li>
-              <li>cuDNN</li>
-            </ul>
-            <p className="text-sm text-muted-foreground mt-2">Verify installation:</p>
-            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
-              python -c "import paddle; paddle.utils.run_check()"
-            </div>
-          </div>
-        ),
-      },
-      {
-        title: 'Step 5: Install PaddleDetection',
-        content: (
-          <div className="space-y-3">
-            <p>Clone and setup PaddleDetection framework.</p>
-            <h4 className="font-medium">Clone Repository</h4>
-            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
-              cd D:\_work\projects<br />
-              git clone https://github.com/PaddlePaddle/PaddleDetection.git<br />
-              cd PaddleDetection<br />
-              git checkout release/2.6
-            </div>
-            <h4 className="font-medium mt-4">Install Dependencies</h4>
-            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
-              pip install -r requirements.txt<br />
-              pip install pycocotools-windows
-            </div>
-            <h4 className="font-medium mt-4">Create Config Directories</h4>
-            <div className="bg-muted rounded-lg p-3 font-mono text-sm">
-              mkdir configs\autotrain\jobs<br />
-              mkdir configs\autotrain\training\default<br />
-              mkdir configs\autotrain\models
-            </div>
-          </div>
-        ),
-      },
-      {
-        title: 'Step 6: Configure Project',
+        title: 'Step 4: Configure Project',
         content: (
           <div className="space-y-3">
             <p>Setup the Auto Training Platform project.</p>
@@ -256,7 +203,7 @@ const manualSections: StepSection[] = [
         ),
       },
       {
-        title: 'Step 7: Configure System Paths',
+        title: 'Step 5: Configure System Paths',
         content: (
           <div className="space-y-3">
             <p>Configure required paths in the Settings page after first login.</p>
@@ -649,65 +596,6 @@ const manualSections: StepSection[] = [
           </div>
         ),
       },
-      {
-        title: '3.2 Architecture Components',
-        content: (
-          <div className="space-y-3">
-            <p>Configure the three main architecture components:</p>
-            <div className="space-y-3">
-              <Card className="border-l-4 border-l-blue-500">
-                <CardContent className="p-4">
-                  <h4 className="font-semibold">Backbone (Feature Extractor)</h4>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Options: CSPResNet, MobileNetV3, ResNet. Affects speed/accuracy trade-off.
-                  </p>
-                </CardContent>
-              </Card>
-              <Card className="border-l-4 border-l-green-500">
-                <CardContent className="p-4">
-                  <h4 className="font-semibold">Neck (Feature Fusion)</h4>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Options: CustomCSPPAN, FPN, YOLOv3FPN. Combines multi-scale features.
-                  </p>
-                </CardContent>
-              </Card>
-              <Card className="border-l-4 border-l-purple-500">
-                <CardContent className="p-4">
-                  <h4 className="font-semibold">Head (Detection Head)</h4>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Options: PPYOLOEHead, RetinaHead, DINOHead. Performs final predictions.
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        ),
-      },
-      {
-        title: '3.3 Advanced Parameters',
-        content: (
-          <div className="space-y-3">
-            <p>Fine-tune model behavior with these parameters:</p>
-            <ul className="list-disc list-inside space-y-2">
-              <li>
-                <strong>Normalization Type:</strong> sync_bn (multi-GPU), bn (single GPU), gn (group norm)
-              </li>
-              <li>
-                <strong>EMA (Exponential Moving Average):</strong> Enable for more stable training
-              </li>
-              <li>
-                <strong>Depth/Width Multiplier:</strong> Scale model size (0.33 = small, 1.0 = full)
-              </li>
-              <li>
-                <strong>Pretrained Weights:</strong> URL to pretrained checkpoint for transfer learning
-              </li>
-              <li>
-                <strong>Number of Classes:</strong> Must match your dataset's class count
-              </li>
-            </ul>
-          </div>
-        ),
-      },
     ],
   },
   {
@@ -722,64 +610,12 @@ const manualSections: StepSection[] = [
           <div className="space-y-3">
             <ol className="list-decimal list-inside space-y-2">
               <li>Navigate to <strong>Configurations</strong> page</li>
-              <li>Click <strong>"New Configuration"</strong></li>
-              <li>Select <strong>Project</strong>, <strong>Dataset</strong>, and <strong>Model</strong></li>
+              <li>Click <strong>"Import Config"</strong> or <strong>"New Configuration"</strong></li>
+              <li>Select <strong>Project</strong></li>
               <li>Enter a <strong>Configuration Name</strong></li>
-              <li>Set the base <strong>Configuration File</strong> (optimizer, scheduler settings)</li>
-              <li>Click <strong>"Create Configuration"</strong></li>
+              <li>Choose configuration source (Default Configs, User Configs, or Custom YAML)</li>
+              <li>Click <strong>"Import"</strong> or <strong>"Create"</strong> to save</li>
             </ol>
-          </div>
-        ),
-      },
-      {
-        title: '4.2 Configure Training Parameters',
-        content: (
-          <div className="space-y-3">
-            <p>Edit the configuration to set training parameters:</p>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm">Basic Settings</h4>
-                <ul className="text-sm space-y-1 list-disc list-inside text-muted-foreground">
-                  <li>Epochs: Total training iterations</li>
-                  <li>Batch Size: Images per training step</li>
-                  <li>Learning Rate: Initial LR for optimizer</li>
-                  <li>Image Size: Input resolution (e.g., 640×640)</li>
-                </ul>
-              </div>
-              <div className="space-y-2">
-                <h4 className="font-medium text-sm">Advanced Settings</h4>
-                <ul className="text-sm space-y-1 list-disc list-inside text-muted-foreground">
-                  <li>Optimizer: SGD, Adam, AdamW</li>
-                  <li>Scheduler: Piecewise, Cosine Annealing</li>
-                  <li>Warmup: Steps for LR warmup</li>
-                  <li>Augmentations: Mosaic, MixUp, CutMix</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        ),
-      },
-      {
-        title: '4.3 GPU Assignment Strategy',
-        content: (
-          <div className="space-y-3">
-            <p>Configure multi-GPU training with flexible assignment:</p>
-            <ul className="list-disc list-inside space-y-2">
-              <li>
-                <strong>Auto (Recommended):</strong> System automatically assigns available GPUs
-              </li>
-              <li>
-                <strong>Manual:</strong> Specify GPU indices (e.g., "0,1,2" for GPUs 0, 1, and 2)
-              </li>
-              <li>
-                <strong>Smart Exclusion:</strong> System excludes GPUs that are:
-                <ul className="list-disc list-inside ml-6 text-sm text-muted-foreground">
-                  <li>Currently occupied by other training jobs</li>
-                  <li>Have insufficient memory</li>
-                  <li>Below compute capability requirements</li>
-                </ul>
-              </li>
-            </ul>
           </div>
         ),
       },
@@ -800,13 +636,9 @@ const manualSections: StepSection[] = [
               <li>Click <strong>"New Job"</strong> button</li>
               <li>Enter a <strong>Job Name</strong> (descriptive identifier)</li>
               <li>Select the <strong>Training Configuration</strong> to use</li>
-              <li>
-                Choose <strong>GPU Strategy</strong>:
-                <ul className="list-disc list-inside ml-6 text-sm">
-                  <li>Auto: Let system pick available GPUs</li>
-                  <li>Manual: Specify GPU IDs explicitly</li>
-                </ul>
-              </li>
+              <li>Specify <strong>GPU IDs</strong> (e.g., "0" for GPU 0, "0,1" for GPUs 0 and 1)</li>
+              <li>Enable <strong>AMP</strong> (Automatic Mixed Precision) for faster training</li>
+              <li>Enable <strong>VDL</strong> (VisualDL) for visualization logging</li>
               <li>Review configuration summary</li>
               <li>Click <strong>"Start Training"</strong> to submit</li>
             </ol>
@@ -842,15 +674,9 @@ const manualSections: StepSection[] = [
             <p>After training completes, export models for deployment:</p>
             <ol className="list-decimal list-inside space-y-2">
               <li>Click on a <strong>Completed</strong> job</li>
-              <li>Click <strong>"Export Model"</strong> in the details panel</li>
-              <li>Select export format:
-                <ul className="list-disc list-inside ml-6 text-sm">
-                  <li>Paddle Inference (default)</li>
-                  <li>ONNX (for cross-platform deployment)</li>
-                </ul>
-              </li>
-              <li>Choose output directory</li>
-              <li>Click <strong>"Export"</strong> to generate deployment files</li>
+              <li>View job details including output directory and weights path</li>
+              <li>Model files are automatically saved to the configured output directory</li>
+              <li>Use the weights file for inference or further fine-tuning</li>
             </ol>
           </div>
         ),
@@ -910,57 +736,84 @@ const manualSections: StepSection[] = [
   },
   {
     id: 'validation',
-    title: 'Step 7: Model Validation',
+    title: 'Step 7: Model Validation & Inference',
     icon: CheckCircle2,
-    description: 'Evaluate model performance on test data',
+    description: 'Evaluate trained models and run inference',
     substeps: [
       {
-        title: '7.1 Run Validation',
+        title: '7.1 Select Training Job and Checkpoint',
         content: (
           <div className="space-y-3">
             <ol className="list-decimal list-inside space-y-2">
               <li>Navigate to <strong>Validation</strong> page</li>
-              <li>Click <strong>"New Validation"</strong></li>
-              <li>Select the <strong>Dataset</strong> for evaluation</li>
-              <li>Choose the <strong>Model/Checkpoint</strong> to validate</li>
-              <li>Configure validation parameters:
-                <ul className="list-disc list-inside ml-6 text-sm">
-                  <li>Confidence threshold (default: 0.5)</li>
-                  <li>IoU threshold for NMS (default: 0.5)</li>
-                  <li>Image size for inference</li>
-                </ul>
-              </li>
-              <li>Click <strong>"Start Validation"</strong></li>
+              <li>Select a <strong>Completed Training Job</strong> from the dropdown</li>
+              <li>Choose a <strong>Checkpoint</strong> from the job's saved models</li>
+              <li>Checkpoints are automatically loaded from the job's output directory</li>
             </ol>
           </div>
         ),
       },
       {
-        title: '7.2 Analyze Results',
+        title: '7.2 Run Evaluation',
         content: (
           <div className="space-y-3">
-            <p>Review validation metrics and visualizations:</p>
-            <ul className="list-disc list-inside space-y-2">
-              <li><strong>mAP@0.5:</strong> Mean Average Precision at IoU=0.5</li>
-              <li><strong>mAP@0.5:0.95:</strong> COCO-style mAP across IoU thresholds</li>
-              <li><strong>Per-class AP:</strong> Individual class performance</li>
-              <li><strong>PR Curves:</strong> Precision-Recall curves per class</li>
-              <li><strong>Confusion Matrix:</strong> Detection confusion analysis</li>
-              <li><strong>Sample Visualizations:</strong> Annotated validation images</li>
-            </ul>
+            <p>Evaluate the model on validation dataset:</p>
+            <ol className="list-decimal list-inside space-y-2">
+              <li>Click the <strong>"Evaluation"</strong> tab</li>
+              <li>Click <strong>"Run Evaluation"</strong> button</li>
+              <li>Wait for evaluation to complete (real-time log display)</li>
+              <li>View results including:
+                <ul className="list-disc list-inside ml-6 text-sm">
+                  <li>mAP@0.5, mAP@0.75, mAP@0.5:0.95</li>
+                  <li>AR@1, AR@10, AR@100</li>
+                  <li>Performance by object size (Small, Medium, Large)</li>
+                  <li>Interactive charts for metrics visualization</li>
+                </ul>
+              </li>
+            </ol>
           </div>
         ),
       },
       {
-        title: '7.3 Batch Validation',
+        title: '7.3 Run Inference',
         content: (
           <div className="space-y-3">
-            <p>Compare multiple models:</p>
+            <p>Run model inference on images:</p>
+            <ol className="list-decimal list-inside space-y-2">
+              <li>Click the <strong>"Inference"</strong> tab</li>
+              <li>Enter <strong>Input Path</strong> (single image or folder)</li>
+              <li>Optionally enter <strong>Output Path</strong> for results</li>
+              <li>Click <strong>"Run Inference"</strong> button</li>
+              <li>View inference results with annotated images</li>
+            </ol>
+          </div>
+        ),
+      },
+      {
+        title: '7.4 Export Model to TensorRT',
+        content: (
+          <div className="space-y-3">
+            <p>Export checkpoint for deployment:</p>
+            <ol className="list-decimal list-inside space-y-2">
+              <li>Select the checkpoint you want to export</li>
+              <li>Click <strong>"Export to TensorRT"</strong> button</li>
+              <li>Wait for export to complete</li>
+              <li>Click <strong>"Download"</strong> to get the exported model</li>
+              <li>Exported models are saved in the job's export_model folder</li>
+            </ol>
+          </div>
+        ),
+      },
+      {
+        title: '7.5 Validation History',
+        content: (
+          <div className="space-y-3">
+            <p>View past evaluation and inference jobs:</p>
             <ul className="list-disc list-inside space-y-2">
-              <li>Select multiple jobs/configurations</li>
-              <li>Run validation on same test set</li>
-              <li>Side-by-side metric comparison</li>
-              <li>Export comparison report as CSV/PDF</li>
+              <li>Scroll to <strong>"Validation History"</strong> section</li>
+              <li>View job status, type (eval/infer), and timestamps</li>
+              <li>Click to expand and see detailed logs and results</li>
+              <li>Delete old validation jobs to clean up history</li>
             </ul>
           </div>
         ),
