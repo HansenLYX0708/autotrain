@@ -332,20 +332,14 @@ export async function POST(request: NextRequest) {
     fs.writeFileSync(configFilePath, mergedYaml, 'utf-8');
 
     // Generate training command using absolute path
-    // Note: CUDA_VISIBLE_DEVICES is set via environment variable during execution for cross-platform compatibility
+    // Always use paddle.distributed.launch --gpus for consistency with preview
     const gpuIds = body.gpuIds || '0';
     const useAmp = body.useAmp || false;
     const useVdl = body.useVdl || false;
 
     let command = '';
     const quotedConfigPath = `"${configFilePath}"`;
-    if (gpuIds.includes(',')) {
-      // Multi-GPU: use distributed launch
-      command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py -c ${quotedConfigPath}`;
-    } else {
-      // Single GPU: CUDA_VISIBLE_DEVICES will be set via environment variable
-      command = `python tools/train.py -c ${quotedConfigPath}`;
-    }
+    command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py -c ${quotedConfigPath}`;
     if (useAmp) command += ' --amp';
     if (useVdl) {
       command += ` --use_vdl=true --vdl_log_dir=output/${project.name}/${jobName}/vdl`;
