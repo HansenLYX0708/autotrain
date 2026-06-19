@@ -131,6 +131,7 @@ interface Checkpoint {
 // Eval metrics interface
 interface EvalMetrics {
   samplesCount?: number | null
+  // Bbox / detection metrics (also present for instance-segmentation models)
   mAP?: number | null
   mAP50?: number | null
   mAP75?: number | null
@@ -143,6 +144,22 @@ interface EvalMetrics {
   AR_small?: number | null
   AR_medium?: number | null
   AR_large?: number | null
+  // Instance-segmentation (mask) metrics — only present when the model has a
+  // mask head and PaddleDetection emitted the "Evaluate annotation type *segm*"
+  // block during evaluation.
+  hasSegm?: boolean
+  mAP_segm?: number | null
+  mAP50_segm?: number | null
+  mAP75_segm?: number | null
+  mAP_small_segm?: number | null
+  mAP_medium_segm?: number | null
+  mAP_large_segm?: number | null
+  AR_1_segm?: number | null
+  AR_10_segm?: number | null
+  AR_100_segm?: number | null
+  AR_small_segm?: number | null
+  AR_medium_segm?: number | null
+  AR_large_segm?: number | null
 }
 
 // Chart configurations
@@ -356,6 +373,61 @@ function MetricsDisplay({ result, compact = false }: { result: EvalMetrics; comp
           </BarChart>
         </ChartContainer>
       </div>
+
+      {/* Instance Segmentation (mask) metrics — only shown when the eval
+          output contained an "Evaluate annotation type *segm*" block. */}
+      {result.hasSegm && (
+        <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-medium text-purple-700 dark:text-purple-300">
+              Segmentation (Mask) Metrics
+            </div>
+            <Badge variant="outline" className="border-purple-500/40 text-purple-600 dark:text-purple-400">
+              Instance Seg
+            </Badge>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-center text-xs">
+            <div>
+              <div className="font-bold text-emerald-600">{((result.mAP_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">mAP@0.5:0.95</div>
+            </div>
+            <div>
+              <div className="font-bold text-blue-600">{((result.mAP50_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">mAP@0.5</div>
+            </div>
+            <div>
+              <div className="font-bold text-purple-600">{((result.mAP75_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">mAP@0.75</div>
+            </div>
+            <div>
+              <div className="font-bold text-emerald-600">{((result.AR_1_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">AR@1</div>
+            </div>
+            <div>
+              <div className="font-bold text-blue-600">{((result.AR_10_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">AR@10</div>
+            </div>
+            <div>
+              <div className="font-bold text-purple-600">{((result.AR_100_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">AR@100</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-center text-xs mt-3 pt-3 border-t border-purple-500/20">
+            <div>
+              <div className="font-bold">{((result.mAP_small_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">mAP Small</div>
+            </div>
+            <div>
+              <div className="font-bold">{((result.mAP_medium_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">mAP Medium</div>
+            </div>
+            <div>
+              <div className="font-bold">{((result.mAP_large_segm ?? 0) * 100).toFixed(2)}%</div>
+              <div className="text-muted-foreground">mAP Large</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

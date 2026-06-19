@@ -47,6 +47,7 @@ interface Project {
   name: string
   description: string | null
   framework: string
+  task?: string
   status: string
   createdAt: string
   updatedAt: string
@@ -67,6 +68,7 @@ export function ProjectsPage() {
     name: '',
     description: '',
     framework: 'PaddleDetection',
+    task: 'detection',
   })
 
   useEffect(() => {
@@ -113,7 +115,7 @@ export function ProjectsPage() {
           toast({ title: 'Project created successfully' })
           fetchProjects()
           setDialogOpen(false)
-          setFormData({ name: '', description: '', framework: 'PaddleDetection' })
+          setFormData({ name: '', description: '', framework: 'PaddleDetection', task: 'detection' })
         }
       }
     } catch (error) {
@@ -155,6 +157,7 @@ export function ProjectsPage() {
       name: project.name,
       description: project.description || '',
       framework: project.framework,
+      task: project.task || 'detection',
     })
     setDialogOpen(true)
   }
@@ -177,7 +180,7 @@ export function ProjectsPage() {
           setDialogOpen(open)
           if (!open) {
             setEditingProject(null)
-            setFormData({ name: '', description: '', framework: 'PaddleDetection' })
+            setFormData({ name: '', description: '', framework: 'PaddleDetection', task: 'detection' })
           }
         }}>
           <DialogTrigger asChild>
@@ -219,7 +222,12 @@ export function ProjectsPage() {
                   <Label htmlFor="framework">Training Framework</Label>
                   <Select
                     value={formData.framework}
-                    onValueChange={(value) => setFormData({ ...formData, framework: value })}
+                    onValueChange={(value) => setFormData({
+                      ...formData,
+                      framework: value,
+                      // Reset task if switching away from PaddleDetection
+                      task: value === 'PaddleDetection' ? formData.task : 'detection',
+                    })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select framework" />
@@ -230,6 +238,26 @@ export function ProjectsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                {formData.framework === 'PaddleDetection' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="task">Task Type</Label>
+                    <Select
+                      value={formData.task}
+                      onValueChange={(value) => setFormData({ ...formData, task: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select task type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="detection">Object Detection</SelectItem>
+                        <SelectItem value="instance_segmentation">Instance Segmentation</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Instance Segmentation enables polygon masks (e.g. Mask R-CNN, SOLOv2).
+                    </p>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button type="submit">{editingProject ? 'Update' : 'Create'}</Button>
@@ -323,9 +351,16 @@ export function ProjectsPage() {
                   </div>
                 </div>
                 <div className="flex items-center justify-between mt-4 pt-3 border-t">
-                  <Badge variant={project.status === 'active' ? 'default' : 'secondary'}>
-                    {project.status}
-                  </Badge>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant={project.status === 'active' ? 'default' : 'secondary'}>
+                      {project.status}
+                    </Badge>
+                    {project.framework === 'PaddleDetection' && project.task === 'instance_segmentation' && (
+                      <Badge variant="outline" className="border-purple-500/40 text-purple-600 dark:text-purple-400">
+                        Instance Seg
+                      </Badge>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Calendar className="w-3 h-3" />
                     {new Date(project.createdAt).toLocaleDateString()}

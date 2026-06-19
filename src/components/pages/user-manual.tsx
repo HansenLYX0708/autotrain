@@ -354,6 +354,16 @@ const manualSections: StepSection[] = [
                 Add an optional <strong>Description</strong> to document project details
               </li>
               <li>
+                Select the <strong>Training Framework</strong> (PaddleDetection or PaddleClas)
+              </li>
+              <li>
+                For PaddleDetection projects, select a <strong>Task Type</strong>:
+                <ul className="list-disc list-inside ml-6 mt-1 text-sm">
+                  <li><strong>Object Detection</strong> — bounding-box only models (e.g. PP-YOLOE, RT-DETR)</li>
+                  <li><strong>Instance Segmentation</strong> — bounding-box + polygon mask models (e.g. Mask R-CNN, SOLOv2). The platform automatically adds <code>gt_poly</code> to dataset <code>data_fields</code> and parses segmentation (mask) AP/AR from evaluation output.</li>
+                </ul>
+              </li>
+              <li>
                 Click <strong>"Create"</strong> to finalize
               </li>
             </ol>

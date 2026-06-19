@@ -120,7 +120,9 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { name, description, framework, status } = body;
+    const { name, description, framework, task, status } = body;
+
+    const allowedTasks = ['detection', 'instance_segmentation'];
 
     // Check if project exists
     const existingProject = await db.project.findUnique({
@@ -162,6 +164,7 @@ export async function PUT(
       name?: string;
       description?: string | null;
       framework?: string;
+      task?: string;
       status?: string;
     } = {};
 
@@ -173,6 +176,13 @@ export async function PUT(
     }
     if (framework !== undefined) {
       updateData.framework = framework;
+    }
+    if (task !== undefined && allowedTasks.includes(task)) {
+      const fw = framework !== undefined ? framework : existingProject.framework;
+      updateData.task = fw === 'PaddleDetection' ? task : 'detection';
+    } else if (framework !== undefined && framework !== 'PaddleDetection') {
+      // Switching away from PaddleDetection forces task back to detection
+      updateData.task = 'detection';
     }
     if (status !== undefined) {
       updateData.status = status;

@@ -50,6 +50,7 @@ model Project {
   name        String
   description String?
   framework   String   @default("PaddleDetection") // PaddleDetection or PaddleClas
+  task        String   @default("detection") // detection or instance_segmentation (PaddleDetection only)
   status      String   @default("active") // active, archived
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

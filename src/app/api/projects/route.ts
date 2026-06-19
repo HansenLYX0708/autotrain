@@ -55,7 +55,14 @@ export async function POST(request: NextRequest) {
     const { userId } = auth;
 
     const body = await request.json();
-    const { name, description, framework } = body;
+    const { name, description, framework, task } = body;
+
+    // Validate task value
+    const allowedTasks = ['detection', 'instance_segmentation'];
+    const resolvedTask = task && allowedTasks.includes(task) ? task : 'detection';
+    // instance_segmentation is only meaningful for PaddleDetection
+    const resolvedFramework = framework || 'PaddleDetection';
+    const finalTask = resolvedFramework === 'PaddleDetection' ? resolvedTask : 'detection';
 
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim() === '') {
@@ -90,7 +97,8 @@ export async function POST(request: NextRequest) {
       data: {
         name: name.trim(),
         description: description?.trim() || null,
-        framework: framework || 'PaddleDetection',
+        framework: resolvedFramework,
+        task: finalTask,
         status: 'active',
         userId: userId,
       },

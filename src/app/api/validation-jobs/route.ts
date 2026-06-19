@@ -405,47 +405,78 @@ function startValidationProcess(
       const samplesMatch = fullOutput.match(/Load\s*\[(\d+)\s+samples\s+valid/);
       const samplesCount = samplesMatch ? parseInt(samplesMatch[1], 10) : null;
 
-      // Parse mAP results from COCO-style eval output
-      // Format: Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.006
-      const parseMetric = (pattern: string): number | null => {
-        const match = fullOutput.match(new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*=\\s*([\\d.]+)', 'i'));
+      // PaddleDetection prints COCO eval blocks delimited by
+      //   "Evaluate annotation type *bbox*"
+      //   "Evaluate annotation type *segm*"
+      // For instance-segmentation models both blocks are present, so we
+      // parse them separately. For detection-only output there is only one
+      // block (or no marker at all) and we treat the whole output as bbox.
+      const extractBlock = (marker: RegExp): string | null => {
+        const startMatch = fullOutput.match(marker);
+        if (!startMatch || startMatch.index === undefined) return null;
+        const start = startMatch.index + startMatch[0].length;
+        // Stop at the next "Evaluate annotation type" marker, if any
+        const rest = fullOutput.slice(start);
+        const nextMatch = rest.match(/Evaluate annotation type/i);
+        return nextMatch && nextMatch.index !== undefined
+          ? rest.slice(0, nextMatch.index)
+          : rest;
+      };
+
+      const bboxBlock = extractBlock(/Evaluate annotation type \*bbox\*/i) ?? fullOutput;
+      const segmBlock = extractBlock(/Evaluate annotation type \*segm\*/i);
+
+      const parseMetricFrom = (block: string, pattern: string): number | null => {
+        const match = block.match(
+          new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*=\\s*([\\d.]+)', 'i')
+        );
         return match ? parseFloat(match[1]) : null;
       };
 
-      // mAP (AP) metrics
-      const mapAll = parseMetric('Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ]');
-      const map50 = parseMetric('Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ]');
-      const map75 = parseMetric('Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ]');
-      const mapSmall = parseMetric('Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ]');
-      const mapMedium = parseMetric('Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ]');
-      const mapLarge = parseMetric('Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ]');
-
-      // AR metrics
-      const ar1 = parseMetric('Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ]');
-      const ar10 = parseMetric('Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ]');
-      const ar100 = parseMetric('Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ]');
-      const arSmall = parseMetric('Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ]');
-      const arMedium = parseMetric('Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ]');
-      const arLarge = parseMetric('Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ]');
-
-      // Store all metrics
-      resultJson = JSON.stringify({
-        samplesCount,
-        // mAP metrics
-        mAP: mapAll,
-        mAP50: map50,
-        mAP75: map75,
-        mAP_small: mapSmall,
-        mAP_medium: mapMedium,
-        mAP_large: mapLarge,
-        // AR metrics
-        AR_1: ar1,
-        AR_10: ar10,
-        AR_100: ar100,
-        AR_small: arSmall,
-        AR_medium: arMedium,
-        AR_large: arLarge,
+      const parseCocoBlock = (block: string) => ({
+        mAP: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ]'),
+        mAP50: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ]'),
+        mAP75: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ]'),
+        mAP_small: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ]'),
+        mAP_medium: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ]'),
+        mAP_large: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50:0.95 | area=large | maxDets=100 ]'),
+        AR_1: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ]'),
+        AR_10: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ]'),
+        AR_100: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ]'),
+        AR_small: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ]'),
+        AR_medium: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ]'),
+        AR_large: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ]'),
       });
+
+      const bboxMetrics = parseCocoBlock(bboxBlock);
+      const segmMetrics = segmBlock ? parseCocoBlock(segmBlock) : null;
+
+      // Store all metrics. Bbox metrics keep their original (unsuffixed)
+      // names for backward compatibility with the existing UI; segm metrics
+      // are emitted with a "_segm" suffix and only when present.
+      const resultPayload: Record<string, unknown> = {
+        samplesCount,
+        // bbox metrics (detection or mask-model bbox head)
+        ...bboxMetrics,
+      };
+
+      if (segmMetrics) {
+        resultPayload.hasSegm = true;
+        resultPayload.mAP_segm = segmMetrics.mAP;
+        resultPayload.mAP50_segm = segmMetrics.mAP50;
+        resultPayload.mAP75_segm = segmMetrics.mAP75;
+        resultPayload.mAP_small_segm = segmMetrics.mAP_small;
+        resultPayload.mAP_medium_segm = segmMetrics.mAP_medium;
+        resultPayload.mAP_large_segm = segmMetrics.mAP_large;
+        resultPayload.AR_1_segm = segmMetrics.AR_1;
+        resultPayload.AR_10_segm = segmMetrics.AR_10;
+        resultPayload.AR_100_segm = segmMetrics.AR_100;
+        resultPayload.AR_small_segm = segmMetrics.AR_small;
+        resultPayload.AR_medium_segm = segmMetrics.AR_medium;
+        resultPayload.AR_large_segm = segmMetrics.AR_large;
+      }
+
+      resultJson = JSON.stringify(resultPayload);
     } else if (type === 'infer' && status === 'completed') {
       // Get the validation job to find output path
       try {

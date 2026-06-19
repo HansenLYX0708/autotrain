@@ -10,6 +10,7 @@ interface DatasetInfo {
   evalAnnoPath: string | null;
   datasetDir: string | null;
   numClasses: number;
+  task?: string;
 }
 
 interface ModelInfo {
@@ -73,12 +74,13 @@ ${model.head}:
   num_classes: ${numClasses}
 
 # Dataset configuration
+# Task: ${dataset.task || 'detection'}
 TrainDataset:
   !COCODataSet
     image_dir: ${dataset.trainImagePath || 'train'}
     anno_path: ${dataset.trainAnnoPath || 'annotations/instances_train.json'}
     dataset_dir: ${dataset.datasetDir || 'dataset/coco'}
-    data_fields: ['image', 'gt_bbox', 'gt_class', 'is_crowd']
+    data_fields: ${dataset.task === 'instance_segmentation' ? "['image', 'gt_bbox', 'gt_class', 'gt_poly', 'is_crowd']" : "['image', 'gt_bbox', 'gt_class', 'is_crowd']"}
 
 EvalDataset:
   !COCODataSet
@@ -391,6 +393,7 @@ export async function POST(request: NextRequest) {
       evalAnnoPath: dataset.evalAnnoPath,
       datasetDir: dataset.datasetDir,
       numClasses: dataset.numClasses,
+      task: (project as any).task || 'detection',
     };
 
     const modelInfo: ModelInfo = {

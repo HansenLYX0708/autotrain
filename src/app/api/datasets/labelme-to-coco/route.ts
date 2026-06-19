@@ -57,6 +57,10 @@ interface CocoAnnotation {
   bbox: number[];
   area: number;
   iscrowd: number;
+  // COCO polygon segmentation: array of polygons, each as a flat
+  // [x1, y1, x2, y2, ...] list. Required for instance-segmentation training
+  // (Mask R-CNN, SOLOv2, etc.); harmless for detection-only models.
+  segmentation?: number[][];
 }
 
 interface CocoImage {
@@ -334,6 +338,24 @@ export async function POST(request: NextRequest) {
           }
           area = Math.abs(area) / 2;
 
+          // Build polygon segmentation for shapes that actually describe a
+          // closed region (polygon / linestrip with >= 3 points). For pure
+          // rectangle shapes (only two corners) we synthesize a 4-point
+          // polygon from the bbox so the output is still usable for
+          // instance-segmentation training.
+          let segPoints: number[] = [];
+          if (shape.shape_type === 'polygon' && points.length >= 3) {
+            segPoints = points.flat();
+          } else {
+            // Rectangle / unsupported: derive a 4-corner polygon from bbox
+            segPoints = [
+              minX, minY,
+              maxX, minY,
+              maxX, maxY,
+              minX, maxY,
+            ];
+          }
+
           const annotation: CocoAnnotation = {
             id: annotationId++,
             image_id: imageId,
@@ -341,6 +363,7 @@ export async function POST(request: NextRequest) {
             bbox: [minX, minY, width, height],
             area: area,
             iscrowd: 0,
+            segmentation: [segPoints],
           };
           annotations.push(annotation);
           annotationCount++;
