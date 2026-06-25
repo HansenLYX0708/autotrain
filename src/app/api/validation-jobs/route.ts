@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
+import { getWorkDir } from '@/lib/frameworks';
 import { spawn } from 'child_process';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join, basename, extname } from 'path';
@@ -214,9 +215,8 @@ export async function POST(request: NextRequest) {
 
     // Get system config
     const systemConfig = await db.systemConfig.findFirst();
-    const workDir = project.framework === 'PaddleClas'
-      ? systemConfig?.paddleClasPath
-      : systemConfig?.paddleDetectionPath;
+    const framework = project.framework || 'PaddleDetection';
+    const workDir = getWorkDir(framework, systemConfig);
 
     // Get Python path based on training job's GPU configuration
     const pythonPath = body.trainingJobId 
@@ -227,13 +227,20 @@ export async function POST(request: NextRequest) {
     let command = body.customCommand || '';
     
     if (!command) {
-      if (body.type === 'eval') {
-        const configPath = body.configPath || '';
-        const weightsPath = body.weightsPath || '';
+      const configPath = body.configPath || '';
+      const weightsPath = body.weightsPath || '';
+      if (framework === 'PaddleSeg') {
+        // PaddleSeg uses val.py (eval) and predict.py (infer) with --config/--model_path
+        if (body.type === 'eval') {
+          command = `${pythonPath} tools/val.py --config ${configPath} --model_path ${weightsPath}`;
+        } else if (body.type === 'infer') {
+          const inputPath = body.inferInputPath || '';
+          const outputPath = body.inferOutputPath || 'output/predict_results';
+          command = `${pythonPath} tools/predict.py --config ${configPath} --model_path ${weightsPath} --image_path ${inputPath} --save_dir ${outputPath}`;
+        }
+      } else if (body.type === 'eval') {
         command = `${pythonPath} tools/eval.py -c ${configPath} -o weights=${weightsPath}`;
       } else if (body.type === 'infer') {
-        const configPath = body.configPath || '';
-        const weightsPath = body.weightsPath || '';
         const inputPath = body.inferInputPath || '';
         const outputPath = body.inferOutputPath || 'output/infer_results';
         
@@ -285,7 +292,8 @@ export async function POST(request: NextRequest) {
         body.configPath,
         body.weightsPath,
         body.inferInputPath,
-        body.inferOutputPath
+        body.inferOutputPath,
+        framework
       );
     }
 
@@ -314,7 +322,8 @@ function startValidationProcess(
   configPath?: string,
   weightsPath?: string,
   inferInputPath?: string,
-  inferOutputPath?: string
+  inferOutputPath?: string,
+  framework: string = 'PaddleDetection'
 ) {
   console.log(`\n========== VALIDATION PROCESS START ==========`);
   console.log(`[Validation ${jobId}] Type: ${type}`);
@@ -335,8 +344,26 @@ function startValidationProcess(
   // Build args array properly to handle spaces in paths
   // Use the provided pythonPath directly (should be absolute path to python.exe)
   let args: string[] = [];
-  
-  if (type === 'eval') {
+
+  if (framework === 'PaddleSeg') {
+    if (type === 'eval') {
+      // eval: python tools/val.py --config configPath --model_path weightsPath
+      args = [
+        'tools/val.py',
+        '--config', configPath || '',
+        '--model_path', weightsPath || '',
+      ];
+    } else if (type === 'infer') {
+      // infer: python tools/predict.py --config configPath --model_path weightsPath --image_path input --save_dir output
+      args = [
+        'tools/predict.py',
+        '--config', configPath || '',
+        '--model_path', weightsPath || '',
+        '--image_path', inferInputPath || '',
+        '--save_dir', inferOutputPath || 'output/predict_results',
+      ];
+    }
+  } else if (type === 'eval') {
     // eval: python tools/eval.py -c configPath -o weights=weightsPath
     args = [
       'tools/eval.py',
@@ -400,7 +427,19 @@ function startValidationProcess(
     let resultJson: string | null = null;
     let resultPath: string | null = null;
 
-    if (type === 'eval' && status === 'completed') {
+    if (type === 'eval' && status === 'completed' && framework === 'PaddleSeg') {
+      // PaddleSeg val.py prints: [EVAL] #Images: N mIoU: .. Acc: .. Kappa: .. Dice: ..
+      const segF = (re: RegExp): number | null => {
+        const m = fullOutput.match(re);
+        return m ? parseFloat(m[1]) : null;
+      };
+      resultJson = JSON.stringify({
+        mIoU: segF(/mIoU:\s*([\d.]+)/i),
+        acc: segF(/Acc:\s*([\d.]+)/i),
+        kappa: segF(/Kappa:\s*([\d.]+)/i),
+        dice: segF(/Dice:\s*([\d.]+)/i),
+      });
+    } else if (type === 'eval' && status === 'completed') {
       // Parse sample count from eval output
       const samplesMatch = fullOutput.match(/Load\s*\[(\d+)\s+samples\s+valid/);
       const samplesCount = samplesMatch ? parseInt(samplesMatch[1], 10) : null;

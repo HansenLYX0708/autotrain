@@ -160,6 +160,11 @@ interface EvalMetrics {
   AR_small_segm?: number | null
   AR_medium_segm?: number | null
   AR_large_segm?: number | null
+  // PaddleSeg semantic-segmentation metrics
+  mIoU?: number | null
+  acc?: number | null
+  kappa?: number | null
+  dice?: number | null
 }
 
 // Chart configurations
@@ -225,6 +230,26 @@ const getImageUrl = (imagePath: string): string => {
 
 // Metrics Display Component
 function MetricsDisplay({ result, compact = false }: { result: EvalMetrics; compact?: boolean }) {
+  // PaddleSeg metrics (mIoU/Acc/Kappa/Dice) use a dedicated layout.
+  if (result.mIoU != null || result.kappa != null || result.dice != null) {
+    const segItems = [
+      { label: 'mIoU', value: result.mIoU },
+      { label: 'Acc', value: result.acc },
+      { label: 'Kappa', value: result.kappa },
+      { label: 'Dice', value: result.dice },
+    ]
+    return (
+      <div className={compact ? 'grid grid-cols-4 gap-2 text-center text-xs' : 'grid grid-cols-2 md:grid-cols-4 gap-3'}>
+        {segItems.map((it) => (
+          <div key={it.label} className="rounded-lg border p-3 text-center">
+            <div className="font-bold text-emerald-600">{it.value != null ? `${(it.value * 100).toFixed(2)}%` : 'N/A'}</div>
+            <div className="text-muted-foreground text-xs">{it.label}</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   const apChartData = [
     { name: 'mAP@0.5:0.95', value: result.mAP ?? 0, fill: 'var(--chart-1)' },
     { name: 'mAP@0.5', value: result.mAP50 ?? 1, fill: 'var(--chart-2)' },
@@ -536,6 +561,10 @@ export function ValidationPage() {
     const pythonPath = getPythonPathForJob(selectedJob)
     const configPath = selectedJob.absoluteConfigPath
     const checkpointPath = selectedCheckpoint
+    if (selectedJob.project?.framework === 'PaddleSeg') {
+      // PaddleSeg export uses tools/export.py with --config/--model_path
+      return `${pythonPath} tools/export.py --config "${configPath}" --model_path "${checkpointPath}" --save_dir "${saveDir}/export_model"`
+    }
     return `${pythonPath} tools/export_model.py -c "${configPath}" -o weights="${checkpointPath}" trt=True --output_dir "${saveDir}/export_model"`
   }
 
@@ -644,6 +673,10 @@ export function ValidationPage() {
     const pythonPath = getPythonPathForJob(selectedJob)
     const configPath = selectedJob.absoluteConfigPath || selectedJob.configPath
     const weightsPath = selectedCheckpoint
+    if (selectedJob.project?.framework === 'PaddleSeg') {
+      // PaddleSeg evaluation uses tools/val.py with --config/--model_path
+      return `${pythonPath} tools/val.py --config ${configPath} --model_path ${weightsPath}`
+    }
     return `${pythonPath} tools/eval.py -c ${configPath} -o weights=${weightsPath}`
   }
 
@@ -654,6 +687,12 @@ export function ValidationPage() {
     const configPath = selectedJob.absoluteConfigPath || selectedJob.configPath
     const weightsPath = selectedCheckpoint
     const inputPath = inferInputPath
+
+    if (selectedJob.project?.framework === 'PaddleSeg') {
+      // PaddleSeg inference uses tools/predict.py with --config/--model_path/--image_path/--save_dir
+      const out = inferOutputPath || 'output/predict_results'
+      return `${pythonPath} tools/predict.py --config ${configPath} --model_path ${weightsPath} --image_path ${inputPath} --save_dir ${out}`
+    }
 
     // Use --infer_img for single image files, --infer_dir for directories
     const inputParam = isImageFile(inferInputPath) ? '--infer_img' : '--infer_dir'

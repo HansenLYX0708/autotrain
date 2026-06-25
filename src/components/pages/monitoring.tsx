@@ -92,9 +92,15 @@ interface TrainingLog {
   eta: string | null
   batchCost: number | null
   dataCost: number | null
+  readerCost: number | null
   ips: number | null
   memReserved: number | null
   memAllocated: number | null
+  // PaddleSeg evaluation metrics
+  mIoU: number | null
+  acc: number | null
+  kappa: number | null
+  dice: number | null
   rawLog: string | null
   timestamp: string
 }
@@ -152,6 +158,26 @@ const lrChartConfig = {
   learningRate: {
     label: "Learning Rate",
     color: "var(--chart-1)",
+  },
+} satisfies ChartConfig
+
+// PaddleSeg evaluation metrics chart config
+const segMetricChartConfig = {
+  mIoU: {
+    label: "mIoU",
+    color: "var(--chart-1)",
+  },
+  acc: {
+    label: "Acc",
+    color: "var(--chart-2)",
+  },
+  kappa: {
+    label: "Kappa",
+    color: "var(--chart-3)",
+  },
+  dice: {
+    label: "Dice",
+    color: "var(--chart-4)",
   },
 } satisfies ChartConfig
 
@@ -305,6 +331,17 @@ export function MonitoringPage() {
       iteration: log.iteration,
       epoch: log.epoch,
       learningRate: log.learningRate,
+    }))
+
+  // PaddleSeg evaluation metrics over successive evaluations
+  const segMetricChartData = logs
+    .filter(log => log.mIoU !== null)
+    .map((log, i) => ({
+      step: i + 1,
+      mIoU: log.mIoU,
+      acc: log.acc,
+      kappa: log.kappa,
+      dice: log.dice,
     }))
 
   // Filter logs for raw log viewer
@@ -596,6 +633,33 @@ export function MonitoringPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* PaddleSeg Evaluation Metrics */}
+          {segMetricChartData.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Segmentation Metrics</CardTitle>
+                <CardDescription>
+                  mIoU / Acc / Kappa / Dice across evaluations
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ChartContainer config={segMetricChartConfig} className="h-[300px] w-full">
+                  <LineChart data={segMetricChartData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="step" className="text-xs" />
+                    <YAxis className="text-xs" domain={[0, 1]} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Legend />
+                    <Line type="monotone" dataKey="mIoU" stroke="var(--chart-1)" strokeWidth={2} dot={false} name="mIoU" />
+                    <Line type="monotone" dataKey="acc" stroke="var(--chart-2)" strokeWidth={1.5} dot={false} name="Acc" />
+                    <Line type="monotone" dataKey="kappa" stroke="var(--chart-3)" strokeWidth={1.5} dot={false} name="Kappa" />
+                    <Line type="monotone" dataKey="dice" stroke="var(--chart-4)" strokeWidth={1.5} dot={false} name="Dice" />
+                  </LineChart>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Performance Metrics */}
           <Card>

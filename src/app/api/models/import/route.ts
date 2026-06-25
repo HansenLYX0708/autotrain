@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { getWorkDir } from "@/lib/frameworks";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -54,9 +55,7 @@ export async function GET(request: NextRequest) {
     // Get system config for paths
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
-    const workDir = framework === "PaddleClas"
-      ? systemConfig?.paddleClasPath
-      : systemConfig?.paddleDetectionPath;
+    const workDir = getWorkDir(framework, systemConfig);
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
 
     // List configs from userConfigsPath/default/models folder
@@ -167,9 +166,7 @@ export async function POST(request: NextRequest) {
     // Get system config for paths
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
-    const workDir = framework === "PaddleClas"
-      ? systemConfig?.paddleClasPath
-      : systemConfig?.paddleDetectionPath;
+    const workDir = getWorkDir(framework, systemConfig);
 
     if (!workDir) {
       return NextResponse.json(

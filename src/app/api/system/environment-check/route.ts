@@ -25,6 +25,8 @@ interface VersionCheckResult {
 
 interface EnvironmentCheck {
   paddleDetection: VersionCheckResult;
+  paddleClas: VersionCheckResult;
+  paddleSeg: VersionCheckResult;
   gpuEnvironments: GpuEnvironmentCheck[];
   totalGpus: number;
   configuredGpus: number;
@@ -78,32 +80,39 @@ async function checkPythonVersion(pythonPath: string): Promise<Omit<GpuEnvironme
   }
 }
 
-// Check PaddleDetection path exists
-async function checkPaddleDetectionVersion(paddlePath: string): Promise<VersionCheckResult> {
-  if (!paddlePath) {
+// Required marker files per framework (relative to the framework root)
+const FRAMEWORK_REQUIRED_FILES: Record<string, string[]> = {
+  PaddleDetection: ['ppdet', 'tools/train.py', 'tools/eval.py'],
+  PaddleClas: ['ppcls', 'tools/train.py', 'tools/eval.py'],
+  PaddleSeg: ['paddleseg', 'tools/train.py', 'tools/val.py'],
+};
+
+// Check a framework installation by verifying its key files exist
+async function checkFrameworkInstall(
+  frameworkPath: string,
+  framework: string
+): Promise<VersionCheckResult> {
+  if (!frameworkPath) {
     return {
       exists: false,
       version: null,
       isValid: false,
-      error: 'PaddleDetection path not configured',
+      error: `${framework} path not configured`,
     };
   }
 
-  if (!fs.existsSync(paddlePath)) {
+  if (!fs.existsSync(frameworkPath)) {
     return {
       exists: false,
       version: null,
       isValid: false,
-      error: 'PaddleDetection directory not found',
+      error: `${framework} directory not found`,
     };
   }
 
-  // Check if it's a valid PaddleDetection installation by checking for key files
-  const requiredFiles = [
-    path.join(paddlePath, 'ppdet'),
-    path.join(paddlePath, 'tools', 'train.py'),
-    path.join(paddlePath, 'tools', 'eval.py'),
-  ];
+  // Check if it's a valid installation by checking for key files
+  const required = FRAMEWORK_REQUIRED_FILES[framework] || [];
+  const requiredFiles = required.map(rel => path.join(frameworkPath, ...rel.split('/')));
 
   const allFilesExist = requiredFiles.every(file => fs.existsSync(file));
 
@@ -112,7 +121,7 @@ async function checkPaddleDetectionVersion(paddlePath: string): Promise<VersionC
       exists: true,
       version: null,
       isValid: false,
-      error: 'Invalid PaddleDetection installation. Required files not found.',
+      error: `Invalid ${framework} installation. Required files not found.`,
     };
   }
 
@@ -135,6 +144,8 @@ export async function GET(request: NextRequest) {
         error: 'System configuration not found',
         data: {
           paddleDetection: { exists: false, version: null, isValid: false, error: 'Not configured' },
+          paddleClas: { exists: false, version: null, isValid: false, error: 'Not configured' },
+          paddleSeg: { exists: false, version: null, isValid: false, error: 'Not configured' },
           gpuEnvironments: [],
           totalGpus: 0,
           configuredGpus: 0,
@@ -143,8 +154,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Check PaddleDetection
-    const paddleDetection = await checkPaddleDetectionVersion(systemConfig.paddleDetectionPath || '');
+    // Check each configured framework installation
+    const paddleDetection = await checkFrameworkInstall(systemConfig.paddleDetectionPath || '', 'PaddleDetection');
+    const paddleClas = await checkFrameworkInstall((systemConfig as any).paddleClasPath || '', 'PaddleClas');
+    const paddleSeg = await checkFrameworkInstall((systemConfig as any).paddleSegPath || '', 'PaddleSeg');
 
     // Parse GPU Python mappings
     let gpuPythonMappings: Record<string, string> = {};
@@ -181,6 +194,8 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         paddleDetection,
+        paddleClas,
+        paddleSeg,
         gpuEnvironments,
         totalGpus,
         configuredGpus,
@@ -195,6 +210,8 @@ export async function GET(request: NextRequest) {
       message: error instanceof Error ? error.message : 'Unknown error',
       data: {
         paddleDetection: { exists: false, version: null, isValid: false, error: 'Check failed' },
+        paddleClas: { exists: false, version: null, isValid: false, error: 'Check failed' },
+        paddleSeg: { exists: false, version: null, isValid: false, error: 'Check failed' },
         gpuEnvironments: [],
         totalGpus: 0,
         configuredGpus: 0,

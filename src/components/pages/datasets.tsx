@@ -38,6 +38,7 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  Cell,
 } from 'recharts'
 import {
   Plus,
@@ -62,6 +63,7 @@ import {
   Upload,
   AlertCircle,
   FileArchive,
+  Layers,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { Progress } from '@/components/ui/progress'
@@ -70,10 +72,14 @@ import {
   ChartConfig,
   ChartContainer,
 } from "@/components/ui/chart"
+import { Slider } from '@/components/ui/slider'
+import { SegSampleView } from '@/components/seg-sample-view'
+import { getSegColorMap, rgbToCss } from '@/lib/seg-colors'
 
 interface Project {
   id: string
   name: string
+  framework?: string
 }
 
 interface Dataset {
@@ -97,6 +103,7 @@ interface Dataset {
   project?: {
     id: string
     name: string
+    framework?: string
   }
 }
 
@@ -106,6 +113,7 @@ interface SampleImage {
   width: number
   height: number
   imagePath: string
+  maskPath?: string
   annotations: {
     id: number
     categoryId: number
@@ -119,6 +127,7 @@ interface Category {
   id: number
   name: string
   supercategory?: string
+  color?: number[]
 }
 
 const chartConfig = {
@@ -165,6 +174,9 @@ export function DatasetsPage() {
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
   const [selectedSample, setSelectedSample] = useState<SampleImage | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [previewType, setPreviewType] = useState<'detection' | 'segmentation'>('detection')
+  const [overlayOpacity, setOverlayOpacity] = useState(0.5)
+  const [hideBackground, setHideBackground] = useState(true)
   // Abort controller ref for cancelling upload
   // Upload dataset dialog state
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
@@ -228,6 +240,12 @@ export function DatasetsPage() {
     evalAnnoPath: '',
     datasetDir: '',
   })
+
+  // PaddleSeg datasets use list files (train.txt/val.txt) + num_classes instead of COCO annotations.
+  const isSegDataset = projects.find(p => p.id === formData.projectId)?.framework === 'PaddleSeg'
+
+  // Whether the dataset currently selected for stats/preview is PaddleSeg.
+  const isSegSelected = selectedDataset?.project?.framework === 'PaddleSeg'
 
   useEffect(() => {
     fetchDatasets()
@@ -340,6 +358,13 @@ export function DatasetsPage() {
           fetchDatasets()
           setDialogOpen(false)
           setEditingDataset(null)
+        } else {
+          const err = await response.json().catch(() => ({}))
+          toast({
+            title: 'Failed to update dataset',
+            description: err.message || err.error || `HTTP ${response.status}`,
+            variant: 'destructive',
+          })
         }
       } else {
         // Include username when importing dataset
@@ -368,10 +393,21 @@ export function DatasetsPage() {
             evalAnnoPath: '',
             datasetDir: '',
           })
+        } else {
+          const err = await response.json().catch(() => ({}))
+          toast({
+            title: 'Failed to import dataset',
+            description: err.message || err.error || `HTTP ${response.status}`,
+            variant: 'destructive',
+          })
         }
       }
     } catch (error) {
-      toast({ title: 'Error saving dataset', variant: 'destructive' })
+      toast({
+        title: 'Error saving dataset',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -966,6 +1002,7 @@ export function DatasetsPage() {
       if (result.success) {
         setPreviewSamples(result.data.samples)
         setPreviewCategories(result.data.categories)
+        setPreviewType(result.data.type === 'segmentation' ? 'segmentation' : 'detection')
       } else {
         toast({
           title: 'Failed to load samples',
@@ -1455,14 +1492,14 @@ export function DatasetsPage() {
           </DialogTrigger>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>{editingDataset ? 'Edit Dataset' : 'Import COCO Dataset'}</DialogTitle>
+              <DialogTitle>{editingDataset ? 'Edit Dataset' : (isSegDataset ? 'Import Segmentation Dataset' : 'Import COCO Dataset')}</DialogTitle>
               <DialogDescription>
-                {editingDataset ? 'Update dataset configuration.' : 'Select a dataset folder from your COCO directory.'}
+                {editingDataset ? 'Update dataset configuration.' : (isSegDataset ? 'Configure a PaddleSeg dataset using list files and number of classes.' : 'Select a dataset folder from your COCO directory.')}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit}>
               <div className="grid grid-cols-2 gap-4 py-4">
-                {!editingDataset && (
+                {!editingDataset && !isSegDataset && (
                   <div className="space-y-2">
                     <Label htmlFor="name">Dataset Folder</Label>
                     <Select
@@ -1496,7 +1533,7 @@ export function DatasetsPage() {
                     )}
                   </div>
                 )}
-                {editingDataset && (
+                {(editingDataset || isSegDataset) && (
                   <div className="space-y-2">
                     <Label htmlFor="name">Dataset Name</Label>
                     <Input
@@ -1555,87 +1592,132 @@ export function DatasetsPage() {
                   <Input
                     id="datasetDir"
                     value={formData.datasetDir}
-                    disabled
-                    className="bg-muted"
+                    onChange={(e) => setFormData({ ...formData, datasetDir: e.target.value })}
+                    disabled={!isSegDataset}
+                    className={isSegDataset ? '' : 'bg-muted'}
+                    placeholder={isSegDataset ? 'D:/datasets/my_seg_dataset' : undefined}
                   />
                   <p className="text-xs text-muted-foreground">
-                    COCO/{formData.name}/
+                    {isSegDataset ? 'Absolute path to the segmentation dataset root (contains images, masks and list files).' : `COCO/${formData.name}/`}
                   </p>
                 </div>
                 {/* Train Set Paths */}
                 <div className="col-span-2 pt-2 border-t">
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Train Set</h4>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="trainImagePath">Train Images Path</Label>
-                  <Input
-                    id="trainImagePath"
-                    value={formData.trainImagePath}
-                    disabled
-                    className="bg-muted"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="trainAnnoPath">Train Annotations Path</Label>
-                  <Select
-                    value={formData.trainAnnoPath}
-                    onValueChange={(value) => setFormData({ ...formData, trainAnnoPath: value })}
-                    disabled={availableDatasets.length === 0}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select annotation file"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableDatasets.find(d => d.name === formData.name)?.trainAnnotations.map((file) => (
-                        <SelectItem key={file} value={file}>
-                          {file}
-                        </SelectItem>
-                      )) || (
-                        <SelectItem value="__empty__" disabled>
-                          No annotation files found
-                        </SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {!isSegDataset && (
+                  <div className="space-y-2">
+                    <Label htmlFor="trainImagePath">Train Images Path</Label>
+                    <Input
+                      id="trainImagePath"
+                      value={formData.trainImagePath}
+                      disabled
+                      className="bg-muted"
+                    />
+                  </div>
+                )}
+                {isSegDataset ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="trainListPath">Train List File</Label>
+                      <Input
+                        id="trainListPath"
+                        value={formData.trainAnnoPath}
+                        onChange={(e) => setFormData({ ...formData, trainAnnoPath: e.target.value })}
+                        placeholder="train.txt"
+                      />
+                      <p className="text-xs text-muted-foreground">Relative to dataset root, e.g. train.txt</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="segNumClasses">Number of Classes</Label>
+                      <Input
+                        id="segNumClasses"
+                        type="number"
+                        min={1}
+                        value={formData.numClasses}
+                        onChange={(e) => setFormData({ ...formData, numClasses: parseInt(e.target.value, 10) || 1 })}
+                      />
+                      <p className="text-xs text-muted-foreground">Includes background as class 0.</p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="trainAnnoPath">Train Annotations Path</Label>
+                    <Select
+                      value={formData.trainAnnoPath}
+                      onValueChange={(value) => setFormData({ ...formData, trainAnnoPath: value })}
+                      disabled={availableDatasets.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select annotation file"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableDatasets.find(d => d.name === formData.name)?.trainAnnotations.map((file) => (
+                          <SelectItem key={file} value={file}>
+                            {file}
+                          </SelectItem>
+                        )) || (
+                          <SelectItem value="__empty__" disabled>
+                            No annotation files found
+                          </SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 {/* Eval Set Paths */}
                 <div className="col-span-2 pt-2 border-t">
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Validation Set</h4>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="evalImagePath">Eval Images Path</Label>
-                  <Input
-                    id="evalImagePath"
-                    value={formData.evalImagePath}
-                    disabled
-                    className="bg-muted"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="evalAnnoPath">Eval Annotations Path</Label>
-                  <Select
-                    value={formData.evalAnnoPath}
-                    onValueChange={(value) => setFormData({ ...formData, evalAnnoPath: value })}
-                    disabled={availableDatasets.length === 0}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select annotation file"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableDatasets.find(d => d.name === formData.name)?.valAnnotations.map((file) => (
-                        <SelectItem key={file} value={file}>
-                          {file}
-                        </SelectItem>
-                      )) || (
-                        <SelectItem value="__empty__" disabled>
-                          No annotation files found
-                        </SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {!isSegDataset && (
+                  <div className="space-y-2">
+                    <Label htmlFor="evalImagePath">Eval Images Path</Label>
+                    <Input
+                      id="evalImagePath"
+                      value={formData.evalImagePath}
+                      disabled
+                      className="bg-muted"
+                    />
+                  </div>
+                )}
+                {isSegDataset ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="valListPath">Validation List File</Label>
+                    <Input
+                      id="valListPath"
+                      value={formData.evalAnnoPath}
+                      onChange={(e) => setFormData({ ...formData, evalAnnoPath: e.target.value })}
+                      placeholder="val.txt"
+                    />
+                    <p className="text-xs text-muted-foreground">Relative to dataset root, e.g. val.txt</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="evalAnnoPath">Eval Annotations Path</Label>
+                    <Select
+                      value={formData.evalAnnoPath}
+                      onValueChange={(value) => setFormData({ ...formData, evalAnnoPath: value })}
+                      disabled={availableDatasets.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select annotation file"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableDatasets.find(d => d.name === formData.name)?.valAnnotations.map((file) => (
+                          <SelectItem key={file} value={file}>
+                            {file}
+                          </SelectItem>
+                        )) || (
+                          <SelectItem value="__empty__" disabled>
+                            No annotation files found
+                          </SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 {/* Detected Classes Display */}
-                {formData.numClasses > 0 && (
+                {!isSegDataset && formData.numClasses > 0 && (
                   <div className="col-span-2 pt-2">
                     <p className="text-sm text-green-600">
                       Detected {formData.numClasses} classes from train annotations
@@ -1644,7 +1726,7 @@ export function DatasetsPage() {
                 )}
               </div>
               <DialogFooter>
-                <Button type="submit" disabled={!editingDataset && availableDatasets.length === 0}>
+                <Button type="submit" disabled={!editingDataset && !isSegDataset && availableDatasets.length === 0}>
                   {editingDataset ? 'Update' : 'Import'}
                 </Button>
               </DialogFooter>
@@ -1814,8 +1896,17 @@ export function DatasetsPage() {
                       <div className="text-xs text-muted-foreground">Classes</div>
                     </div>
                     <div className="p-3 rounded-lg bg-muted/50">
-                      <div className="text-2xl font-bold">{selectedDataset.numAnnotations}</div>
-                      <div className="text-xs text-muted-foreground">Annotations</div>
+                      {isSegSelected ? (
+                        <>
+                          <div className="text-2xl font-bold">{selectedDataset.numTrainImages + selectedDataset.numEvalImages}</div>
+                          <div className="text-xs text-muted-foreground">Total Images</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-2xl font-bold">{selectedDataset.numAnnotations}</div>
+                          <div className="text-xs text-muted-foreground">Annotations</div>
+                        </>
+                      )}
                     </div>
                     <div className="p-3 rounded-lg bg-muted/50">
                       <div className="text-2xl font-bold">{selectedDataset.numTrainImages}</div>
@@ -1827,8 +1918,8 @@ export function DatasetsPage() {
                     </div>
                   </div>
 
-                  {/* Class Distribution Chart */}
-                  {selectedDataset.classStats && (() => {
+                  {/* Class Distribution Chart (COCO) */}
+                  {!isSegSelected && selectedDataset.classStats && (() => {
                     const stats = getClassStats(selectedDataset.classStats)
                     return (
                       <div className="space-y-4">
@@ -1872,6 +1963,65 @@ export function DatasetsPage() {
                     )
                   })()}
 
+                  {/* Class Legend + Distribution (PaddleSeg) */}
+                  {isSegSelected && (() => {
+                    const segStats = getClassStats(selectedDataset.classStats).train as Array<{ id: number; name: string; count: number; imageCount: number }>
+                    const classList = segStats.length > 0
+                      ? segStats
+                      : Array.from({ length: selectedDataset.numClasses || 0 }, (_, i) => ({ id: i, name: `class_${i}`, count: 0, imageCount: 0 }))
+                    const colors = getSegColorMap(Math.max(classList.length, 1))
+                    const hasDistribution = classList.some(c => (c.imageCount || 0) > 0 || (c.count || 0) > 0)
+                    let sampledMasks = 0
+                    try { sampledMasks = JSON.parse(selectedDataset.classStats || '{}').sampledMasks || 0 } catch { /* ignore */ }
+                    return (
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                            <Layers className="w-4 h-4" /> Classes ({classList.length})
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {classList.map((c, i) => (
+                              <div key={c.id} className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/50">
+                                <span
+                                  className="w-3 h-3 rounded-sm border border-border"
+                                  style={{ backgroundColor: rgbToCss(colors[i]) }}
+                                />
+                                <span className="text-xs">{c.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {hasDistribution ? (
+                          <div>
+                            <h4 className="text-sm font-medium mb-1">Class Distribution</h4>
+                            <p className="text-xs text-muted-foreground mb-3">
+                              Images containing each class{sampledMasks ? ` (sampled from ${sampledMasks} masks)` : ''}
+                            </p>
+                            <ChartContainer config={chartConfig} className="h-[220px] w-full">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={classList} layout="vertical" margin={{ left: 12, right: 12 }}>
+                                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                                  <XAxis type="number" allowDecimals={false} className="text-xs" />
+                                  <YAxis type="category" dataKey="name" width={90} className="text-xs" />
+                                  <Tooltip />
+                                  <Bar dataKey="imageCount" name="Images" radius={[0, 4, 4, 0]}>
+                                    {classList.map((c, i) => (
+                                      <Cell key={c.id} fill={rgbToCss(colors[i])} />
+                                    ))}
+                                  </Bar>
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </ChartContainer>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Click &quot;Compute Class Distribution&quot; below to analyze the per-class pixel/image distribution from a sample of masks.
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })()}
+
                   {/* Parse Button */}
                   <Button 
                     variant="outline" 
@@ -1880,7 +2030,9 @@ export function DatasetsPage() {
                     disabled={parsing}
                   >
                     <RefreshCw className={`w-4 h-4 mr-2 ${parsing ? 'animate-spin' : ''}`} />
-                    {parsing ? 'Parsing...' : 'Parse Dataset Statistics'}
+                    {parsing
+                      ? (isSegSelected ? 'Analyzing masks...' : 'Parsing...')
+                      : (isSegSelected ? 'Compute Class Distribution' : 'Parse Dataset Statistics')}
                   </Button>
 
                   {/* Preview Samples Button */}
@@ -1918,32 +2070,72 @@ export function DatasetsPage() {
               Sample Preview - {selectedDataset?.name}
             </DialogTitle>
             <DialogDescription>
-              Preview dataset images with annotations. Select a category to filter samples.
+              {previewType === 'segmentation'
+                ? 'Preview images with their segmentation mask overlay.'
+                : 'Preview dataset images with annotations. Select a category to filter samples.'}
             </DialogDescription>
           </DialogHeader>
           
-          <div className="flex items-center gap-4 py-2">
-            <Label htmlFor="category-filter">Filter by Category:</Label>
-            <Select
-              value={selectedCategory}
-              onValueChange={handleCategoryChange}
-            >
-              <SelectTrigger className="w-[200px]" id="category-filter">
-                <SelectValue placeholder="All Categories" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All Categories</SelectItem>
+          {previewType === 'segmentation' ? (
+            <div className="flex flex-col gap-3 py-2">
+              <div className="flex items-center gap-4 flex-wrap">
+                <span className="text-sm text-muted-foreground">{previewSamples.length} samples</span>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs whitespace-nowrap">Mask opacity</Label>
+                  <Slider
+                    value={[Math.round(overlayOpacity * 100)]}
+                    min={0}
+                    max={100}
+                    step={5}
+                    onValueChange={(v) => setOverlayOpacity((v[0] ?? 50) / 100)}
+                    className="w-[140px]"
+                  />
+                  <span className="text-xs w-9 text-right">{Math.round(overlayOpacity * 100)}%</span>
+                </div>
+                <Button
+                  variant={hideBackground ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setHideBackground(v => !v)}
+                >
+                  {hideBackground ? 'Background hidden' : 'Background shown'}
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 {previewCategories.map((cat) => (
-                  <SelectItem key={cat.id} value={String(cat.id)}>
-                    {cat.name}
-                  </SelectItem>
+                  <div key={cat.id} className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-muted/50">
+                    <span
+                      className="w-3 h-3 rounded-sm border border-border"
+                      style={{ backgroundColor: rgbToCss(getSegColorMap(Math.max(previewCategories.length, 1))[cat.id]) }}
+                    />
+                    <span className="text-xs">{cat.name}</span>
+                  </div>
                 ))}
-              </SelectContent>
-            </Select>
-            <span className="text-sm text-muted-foreground">
-              {previewSamples.length} images
-            </span>
-          </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-4 py-2">
+              <Label htmlFor="category-filter">Filter by Category:</Label>
+              <Select
+                value={selectedCategory}
+                onValueChange={handleCategoryChange}
+              >
+                <SelectTrigger className="w-[200px]" id="category-filter">
+                  <SelectValue placeholder="All Categories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All Categories</SelectItem>
+                  {previewCategories.map((cat) => (
+                    <SelectItem key={cat.id} value={String(cat.id)}>
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">
+                {previewSamples.length} images
+              </span>
+            </div>
+          )}
 
           <div className="flex-1 overflow-y-auto py-4">
             {previewLoading ? (
@@ -1965,51 +2157,66 @@ export function DatasetsPage() {
                     onDoubleClick={() => openDetailView(sample)}
                   >
                     <div className="relative aspect-square bg-muted">
-                      <img
-                        src={`/api/datasets/image?path=${encodeURIComponent(sample.imagePath)}`}
-                        alt={sample.fileName}
-                        className="w-full h-full object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none'
-                        }}
-                      />
-                      {/* Annotation overlays */}
-                      <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                        {sample.annotations.map((ann, annIndex) => (
-                          <g key={ann.id}>
-                            <rect
-                              x={(ann.bbox[0] / sample.width) * 100 + '%'}
-                              y={(ann.bbox[1] / sample.height) * 100 + '%'}
-                              width={(ann.bbox[2] / sample.width) * 100 + '%'}
-                              height={(ann.bbox[3] / sample.height) * 100 + '%'}
-                              fill="none"
-                              stroke="#ef4444"
-                              strokeWidth="2"
-                            />
-                          </g>
-                        ))}
-                      </svg>
-                      {/* Annotation count badge */}
-                      <Badge className="absolute top-2 right-2 bg-primary/80">
-                        {sample.annotations.length} annotations
-                      </Badge>
+                      {previewType === 'segmentation' && sample.maskPath ? (
+                        <SegSampleView
+                          imagePath={sample.imagePath}
+                          maskPath={sample.maskPath}
+                          opacity={overlayOpacity}
+                          hideBackground={hideBackground}
+                          maxSize={400}
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <>
+                          <img
+                            src={`/api/datasets/image?path=${encodeURIComponent(sample.imagePath)}`}
+                            alt={sample.fileName}
+                            className="w-full h-full object-contain"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none'
+                            }}
+                          />
+                          {/* Annotation overlays */}
+                          <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                            {sample.annotations.map((ann, annIndex) => (
+                              <g key={ann.id}>
+                                <rect
+                                  x={(ann.bbox[0] / sample.width) * 100 + '%'}
+                                  y={(ann.bbox[1] / sample.height) * 100 + '%'}
+                                  width={(ann.bbox[2] / sample.width) * 100 + '%'}
+                                  height={(ann.bbox[3] / sample.height) * 100 + '%'}
+                                  fill="none"
+                                  stroke="#ef4444"
+                                  strokeWidth="2"
+                                />
+                              </g>
+                            ))}
+                          </svg>
+                          {/* Annotation count badge */}
+                          <Badge className="absolute top-2 right-2 bg-primary/80">
+                            {sample.annotations.length} annotations
+                          </Badge>
+                        </>
+                      )}
                     </div>
                     <CardContent className="p-2">
                       <p className="text-xs truncate text-muted-foreground" title={sample.fileName}>
                         {sample.fileName}
                       </p>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {Array.from(new Set(sample.annotations.map(a => a.categoryName))).slice(0, 3).map((catName, i) => (
-                          <Badge key={i} variant="secondary" className="text-[10px]">
-                            {catName}
-                          </Badge>
-                        ))}
-                        {new Set(sample.annotations.map(a => a.categoryName)).size > 3 && (
-                          <Badge variant="secondary" className="text-[10px]">
-                            +{new Set(sample.annotations.map(a => a.categoryName)).size - 3}
-                          </Badge>
-                        )}
-                      </div>
+                      {previewType !== 'segmentation' && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {Array.from(new Set(sample.annotations.map(a => a.categoryName))).slice(0, 3).map((catName, i) => (
+                            <Badge key={i} variant="secondary" className="text-[10px]">
+                              {catName}
+                            </Badge>
+                          ))}
+                          {new Set(sample.annotations.map(a => a.categoryName)).size > 3 && (
+                            <Badge variant="secondary" className="text-[10px]">
+                              +{new Set(sample.annotations.map(a => a.categoryName)).size - 3}
+                            </Badge>
+                          )}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 ))}
@@ -2050,6 +2257,28 @@ export function DatasetsPage() {
             <Button variant="outline" size="sm" onClick={handleZoomReset}>
               <RotateCcw className="w-4 h-4" />
             </Button>
+            {previewType === 'segmentation' && (
+              <>
+                <div className="w-px h-6 bg-border mx-2" />
+                <Label className="text-xs whitespace-nowrap">Mask</Label>
+                <Slider
+                  value={[Math.round(overlayOpacity * 100)]}
+                  min={0}
+                  max={100}
+                  step={5}
+                  onValueChange={(v) => setOverlayOpacity((v[0] ?? 50) / 100)}
+                  className="w-[120px]"
+                />
+                <span className="text-xs w-9 text-right">{Math.round(overlayOpacity * 100)}%</span>
+                <Button
+                  variant={hideBackground ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setHideBackground(v => !v)}
+                >
+                  {hideBackground ? 'BG hidden' : 'BG shown'}
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Image Container */}
@@ -2063,43 +2292,56 @@ export function DatasetsPage() {
                   transition: 'transform 0.2s ease'
                 }}
               >
-                <img
-                  src={`/api/datasets/image?path=${encodeURIComponent(selectedSample.imagePath)}`}
-                  alt={selectedSample.fileName}
-                  className="max-w-none"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none'
-                  }}
-                  onDoubleClick={handleZoomIn}
-                />
-                {/* SVG Overlay for Annotations */}
-                <svg 
-                  className="absolute top-0 left-0 pointer-events-none"
-                  style={{ width: selectedSample.width, height: selectedSample.height }}
-                >
-                  {selectedSample.annotations.map((ann) => (
-                    <g key={ann.id}>
-                      <rect
-                        x={ann.bbox[0]}
-                        y={ann.bbox[1]}
-                        width={ann.bbox[2]}
-                        height={ann.bbox[3]}
-                        fill="none"
-                        stroke="#ef4444"
-                        strokeWidth="2"
-                      />
-                      <text
-                        x={ann.bbox[0]}
-                        y={ann.bbox[1] - 4}
-                        fill="#ef4444"
-                        fontSize="12"
-                        fontWeight="bold"
-                      >
-                        {ann.categoryName}
-                      </text>
-                    </g>
-                  ))}
-                </svg>
+                {previewType === 'segmentation' && selectedSample.maskPath ? (
+                  <SegSampleView
+                    imagePath={selectedSample.imagePath}
+                    maskPath={selectedSample.maskPath}
+                    opacity={overlayOpacity}
+                    hideBackground={hideBackground}
+                    maxSize={2048}
+                    className="max-w-none"
+                  />
+                ) : (
+                  <>
+                    <img
+                      src={`/api/datasets/image?path=${encodeURIComponent(selectedSample.imagePath)}`}
+                      alt={selectedSample.fileName}
+                      className="max-w-none"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none'
+                      }}
+                      onDoubleClick={handleZoomIn}
+                    />
+                    {/* SVG Overlay for Annotations */}
+                    <svg 
+                      className="absolute top-0 left-0 pointer-events-none"
+                      style={{ width: selectedSample.width, height: selectedSample.height }}
+                    >
+                      {selectedSample.annotations.map((ann) => (
+                        <g key={ann.id}>
+                          <rect
+                            x={ann.bbox[0]}
+                            y={ann.bbox[1]}
+                            width={ann.bbox[2]}
+                            height={ann.bbox[3]}
+                            fill="none"
+                            stroke="#ef4444"
+                            strokeWidth="2"
+                          />
+                          <text
+                            x={ann.bbox[0]}
+                            y={ann.bbox[1] - 4}
+                            fill="#ef4444"
+                            fontSize="12"
+                            fontWeight="bold"
+                          >
+                            {ann.categoryName}
+                          </text>
+                        </g>
+                      ))}
+                    </svg>
+                  </>
+                )}
               </div>
             )}
           </div>

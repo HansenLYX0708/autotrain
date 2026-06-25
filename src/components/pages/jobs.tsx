@@ -376,6 +376,8 @@ export function JobsPage() {
     if (!formData.name || !formData.projectId) return ''
     
     const jobName = formData.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase()
+    const project = projects.find(p => p.id === formData.projectId)
+    const framework = project?.framework || 'PaddleDetection'
     const configPath = `configs/autotrain/jobs/${jobName}.yml`
     
     const parts: string[] = []
@@ -383,6 +385,17 @@ export function JobsPage() {
     // GPU selection - always use paddle.distributed.launch
     const gpuIds = formData.gpuIds || '0'
     parts.push(`python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py`)
+
+    if (framework === 'PaddleSeg') {
+      // PaddleSeg uses --config and its own flags
+      parts.push(`--config ${configPath}`)
+      parts.push('--do_eval')
+      parts.push(`--save_dir output/${project?.name || 'default'}/${jobName}`)
+      if (formData.useVdl) {
+        parts.push('--use_vdl')
+      }
+      return parts.join(' ')
+    }
 
     // Config file - use merged job config
     parts.push(`-c ${configPath}`)
@@ -395,7 +408,6 @@ export function JobsPage() {
     // VDL
     if (formData.useVdl) {
       parts.push('--use_vdl=true')
-      const project = projects.find(p => p.id === formData.projectId)
       parts.push(`--vdl_log_dir=output/${project?.name || 'default'}/${jobName}/vdl`)
     }
 

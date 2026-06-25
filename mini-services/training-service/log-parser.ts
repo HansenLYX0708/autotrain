@@ -20,6 +20,12 @@ export interface ParsedLog {
   ips: number | null
   memReserved: number | null
   memAllocated: number | null
+  // PaddleSeg-specific (optional)
+  readerCost?: number | null
+  mIoU?: number | null
+  acc?: number | null
+  kappa?: number | null
+  dice?: number | null
   rawLog: string
 }
 
@@ -111,6 +117,72 @@ export function parsePaddleDetectionLog(line: string): ParsedLog | null {
     memAllocated,
     rawLog: line.trim()
   }
+}
+
+/**
+ * Parse a PaddleSeg training/eval log line.
+ * Train: ... [TRAIN] epoch: 1, iter: 10/1000, loss: 0.52, lr: 0.0099, batch_cost: 0.34, reader_cost: 0.01, ips: 11.5 samples/sec | ETA 00:05:23
+ * Eval:  ... [EVAL] #Images: 76 mIoU: 0.8923 Acc: 0.9856 Kappa: 0.8123 Dice: 0.9234
+ */
+export function parsePaddleSegLog(line: string): ParsedLog | null {
+  if (!line.trim()) return null
+
+  const f = (re: RegExp): number | null => {
+    const m = line.match(re)
+    return m ? parseFloat(m[1]) : null
+  }
+
+  const base: ParsedLog = {
+    timestamp: '',
+    epoch: 0,
+    iteration: 0,
+    totalIter: 0,
+    learningRate: null,
+    loss: null,
+    lossCls: null,
+    lossIou: null,
+    lossDfl: null,
+    lossL1: null,
+    eta: null,
+    batchCost: null,
+    dataCost: null,
+    ips: null,
+    memReserved: null,
+    memAllocated: null,
+    rawLog: line.trim(),
+  }
+
+  // [EVAL] metrics line
+  if (/\[EVAL\]/i.test(line) && /mIoU/i.test(line)) {
+    return {
+      ...base,
+      mIoU: f(/mIoU:\s*([\d.]+)/i),
+      acc: f(/Acc:\s*([\d.]+)/i),
+      kappa: f(/Kappa:\s*([\d.]+)/i),
+      dice: f(/Dice:\s*([\d.]+)/i),
+    }
+  }
+
+  // [TRAIN] progress line
+  if (/\[TRAIN\]/i.test(line)) {
+    const epochMatch = line.match(/epoch:\s*(\d+)/i)
+    const iterMatch = line.match(/iter:\s*(\d+)\/(\d+)/i)
+    const etaMatch = line.match(/ETA\s*(\d+:\d{2}:\d{2})/i)
+    return {
+      ...base,
+      epoch: epochMatch ? parseInt(epochMatch[1], 10) : 0,
+      iteration: iterMatch ? parseInt(iterMatch[1], 10) : 0,
+      totalIter: iterMatch ? parseInt(iterMatch[2], 10) : 0,
+      learningRate: f(/lr:\s*([\d.e-]+)/i),
+      loss: f(/loss:\s*([\d.]+)/i),
+      batchCost: f(/batch_cost:\s*([\d.]+)/i),
+      readerCost: f(/reader_cost:\s*([\d.]+)/i),
+      ips: f(/ips:\s*([\d.]+)/i),
+      eta: etaMatch ? etaMatch[1] : null,
+    }
+  }
+
+  return null
 }
 
 /**

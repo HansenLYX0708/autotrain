@@ -225,8 +225,11 @@ export function ProjectsPage() {
                     onValueChange={(value) => setFormData({
                       ...formData,
                       framework: value,
-                      // Reset task if switching away from PaddleDetection
-                      task: value === 'PaddleDetection' ? formData.task : 'detection',
+                      // Task is derived from framework: Seg -> semantic_segmentation,
+                      // Detection keeps its current valid task, others -> detection.
+                      task: value === 'PaddleDetection'
+                        ? (formData.task === 'instance_segmentation' ? 'instance_segmentation' : 'detection')
+                        : value === 'PaddleSeg' ? 'semantic_segmentation' : 'detection',
                     })}
                   >
                     <SelectTrigger>
@@ -235,9 +238,15 @@ export function ProjectsPage() {
                     <SelectContent>
                       <SelectItem value="PaddleDetection">PaddleDetection</SelectItem>
                       <SelectItem value="PaddleClas">PaddleClas</SelectItem>
+                      <SelectItem value="PaddleSeg">PaddleSeg</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                {formData.framework === 'PaddleSeg' && (
+                  <p className="text-xs text-muted-foreground">
+                    PaddleSeg projects use semantic segmentation (per-pixel masks).
+                  </p>
+                )}
                 {formData.framework === 'PaddleDetection' && (
                   <div className="space-y-2">
                     <Label htmlFor="task">Task Type</Label>

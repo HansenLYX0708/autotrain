@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
+import { getWorkDir } from "@/lib/frameworks";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -228,9 +229,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Model not found or access denied" }, { status: 400 });
     }
 
-    // Get system config for PaddleDetection path and userConfigsPath
+    // Get system config for framework path and userConfigsPath
     const systemConfig = await db.systemConfig.findFirst();
-    const workDir = systemConfig?.paddleDetectionPath;
+    const framework = project.framework || "PaddleDetection";
+    const workDir = getWorkDir(framework, systemConfig);
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
     const userDatabasePath = (systemConfig as any)?.userDatabasePath;
 
@@ -269,7 +271,7 @@ export async function POST(request: NextRequest) {
 
     if (!workDir) {
       return NextResponse.json(
-        { error: "PaddleDetection path not configured in Settings" },
+        { error: `${framework} path not configured in Settings` },
         { status: 400 }
       );
     }
@@ -338,18 +340,37 @@ export async function POST(request: NextRequest) {
     const useVdl = body.useVdl || false;
 
     let command = '';
+    let evalCommand = '';
+    let inferCommand = '';
     const quotedConfigPath = `"${configFilePath}"`;
-    command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py -c ${quotedConfigPath}`;
-    if (useAmp) command += ' --amp';
-    if (useVdl) {
-      command += ` --use_vdl=true --vdl_log_dir=output/${project.name}/${jobName}/vdl`;
+
+    if (framework === 'PaddleSeg') {
+      // PaddleSeg: save_dir is a CLI argument (the YAML has no top-level save_dir).
+      const segSaveDir = (userDatabasePath && currentUser.username)
+        ? path.join(userDatabasePath, currentUser.username, 'jobs', jobName)
+        : `output/${project.name}/${jobName}`;
+      const quotedSaveDir = `"${segSaveDir}"`;
+      const bestModel = `"${path.join(segSaveDir, 'best_model', 'model.pdparams')}"`;
+
+      command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py --config ${quotedConfigPath} --do_eval --save_dir ${quotedSaveDir}`;
+      if (useVdl) command += ' --use_vdl';
+
+      // PaddleSeg evaluation (val.py) and prediction (predict.py)
+      evalCommand = `python tools/val.py --config ${quotedConfigPath} --model_path ${bestModel}`;
+      inferCommand = `python tools/predict.py --config ${quotedConfigPath} --model_path ${bestModel} --save_dir ${quotedSaveDir}/predict`;
+    } else {
+      command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py -c ${quotedConfigPath}`;
+      if (useAmp) command += ' --amp';
+      if (useVdl) {
+        command += ` --use_vdl=true --vdl_log_dir=output/${project.name}/${jobName}/vdl`;
+      }
+
+      // Generate eval command using absolute path
+      evalCommand = `python tools/eval.py -c ${quotedConfigPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
+
+      // Generate infer command (for single image inference) using absolute path
+      inferCommand = `python tools/infer.py -c ${quotedConfigPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
     }
-
-    // Generate eval command using absolute path
-    const evalCommand = `python tools/eval.py -c ${quotedConfigPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
-
-    // Generate infer command (for single image inference) using absolute path
-    const inferCommand = `python tools/infer.py -c ${quotedConfigPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
 
     // Create job in database with userId
     const job = await db.trainingJob.create({

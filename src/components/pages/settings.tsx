@@ -39,6 +39,7 @@ interface SystemConfig {
   userDatabasePath: string
   paddleDetectionPath: string
   paddleClasPath: string
+  paddleSegPath: string
   defaultFramework: string
 }
 
@@ -54,6 +55,7 @@ export function SettingsPage() {
     userDatabasePath: '',
     paddleDetectionPath: '',
     paddleClasPath: '',
+    paddleSegPath: '',
     defaultFramework: 'PaddleDetection',
   })
   const [loading, setLoading] = useState(true)
@@ -123,6 +125,7 @@ export function SettingsPage() {
               userDatabasePath: data.userDatabasePath || '',
               paddleDetectionPath: data.paddleDetectionPath || '',
               paddleClasPath: data.paddleClasPath || '',
+              paddleSegPath: data.paddleSegPath || '',
               defaultFramework: data.defaultFramework || 'PaddleDetection',
             })
           }
@@ -168,6 +171,7 @@ export function SettingsPage() {
         userDatabasePath: config.userDatabasePath,
         paddleDetectionPath: config.paddleDetectionPath,
         paddleClasPath: config.paddleClasPath,
+        paddleSegPath: config.paddleSegPath,
         defaultFramework: config.defaultFramework,
       }
       
@@ -425,7 +429,7 @@ export function SettingsPage() {
             Framework Paths
           </CardTitle>
           <CardDescription>
-            Configure paths to PaddleDetection and PaddleClas repositories
+            Configure paths to PaddleDetection, PaddleClas and PaddleSeg repositories
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -445,6 +449,42 @@ export function SettingsPage() {
               </div>
               <p className="text-xs text-muted-foreground">
                 Path to PaddleDetection repository
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="paddleClasPath">PaddleClas Path</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="paddleClasPath"
+                  value={config.paddleClasPath}
+                  onChange={(e) => setConfig({ ...config, paddleClasPath: e.target.value })}
+                  placeholder="C:\\workspace\\PaddleClas"
+                />
+                <Button variant="outline" size="icon">
+                  <FolderOpen className="w-4 h-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Path to PaddleClas repository
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="paddleSegPath">PaddleSeg Path</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="paddleSegPath"
+                  value={config.paddleSegPath}
+                  onChange={(e) => setConfig({ ...config, paddleSegPath: e.target.value })}
+                  placeholder="C:\\workspace\\PaddleSeg"
+                />
+                <Button variant="outline" size="icon">
+                  <FolderOpen className="w-4 h-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Path to PaddleSeg repository
               </p>
             </div>
           </div>
@@ -518,12 +558,24 @@ export function SettingsPage() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Default Framework</Label>
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3">
                 <Button
                   variant={config.defaultFramework === 'PaddleDetection' ? 'default' : 'outline'}
                   onClick={() => setConfig({ ...config, defaultFramework: 'PaddleDetection' })}
                 >
                   PaddleDetection
+                </Button>
+                <Button
+                  variant={config.defaultFramework === 'PaddleClas' ? 'default' : 'outline'}
+                  onClick={() => setConfig({ ...config, defaultFramework: 'PaddleClas' })}
+                >
+                  PaddleClas
+                </Button>
+                <Button
+                  variant={config.defaultFramework === 'PaddleSeg' ? 'default' : 'outline'}
+                  onClick={() => setConfig({ ...config, defaultFramework: 'PaddleSeg' })}
+                >
+                  PaddleSeg
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">

@@ -354,7 +354,7 @@ const manualSections: StepSection[] = [
                 Add an optional <strong>Description</strong> to document project details
               </li>
               <li>
-                Select the <strong>Training Framework</strong> (PaddleDetection or PaddleClas)
+                Select the <strong>Training Framework</strong> (PaddleDetection, PaddleClas or PaddleSeg)
               </li>
               <li>
                 For PaddleDetection projects, select a <strong>Task Type</strong>:
@@ -362,6 +362,9 @@ const manualSections: StepSection[] = [
                   <li><strong>Object Detection</strong> — bounding-box only models (e.g. PP-YOLOE, RT-DETR)</li>
                   <li><strong>Instance Segmentation</strong> — bounding-box + polygon mask models (e.g. Mask R-CNN, SOLOv2). The platform automatically adds <code>gt_poly</code> to dataset <code>data_fields</code> and parses segmentation (mask) AP/AR from evaluation output.</li>
                 </ul>
+              </li>
+              <li>
+                <strong>PaddleSeg</strong> projects perform <strong>semantic segmentation</strong>. They use list-file datasets (<code>train.txt</code>/<code>val.txt</code>) with a <code>num_classes</code> value, train with <code>tools/train.py --config</code> using iterations (<code>iters</code>) instead of epochs, and report <code>mIoU</code>, <code>Acc</code>, <code>Kappa</code> and <code>Dice</code> metrics. Evaluation and inference use <code>tools/val.py</code> and <code>tools/predict.py</code>.
               </li>
               <li>
                 Click <strong>"Create"</strong> to finalize

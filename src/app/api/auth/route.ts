@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import * as crypto from "crypto";
 import { createUserConfigFolders, createUserDatabaseFolder } from "@/lib/user-folders";
-
-// Simple in-memory session store (in production, use Redis or similar)
-const sessions = new Map<string, { userId: string; role: string }>();
+import { sessions } from "@/lib/session-store";
 
 // Helper to hash password
 function hashPassword(password: string): string {

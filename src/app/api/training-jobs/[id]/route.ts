@@ -631,6 +631,74 @@ function startTrainingProcess(
 // Parse training output and update progress
 async function parseAndUpdateProgress(jobId: string, output: string) {
   try {
+    // ---- PaddleSeg log format ----
+    const segFloat = (re: RegExp): number | null => {
+      const m = output.match(re);
+      return m ? parseFloat(m[1]) : null;
+    };
+
+    // [EVAL] #Images: 76 mIoU: 0.8923 Acc: 0.9856 Kappa: 0.8123 Dice: 0.9234
+    if (/\[EVAL\]/i.test(output) && /mIoU/i.test(output)) {
+      const mIoU = segFloat(/mIoU:\s*([\d.]+)/i);
+      const acc = segFloat(/Acc:\s*([\d.]+)/i);
+      const kappa = segFloat(/Kappa:\s*([\d.]+)/i);
+      const dice = segFloat(/Dice:\s*([\d.]+)/i);
+      await db.trainingLog.create({
+        data: {
+          jobId,
+          epoch: 0,
+          iteration: 0,
+          totalIter: 0,
+          mIoU,
+          acc,
+          kappa,
+          dice,
+          rawLog: output.slice(0, 2000),
+        },
+      });
+      return;
+    }
+
+    // [TRAIN] epoch: 1, iter: 10/1000, loss: 0.5234, lr: 0.009910, batch_cost: 0.34, reader_cost: 0.01, ips: 11.5 samples/sec | ETA 00:05:23
+    if (/\[TRAIN\]/i.test(output)) {
+      const segEpochMatch = output.match(/epoch:\s*(\d+)/i);
+      const segEpoch = segEpochMatch ? parseInt(segEpochMatch[1], 10) : 0;
+      const segIterMatch = output.match(/iter:\s*(\d+)\/(\d+)/i);
+      const segIteration = segIterMatch ? parseInt(segIterMatch[1], 10) : 0;
+      const segTotalIter = segIterMatch ? parseInt(segIterMatch[2], 10) : 0;
+      const segLoss = segFloat(/loss:\s*([\d.]+)/i);
+      const segLr = segFloat(/lr:\s*([\d.e-]+)/i);
+      const segBatchCost = segFloat(/batch_cost:\s*([\d.]+)/i);
+      const segReaderCost = segFloat(/reader_cost:\s*([\d.]+)/i);
+      const segIps = segFloat(/ips:\s*([\d.]+)/i);
+      const segEtaMatch = output.match(/ETA\s*(\d+:\d{2}:\d{2})/i);
+
+      const segUpdate: Record<string, unknown> = {};
+      if (segEpoch) segUpdate.currentEpoch = segEpoch;
+      if (segLoss !== null) segUpdate.currentLoss = segLoss;
+      if (segLr !== null) segUpdate.currentLr = segLr;
+      if (Object.keys(segUpdate).length > 0) {
+        await db.trainingJob.update({ where: { id: jobId }, data: segUpdate });
+      }
+
+      await db.trainingLog.create({
+        data: {
+          jobId,
+          epoch: segEpoch,
+          iteration: segIteration,
+          totalIter: segTotalIter,
+          loss: segLoss,
+          learningRate: segLr,
+          batchCost: segBatchCost,
+          readerCost: segReaderCost,
+          ips: segIps,
+          eta: segEtaMatch ? segEtaMatch[1] : null,
+          rawLog: output.slice(0, 2000),
+        },
+      });
+      return;
+    }
+
     // PaddleDetection log format:
     // Epoch: [8] [60/79] learning_rate: 0.000996 loss: 4.193813 loss_cls: 1.671748 ...
     

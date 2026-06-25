@@ -121,6 +121,7 @@ export async function POST() {
           condaPath: "",
           paddleDetectionPath: DEFAULT_PADDLE_DETECTION_PATH,
           paddleClasPath: "",
+          paddleSegPath: "",
           defaultGpu: 0,
           defaultFramework: "PaddleDetection",
         },

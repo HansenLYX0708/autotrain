@@ -57,12 +57,18 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, description, framework, task } = body;
 
-    // Validate task value
+    // Resolve framework and task. PaddleSeg always uses semantic_segmentation;
+    // instance_segmentation is only meaningful for PaddleDetection.
     const allowedTasks = ['detection', 'instance_segmentation'];
-    const resolvedTask = task && allowedTasks.includes(task) ? task : 'detection';
-    // instance_segmentation is only meaningful for PaddleDetection
     const resolvedFramework = framework || 'PaddleDetection';
-    const finalTask = resolvedFramework === 'PaddleDetection' ? resolvedTask : 'detection';
+    let finalTask: string;
+    if (resolvedFramework === 'PaddleSeg') {
+      finalTask = 'semantic_segmentation';
+    } else if (resolvedFramework === 'PaddleDetection') {
+      finalTask = task && allowedTasks.includes(task) ? task : 'detection';
+    } else {
+      finalTask = 'detection';
+    }
 
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim() === '') {

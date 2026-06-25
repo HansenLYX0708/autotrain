@@ -39,6 +39,7 @@ model SystemConfig {
   userDatabasePath      String?  // Base path for user database storage
   paddleDetectionPath   String?
   paddleClasPath        String?
+  paddleSegPath         String?
   defaultFramework      String   @default("PaddleDetection")
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -49,8 +50,8 @@ model Project {
   id          String   @id @default(cuid())
   name        String
   description String?
-  framework   String   @default("PaddleDetection") // PaddleDetection or PaddleClas
-  task        String   @default("detection") // detection or instance_segmentation (PaddleDetection only)
+  framework   String   @default("PaddleDetection") // PaddleDetection, PaddleClas or PaddleSeg
+  task        String   @default("detection") // detection / instance_segmentation (PaddleDetection), semantic_segmentation (PaddleSeg)
   status      String   @default("active") // active, archived
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -152,6 +153,10 @@ model TrainingConfig {
   scheduler   String   @default("CosineDecay")
   warmupEpochs Int     @default(5)
   maxEpochs   Int      @default(100)
+
+  // PaddleSeg uses iterations instead of epochs (nullable; ignored by other frameworks)
+  iters        Int?
+  saveInterval Int?
 
   // Reader settings
   workerNum   Int      @default(4)
@@ -255,10 +260,17 @@ model TrainingLog {
   lossDfl     Float?
   lossL1      Float?
   learningRate Float?
-  
+
+  // PaddleSeg metrics (nullable; populated for segmentation [EVAL] lines)
+  mIoU        Float?
+  acc         Float?
+  kappa       Float?
+  dice        Float?
+
   eta         String?
   batchCost   Float?
   dataCost    Float?
+  readerCost  Float?  // PaddleSeg reader_cost
   ips         Float?
   memReserved Int?    // MB
   memAllocated Int?   // MB

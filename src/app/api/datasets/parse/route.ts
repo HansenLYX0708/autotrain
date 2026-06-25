@@ -5,6 +5,8 @@ import { db } from '@/lib/db';
 import * as fs from 'fs';
 import * as path from 'path';
 import { sessions } from '../../auth/route';
+import sharp from 'sharp';
+import { buildColorIndex } from '@/lib/seg-colors';
 
 const execAsync = promisify(exec);
 
@@ -141,6 +143,7 @@ export async function POST(request: NextRequest) {
     // Get dataset from database
     const dataset = await db.dataset.findUnique({
       where: { id: datasetId },
+      include: { project: { select: { framework: true } } },
     });
 
     if (!dataset) {
@@ -148,6 +151,103 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'Dataset not found' },
         { status: 404 }
       );
+    }
+
+    // PaddleSeg datasets: compute counts from list files and a sampled per-class
+    // pixel/image distribution by decoding pseudo-color masks.
+    if ((dataset as any).project?.framework === 'PaddleSeg') {
+      const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
+        ? dataset.datasetDir
+        : path.join(userDatabasePath, user.username, dataset.datasetDir || '');
+
+      const readList = (rel: string | null) => {
+        if (!rel) return [] as string[];
+        const p = path.isAbsolute(rel) ? rel : path.join(root, rel);
+        if (!fs.existsSync(p)) return [] as string[];
+        return fs.readFileSync(p, 'utf-8').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      };
+
+      const trainLines = readList(dataset.trainAnnoPath || 'train.txt');
+      const valLines = readList(dataset.evalAnnoPath || 'val.txt');
+
+      let classNames: string[] = [];
+      for (const f of ['class_names.txt', 'labels.txt']) {
+        const cnPath = path.join(root, f);
+        if (fs.existsSync(cnPath)) {
+          classNames = fs.readFileSync(cnPath, 'utf-8').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          break;
+        }
+      }
+      if (classNames.length === 0 && dataset.numClasses) {
+        classNames = Array.from({ length: dataset.numClasses }, (_, i) => `class_${i}`);
+      }
+      const numClasses = classNames.length || dataset.numClasses || 1;
+
+      // Sample masks evenly across the train set to estimate class distribution.
+      const SAMPLE = 40;
+      const colorIndex = buildColorIndex(numClasses);
+      const pixelCount = new Array(numClasses).fill(0);
+      const imageCount = new Array(numClasses).fill(0);
+      let sampledMasks = 0;
+      const step = Math.max(1, Math.floor(trainLines.length / SAMPLE));
+      for (let i = 0; i < trainLines.length && sampledMasks < SAMPLE; i += step) {
+        const parts = trainLines[i].split(/\s+/);
+        const maskRel = parts[1];
+        if (!maskRel) continue;
+        const maskPath = path.isAbsolute(maskRel) ? maskRel : path.join(root, maskRel);
+        if (!fs.existsSync(maskPath)) continue;
+        try {
+          const { data, info } = await sharp(maskPath)
+            .resize({ width: 512, height: 512, fit: 'inside', kernel: sharp.kernel.nearest, withoutEnlargement: true })
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+          const ch = info.channels;
+          const present = new Set<number>();
+          for (let p = 0; p < data.length; p += ch) {
+            const cls = colorIndex.get(`${data[p]},${data[p + 1]},${data[p + 2]}`);
+            if (cls !== undefined) {
+              pixelCount[cls] += 1;
+              present.add(cls);
+            }
+          }
+          present.forEach(c => { imageCount[c] += 1; });
+          sampledMasks += 1;
+        } catch (e) {
+          console.error('[Parse Seg] Failed to decode mask', maskPath, e);
+        }
+      }
+
+      const segClassStats = classNames.map((name, id) => ({
+        id,
+        name,
+        count: pixelCount[id] || 0,
+        imageCount: imageCount[id] || 0,
+      }));
+
+      const updatedSegDataset = await db.dataset.update({
+        where: { id: datasetId },
+        data: {
+          numClasses,
+          numAnnotations: 0,
+          numTrainImages: trainLines.length,
+          numEvalImages: valLines.length,
+          classStats: JSON.stringify({ train: segClassStats, eval: [], sampledMasks }),
+        },
+        include: { project: { select: { id: true, name: true } } },
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: updatedSegDataset,
+        stats: {
+          numClasses,
+          numTrainImages: trainLines.length,
+          numEvalImages: valLines.length,
+          classStats: segClassStats,
+          sampledMasks,
+        },
+        message: `PaddleSeg statistics computed from ${sampledMasks} sampled mask(s)`,
+      });
     }
 
     // Determine annotation file path

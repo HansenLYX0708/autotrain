@@ -12,6 +12,7 @@ const DEFAULT_CONFIG = {
   userDatabasePath: "",  // Base path for user database storage
   paddleDetectionPath: "",
   paddleClasPath: "",
+  paddleSegPath: "",
   defaultFramework: "PaddleDetection",
 };
 
@@ -83,6 +84,7 @@ export async function PUT(request: NextRequest) {
           userDatabasePath: body.userDatabasePath ?? DEFAULT_CONFIG.userDatabasePath,
           paddleDetectionPath: body.paddleDetectionPath ?? DEFAULT_CONFIG.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath ?? DEFAULT_CONFIG.paddleClasPath,
+          paddleSegPath: body.paddleSegPath ?? DEFAULT_CONFIG.paddleSegPath,
           defaultFramework: body.defaultFramework ?? DEFAULT_CONFIG.defaultFramework,
         },
       });
@@ -99,6 +101,7 @@ export async function PUT(request: NextRequest) {
           userDatabasePath: body.userDatabasePath,
           paddleDetectionPath: body.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath,
+          paddleSegPath: body.paddleSegPath,
           defaultFramework: body.defaultFramework,
         },
       });

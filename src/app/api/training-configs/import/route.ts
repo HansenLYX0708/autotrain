@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { getWorkDir } from "@/lib/frameworks";
 import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "yaml";
@@ -124,9 +125,7 @@ export async function GET(request: NextRequest) {
     // Get system config for paths
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
-    const workDir = framework === "PaddleClas"
-      ? systemConfig?.paddleClasPath
-      : systemConfig?.paddleDetectionPath;
+    const workDir = getWorkDir(framework, systemConfig);
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
 
     // List configs from userConfigsPath/default/training folder
@@ -237,9 +236,7 @@ export async function POST(request: NextRequest) {
     // Get system config for paths
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
-    const workDir = framework === "PaddleClas"
-      ? systemConfig?.paddleClasPath
-      : systemConfig?.paddleDetectionPath;
+    const workDir = getWorkDir(framework, systemConfig);
 
     if (!workDir) {
       return NextResponse.json(
@@ -285,6 +282,8 @@ export async function POST(request: NextRequest) {
           useGpu: finalParams.useGpu !== undefined ? finalParams.useGpu : true,
           logIter: finalParams.logIter || 20,
           snapshotEpoch: finalParams.snapshotEpoch || 1,
+          iters: finalParams.iters ?? null,
+          saveInterval: finalParams.saveInterval ?? null,
           saveDir: finalParams.saveDir || null,
           outputDir: finalParams.outputDir || null,
           weights: finalParams.weights || null,
@@ -340,6 +339,8 @@ export async function POST(request: NextRequest) {
         useGpu: finalParams.useGpu !== undefined ? finalParams.useGpu : true,
         logIter: finalParams.logIter || 20,
         snapshotEpoch: finalParams.snapshotEpoch || 1,
+        iters: finalParams.iters ?? null,
+        saveInterval: finalParams.saveInterval ?? null,
         saveDir: finalParams.saveDir || null,
         outputDir: finalParams.outputDir || null,
         weights: finalParams.weights || null,

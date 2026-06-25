@@ -177,11 +177,20 @@ export async function PUT(
     if (framework !== undefined) {
       updateData.framework = framework;
     }
-    if (task !== undefined && allowedTasks.includes(task)) {
-      const fw = framework !== undefined ? framework : existingProject.framework;
-      updateData.task = fw === 'PaddleDetection' ? task : 'detection';
-    } else if (framework !== undefined && framework !== 'PaddleDetection') {
-      // Switching away from PaddleDetection forces task back to detection
+    // Resolve task based on the effective framework.
+    // PaddleSeg -> semantic_segmentation; PaddleDetection -> detection|instance_segmentation; others -> detection.
+    const effectiveFramework = framework !== undefined ? framework : existingProject.framework;
+    if (effectiveFramework === 'PaddleSeg') {
+      updateData.task = 'semantic_segmentation';
+    } else if (effectiveFramework === 'PaddleDetection') {
+      if (task !== undefined && allowedTasks.includes(task)) {
+        updateData.task = task;
+      } else if (framework !== undefined) {
+        // Switching into PaddleDetection without a valid task -> keep existing valid task or default
+        updateData.task = allowedTasks.includes(existingProject.task) ? existingProject.task : 'detection';
+      }
+    } else if (framework !== undefined) {
+      // PaddleClas or any other framework
       updateData.task = 'detection';
     }
     if (status !== undefined) {

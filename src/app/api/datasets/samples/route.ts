@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { db } from '@/lib/db';
 import { sessions } from '../../auth/route';
+import { getSegColorMap } from '@/lib/seg-colors';
 
 interface CocoAnnotation {
   id: number;
@@ -118,6 +119,7 @@ export async function GET(request: NextRequest) {
     // Get dataset from database
     const dataset = await db.dataset.findUnique({
       where: { id: datasetId },
+      include: { project: { select: { framework: true } } },
     });
 
     if (!dataset) {
@@ -125,6 +127,80 @@ export async function GET(request: NextRequest) {
         { success: false, error: 'Dataset not found' },
         { status: 404 }
       );
+    }
+
+    // PaddleSeg datasets: list files (train.txt/val.txt) of "image mask" pairs.
+    if ((dataset as any).project?.framework === 'PaddleSeg') {
+      const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
+        ? dataset.datasetDir
+        : path.join(userDatabasePath, user.username, dataset.datasetDir || '');
+
+      const listRel = dataset.trainAnnoPath || 'train.txt';
+      const listPath = path.isAbsolute(listRel) ? listRel : path.join(root, listRel);
+      if (!fs.existsSync(listPath)) {
+        return NextResponse.json(
+          { success: false, error: `List file not found at ${listPath}` },
+          { status: 404 }
+        );
+      }
+
+      const lines = fs.readFileSync(listPath, 'utf-8')
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(Boolean);
+
+      // Resolve class names: prefer class_names.txt/labels.txt, else classStats.
+      let classNames: string[] = [];
+      for (const f of ['class_names.txt', 'labels.txt']) {
+        const cnPath = path.join(root, f);
+        if (fs.existsSync(cnPath)) {
+          classNames = fs.readFileSync(cnPath, 'utf-8').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          break;
+        }
+      }
+      if (classNames.length === 0) {
+        try {
+          const cs = JSON.parse(dataset.classStats || '{}');
+          const arr = Array.isArray(cs) ? cs : (cs.train || []);
+          classNames = arr.map((c: any) => c.name).filter(Boolean);
+        } catch { /* ignore */ }
+      }
+      if (classNames.length === 0 && dataset.numClasses) {
+        classNames = Array.from({ length: dataset.numClasses }, (_, i) => `class_${i}`);
+      }
+
+      const colorMap = getSegColorMap(Math.max(classNames.length, 1));
+      const categories = classNames.map((name, id) => ({
+        id,
+        name,
+        color: colorMap[id] || [0, 0, 0],
+      }));
+
+      const segSamples = lines.slice(0, limit).map((line, idx) => {
+        const parts = line.split(/\s+/);
+        const imageRel = parts[0] || '';
+        const maskRel = parts[1] || '';
+        return {
+          id: idx,
+          fileName: path.basename(imageRel),
+          width: 0,
+          height: 0,
+          imagePath: path.isAbsolute(imageRel) ? imageRel : path.join(root, imageRel),
+          maskPath: maskRel ? (path.isAbsolute(maskRel) ? maskRel : path.join(root, maskRel)) : '',
+          annotations: [],
+        };
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          type: 'segmentation',
+          samples: segSamples,
+          categories,
+          totalImages: lines.length,
+          totalAnnotations: 0,
+        },
+      });
     }
 
     // Build absolute annotation file path
