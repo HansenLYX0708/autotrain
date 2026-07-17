@@ -64,6 +64,11 @@ interface GpuEnvironmentCheck {
   version: string | null
   isValid: boolean
   error?: string
+  frameworks?: {
+    paddleDetection: boolean
+    paddleClas: boolean
+    paddleSeg: boolean
+  }
 }
 
 interface SystemConfig {
@@ -735,6 +740,24 @@ export function DashboardPage() {
                         <div className="text-xs font-mono truncate text-muted-foreground mt-1" title={gpuEnv.pythonPath}>
                           {gpuEnv.pythonPath || 'No path configured'}
                         </div>
+                        {gpuEnv.frameworks && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {([
+                              ['PaddleDetection', gpuEnv.frameworks.paddleDetection],
+                              ['PaddleClas', gpuEnv.frameworks.paddleClas],
+                              ['PaddleSeg', gpuEnv.frameworks.paddleSeg],
+                            ] as [string, boolean][]).map(([label, ok]) => (
+                              <Badge
+                                key={label}
+                                variant="outline"
+                                className={`text-[10px] px-1.5 py-0 ${ok ? 'text-emerald-700 border-emerald-500/40 bg-emerald-50' : 'text-muted-foreground border-muted'}`}
+                                title={ok ? `${label} package installed in this env` : `${label} package NOT installed in this env`}
+                              >
+                                {ok ? '✓' : '✗'} {label}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

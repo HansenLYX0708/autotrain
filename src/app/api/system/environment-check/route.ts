@@ -7,6 +7,15 @@ import * as path from 'path';
 
 const execAsync = promisify(exec);
 
+interface FrameworkSupport {
+  /** `import ppdet` succeeded. */
+  paddleDetection: boolean;
+  /** `import ppcls` succeeded. */
+  paddleClas: boolean;
+  /** `import paddleseg` succeeded. */
+  paddleSeg: boolean;
+}
+
 interface GpuEnvironmentCheck {
   gpuId: number;
   pythonPath: string;
@@ -14,6 +23,12 @@ interface GpuEnvironmentCheck {
   version: string | null;
   isValid: boolean;
   error?: string;
+  /**
+   * Which Python framework packages are installed in this env. Independent of
+   * the repository path checks — a user can have the PaddleSeg *repo* on disk
+   * but not have `pip install paddleseg`ed the package into this GPU's env.
+   */
+  frameworks?: FrameworkSupport;
 }
 
 interface VersionCheckResult {
@@ -33,8 +48,36 @@ interface EnvironmentCheck {
   validGpus: number;
 }
 
+/**
+ * Probe a Python env for which framework packages are installed. One
+ * short-lived Python process attempts three imports and prints a compact
+ * JSON payload; a total failure (e.g. non-existent interpreter) falls back to
+ * all-false so the UI degrades gracefully.
+ *
+ * We intentionally do NOT install anything — the UI merely reports the state.
+ */
+async function checkFrameworkModules(pythonPath: string): Promise<FrameworkSupport> {
+  const script =
+    'import json,importlib.util;' +
+    'r={};' +
+    "[r.__setitem__(k, (True if importlib.util.find_spec(m) else False)) for k,m in " +
+    "[('paddleDetection','ppdet'),('paddleClas','ppcls'),('paddleSeg','paddleseg')]];" +
+    'print(json.dumps(r))';
+  try {
+    const { stdout } = await execAsync(`"${pythonPath}" -c "${script}"`, { timeout: 15000 });
+    const parsed = JSON.parse(stdout.trim().split(/\r?\n/).pop() || '{}');
+    return {
+      paddleDetection: !!parsed.paddleDetection,
+      paddleClas: !!parsed.paddleClas,
+      paddleSeg: !!parsed.paddleSeg,
+    };
+  } catch {
+    return { paddleDetection: false, paddleClas: false, paddleSeg: false };
+  }
+}
+
 // Check Python version
-async function checkPythonVersion(pythonPath: string): Promise<Omit<GpuEnvironmentCheck, 'gpuId' | 'pythonPath'>> {
+async function checkPythonVersion(pythonPath: string): Promise<Omit<GpuEnvironmentCheck, 'gpuId' | 'pythonPath' | 'frameworks'>> {
   if (!pythonPath || !fs.existsSync(pythonPath)) {
     return {
       exists: false,
@@ -179,10 +222,16 @@ export async function GET(request: NextRequest) {
       if (isNaN(gpuId)) continue;
 
       const check = await checkPythonVersion(pythonPath);
+      // Only probe framework packages when the interpreter is at least
+      // reachable — saves a slow spawn for missing binaries.
+      const frameworks = check.exists
+        ? await checkFrameworkModules(pythonPath)
+        : undefined;
       gpuEnvironments.push({
         gpuId,
         pythonPath,
         ...check,
+        frameworks,
       });
     }
 

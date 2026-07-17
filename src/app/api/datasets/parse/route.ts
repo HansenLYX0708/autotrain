@@ -7,6 +7,7 @@ import * as path from 'path';
 import { sessions } from '../../auth/route';
 import sharp from 'sharp';
 import { buildColorIndex } from '@/lib/seg-colors';
+import { parseListFile } from '@/lib/paddleseg-list';
 
 const execAsync = promisify(exec);
 
@@ -160,15 +161,18 @@ export async function POST(request: NextRequest) {
         ? dataset.datasetDir
         : path.join(userDatabasePath, user.username, dataset.datasetDir || '');
 
+      // Robust parser that handles filenames containing spaces (see
+      // `@/lib/paddleseg-list`) — a naive whitespace split would truncate
+      // paths like "RMF 18(36,45)_1300kx.tif".
       const readList = (rel: string | null) => {
-        if (!rel) return [] as string[];
+        if (!rel) return [] as ReturnType<typeof parseListFile>;
         const p = path.isAbsolute(rel) ? rel : path.join(root, rel);
-        if (!fs.existsSync(p)) return [] as string[];
-        return fs.readFileSync(p, 'utf-8').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (!fs.existsSync(p)) return [] as ReturnType<typeof parseListFile>;
+        return parseListFile(fs.readFileSync(p, 'utf-8'));
       };
 
-      const trainLines = readList(dataset.trainAnnoPath || 'train.txt');
-      const valLines = readList(dataset.evalAnnoPath || 'val.txt');
+      const trainEntries = readList(dataset.trainAnnoPath || 'train.txt');
+      const valEntries = readList(dataset.evalAnnoPath || 'val.txt');
 
       let classNames: string[] = [];
       for (const f of ['class_names.txt', 'labels.txt']) {
@@ -189,10 +193,9 @@ export async function POST(request: NextRequest) {
       const pixelCount = new Array(numClasses).fill(0);
       const imageCount = new Array(numClasses).fill(0);
       let sampledMasks = 0;
-      const step = Math.max(1, Math.floor(trainLines.length / SAMPLE));
-      for (let i = 0; i < trainLines.length && sampledMasks < SAMPLE; i += step) {
-        const parts = trainLines[i].split(/\s+/);
-        const maskRel = parts[1];
+      const step = Math.max(1, Math.floor(trainEntries.length / SAMPLE));
+      for (let i = 0; i < trainEntries.length && sampledMasks < SAMPLE; i += step) {
+        const maskRel = trainEntries[i].maskRel;
         if (!maskRel) continue;
         const maskPath = path.isAbsolute(maskRel) ? maskRel : path.join(root, maskRel);
         if (!fs.existsSync(maskPath)) continue;
@@ -203,11 +206,24 @@ export async function POST(request: NextRequest) {
             .toBuffer({ resolveWithObject: true });
           const ch = info.channels;
           const present = new Set<number>();
-          for (let p = 0; p < data.length; p += ch) {
-            const cls = colorIndex.get(`${data[p]},${data[p + 1]},${data[p + 2]}`);
-            if (cls !== undefined) {
-              pixelCount[cls] += 1;
-              present.add(cls);
+          if (ch === 1) {
+            // Grayscale label map: pixel value is the class id directly
+            // (labelme-to-paddleseg output format).
+            for (let p = 0; p < data.length; p++) {
+              const cls = data[p];
+              if (cls < numClasses) {
+                pixelCount[cls] += 1;
+                present.add(cls);
+              }
+            }
+          } else {
+            // Pseudo-color RGB mask: look each pixel up in the VOC palette.
+            for (let p = 0; p < data.length; p += ch) {
+              const cls = colorIndex.get(`${data[p]},${data[p + 1]},${data[p + 2]}`);
+              if (cls !== undefined) {
+                pixelCount[cls] += 1;
+                present.add(cls);
+              }
             }
           }
           present.forEach(c => { imageCount[c] += 1; });
@@ -229,8 +245,8 @@ export async function POST(request: NextRequest) {
         data: {
           numClasses,
           numAnnotations: 0,
-          numTrainImages: trainLines.length,
-          numEvalImages: valLines.length,
+          numTrainImages: trainEntries.length,
+          numEvalImages: valEntries.length,
           classStats: JSON.stringify({ train: segClassStats, eval: [], sampledMasks }),
         },
         include: { project: { select: { id: true, name: true } } },
@@ -241,8 +257,8 @@ export async function POST(request: NextRequest) {
         data: updatedSegDataset,
         stats: {
           numClasses,
-          numTrainImages: trainLines.length,
-          numEvalImages: valLines.length,
+          numTrainImages: trainEntries.length,
+          numEvalImages: valEntries.length,
           classStats: segClassStats,
           sampledMasks,
         },
@@ -391,6 +407,38 @@ export async function GET(request: NextRequest) {
       : datasetDir
         ? path.join(userDatabasePath, user.username, datasetDir, filePath)
         : path.join(userDatabasePath, user.username, filePath);
+
+    // PaddleSeg detection: a `.txt` list file lives next to `class_names.txt`
+    // (labels.txt as fallback). Return `numClasses` = number of class entries
+    // so the Import dialog can auto-fill it before the dataset row exists.
+    const lowerPath = absolutePath.toLowerCase();
+    if (lowerPath.endsWith('.txt')) {
+      const dir = path.dirname(absolutePath);
+      for (const f of ['class_names.txt', 'labels.txt']) {
+        const cnPath = path.join(dir, f);
+        if (fs.existsSync(cnPath)) {
+          const names = fs.readFileSync(cnPath, 'utf-8')
+            .split(/\r?\n/)
+            .map(s => s.trim())
+            .filter(Boolean);
+          if (names.length > 0) {
+            return NextResponse.json({
+              success: true,
+              data: {
+                numClasses: names.length,
+                numAnnotations: 0,
+                numImages: fs.existsSync(absolutePath)
+                  ? fs.readFileSync(absolutePath, 'utf-8').split(/\r?\n/).filter(l => l.trim()).length
+                  : 0,
+                classStats: names.map((name, id) => ({ id, name, count: 0 })),
+                categories: names.map((name, id) => ({ id, name })),
+                format: 'PaddleSeg',
+              },
+            });
+          }
+        }
+      }
+    }
 
     const cocoData = await parseCocoFile(absolutePath);
     

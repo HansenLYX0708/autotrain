@@ -4,6 +4,7 @@ import * as path from 'path';
 import { db } from '@/lib/db';
 import { sessions } from '../../auth/route';
 import { getSegColorMap } from '@/lib/seg-colors';
+import { parseListFile } from '@/lib/paddleseg-list';
 
 interface CocoAnnotation {
   id: number;
@@ -144,10 +145,10 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      const lines = fs.readFileSync(listPath, 'utf-8')
-        .split(/\r?\n/)
-        .map(l => l.trim())
-        .filter(Boolean);
+      // Anchor-based parser handles filenames that contain spaces (e.g.
+      // "RMF 18(36,45)_1300kx.tif"), which naive whitespace splitting would
+      // truncate at the first space.
+      const entries = parseListFile(fs.readFileSync(listPath, 'utf-8'));
 
       // Resolve class names: prefer class_names.txt/labels.txt, else classStats.
       let classNames: string[] = [];
@@ -176,20 +177,15 @@ export async function GET(request: NextRequest) {
         color: colorMap[id] || [0, 0, 0],
       }));
 
-      const segSamples = lines.slice(0, limit).map((line, idx) => {
-        const parts = line.split(/\s+/);
-        const imageRel = parts[0] || '';
-        const maskRel = parts[1] || '';
-        return {
-          id: idx,
-          fileName: path.basename(imageRel),
-          width: 0,
-          height: 0,
-          imagePath: path.isAbsolute(imageRel) ? imageRel : path.join(root, imageRel),
-          maskPath: maskRel ? (path.isAbsolute(maskRel) ? maskRel : path.join(root, maskRel)) : '',
-          annotations: [],
-        };
-      });
+      const segSamples = entries.slice(0, limit).map(({ imageRel, maskRel }, idx) => ({
+        id: idx,
+        fileName: path.basename(imageRel),
+        width: 0,
+        height: 0,
+        imagePath: path.isAbsolute(imageRel) ? imageRel : path.join(root, imageRel),
+        maskPath: maskRel ? (path.isAbsolute(maskRel) ? maskRel : path.join(root, maskRel)) : '',
+        annotations: [],
+      }));
 
       return NextResponse.json({
         success: true,
@@ -197,7 +193,7 @@ export async function GET(request: NextRequest) {
           type: 'segmentation',
           samples: segSamples,
           categories,
-          totalImages: lines.length,
+          totalImages: entries.length,
           totalAnnotations: 0,
         },
       });

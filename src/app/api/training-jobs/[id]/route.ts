@@ -4,6 +4,51 @@ import { spawn } from "child_process";
 import { exec } from "child_process";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentUser } from "@/lib/auth";
+import { getWorkDir } from "@/lib/frameworks";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
+
+/**
+ * Verify the Python interpreter selected for a job actually has the required
+ * framework package installed. Prevents jobs from failing deep inside
+ * `tools/train.py` with a cryptic `ModuleNotFoundError: No module named
+ * 'paddleseg'` — instead we fail-fast with an actionable message.
+ *
+ * Returns `null` when the env is ready, or a user-facing error string.
+ */
+async function checkFrameworkModuleAvailable(
+  pythonPath: string,
+  framework: string,
+): Promise<string | null> {
+  const moduleName =
+    framework === "PaddleSeg"
+      ? "paddleseg"
+      : framework === "PaddleClas"
+      ? "ppcls"
+      : "ppdet";
+  try {
+    // `find_spec` locates the package without importing it (fast + side-effect
+    // free). If it returns None, argparse-level failure is guaranteed.
+    const script = `import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('${moduleName}') else 2)`;
+    await execAsync(`"${pythonPath}" -c "${script}"`, { timeout: 15000 });
+    return null;
+  } catch (err: any) {
+    // Exit code 2 = module not found; anything else = interpreter couldn't run.
+    if (err?.code === 2) {
+      return (
+        `Python environment at "${pythonPath}" does not have the ${framework} ` +
+        `package installed (import "${moduleName}" failed). ` +
+        `Activate that env and run: pip install ${moduleName}` +
+        (framework === "PaddleSeg" ? "  (or `pip install -e .` from the PaddleSeg repo root)" : "")
+      );
+    }
+    return (
+      `Failed to probe Python env at "${pythonPath}" for ${framework} support: ` +
+      (err instanceof Error ? err.message : String(err))
+    );
+  }
+}
 
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
@@ -281,9 +326,15 @@ export async function PUT(
         updateData.completedAt = new Date();
       } else {
         const framework = existingJob.project?.framework || "PaddleDetection";
-        const workDir = framework === "PaddleClas" 
-          ? systemConfig.paddleClasPath 
-          : systemConfig.paddleDetectionPath;
+        // Route to the correct framework working directory. Previously this
+        // ternary only handled PaddleClas vs PaddleDetection and silently fell
+        // through to `paddleDetectionPath` for PaddleSeg jobs, which meant the
+        // PaddleSeg command (`tools/train.py --config … --do_eval --save_dir …`)
+        // was executed against PaddleDetection's train.py — that script does
+        // not accept `--do_eval`/`--save_dir` and fails with
+        //   "train.py: error: unrecognized arguments: --do_eval --save_dir …".
+        // `getWorkDir` is the shared source of truth (see @/lib/frameworks).
+        const workDir = getWorkDir(framework, systemConfig);
 
         console.log(`[Job ${id}] Framework: ${framework}`);
         console.log(`[Job ${id}] Work directory: ${workDir}`);
@@ -296,23 +347,35 @@ export async function PUT(
           updateData.errorMessage = `${framework} path not configured in Settings. Please configure the path first.`;
           updateData.completedAt = new Date();
         } else {
-          // Start training process
-          try {
-            startTrainingProcess(
-              id, 
-              existingJob.command, 
-              workDir, 
-              pythonPath, 
-              gpuIdsStr,
-              systemConfig.condaEnv || null,
-              systemConfig.condaPath || null
-            );
-            console.log(`[Job ${id}] Training process started successfully`);
-          } catch (error) {
-            console.error(`[Job ${id}] Failed to start training process:`, error);
+          // Preflight: does the selected Python env actually have the
+          // framework package installed? Fails fast with an actionable
+          // message instead of letting `tools/train.py` blow up with
+          // `ModuleNotFoundError` deep in the child process.
+          const moduleError = await checkFrameworkModuleAvailable(pythonPath, framework);
+          if (moduleError) {
+            console.error(`[Job ${id}] Preflight failed: ${moduleError}`);
             updateData.status = "failed";
-            updateData.errorMessage = `Failed to start training: ${error instanceof Error ? error.message : "Unknown error"}`;
+            updateData.errorMessage = moduleError;
             updateData.completedAt = new Date();
+          } else {
+            // Start training process
+            try {
+              startTrainingProcess(
+                id,
+                existingJob.command,
+                workDir,
+                pythonPath,
+                gpuIdsStr,
+                systemConfig.condaEnv || null,
+                systemConfig.condaPath || null
+              );
+              console.log(`[Job ${id}] Training process started successfully`);
+            } catch (error) {
+              console.error(`[Job ${id}] Failed to start training process:`, error);
+              updateData.status = "failed";
+              updateData.errorMessage = `Failed to start training: ${error instanceof Error ? error.message : "Unknown error"}`;
+              updateData.completedAt = new Date();
+            }
           }
         }
       }

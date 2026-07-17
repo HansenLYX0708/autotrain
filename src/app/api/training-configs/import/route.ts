@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { getWorkDir } from "@/lib/frameworks";
+import { ensureDefaultConfigs, getDefaultFolderName } from "@/lib/default-configs";
 import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "yaml";
@@ -128,15 +129,18 @@ export async function GET(request: NextRequest) {
     const workDir = getWorkDir(framework, systemConfig);
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
 
-    // List configs from userConfigsPath/default/training folder
+    // Per-framework default folder: `default` for detection, `defaultSeg` for
+    // PaddleSeg. First access seeds the folder with built-in starter configs
+    // so the dropdown is never empty on a fresh install.
+    const defaultFolder = getDefaultFolderName(framework);
     let defaultConfigDir = "";
     if (userConfigsPath) {
-      defaultConfigDir = path.join(userConfigsPath, "default", "training");
+      defaultConfigDir = ensureDefaultConfigs(userConfigsPath, framework, "training");
     } else if (workDir) {
-      // Fallback to old path if userConfigsPath not set
+      // Fallback to old path if userConfigsPath not set.
       defaultConfigDir = path.join(workDir, "configs", "autotrain", "training", "default");
     }
-    
+
     const defaultConfigs: Array<{ name: string; path: string; content: string }> = [];
 
     if (defaultConfigDir && fs.existsSync(defaultConfigDir)) {
@@ -147,8 +151,8 @@ export async function GET(request: NextRequest) {
         const content = fs.readFileSync(filePath, "utf-8");
         defaultConfigs.push({
           name: file.replace(/\.(yml|yaml)$/, ""),
-          path: userConfigsPath 
-            ? path.join("default", "training", file)
+          path: userConfigsPath
+            ? path.join(defaultFolder, "training", file)
             : `configs/autotrain/training/default/${file}`,
           content: content,
         });
@@ -237,22 +241,30 @@ export async function POST(request: NextRequest) {
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
     const workDir = getWorkDir(framework, systemConfig);
+    const userConfigsPath = (systemConfig as any)?.userConfigsPath;
 
-    if (!workDir) {
-      return NextResponse.json(
-        { error: `Please configure ${framework} path in Settings` },
-        { status: 400 }
-      );
-    }
+    // Look up current user's username so we can save into their personal folder.
+    const currentUser = await db.user.findUnique({
+      where: { id: userId },
+      select: { username: true },
+    });
 
     let savedConfigPath = configPath;
-    let finalYamlContent = yamlContent;
+    let finalYamlContent: string | null = yamlContent || null;
 
-    // If importing default config, read content from file if not provided
-    if (isDefault && configPath && !yamlContent) {
-      const fullPath = path.join(workDir, configPath);
-      if (fs.existsSync(fullPath)) {
-        finalYamlContent = fs.readFileSync(fullPath, "utf-8");
+    // If importing a default config the request may ship without yamlContent;
+    // resolve it from disk under the new `userConfigsPath` layout first, then
+    // fall back to the legacy `workDir` layout.
+    if (!finalYamlContent && configPath) {
+      const candidates = [
+        userConfigsPath ? path.join(userConfigsPath, configPath) : null,
+        workDir ? path.join(workDir, configPath) : null,
+      ].filter(Boolean) as string[];
+      for (const c of candidates) {
+        if (fs.existsSync(c)) {
+          finalYamlContent = fs.readFileSync(c, "utf-8");
+          break;
+        }
       }
     }
 
@@ -260,64 +272,34 @@ export async function POST(request: NextRequest) {
     const parsedParams = finalYamlContent ? parseTrainingYaml(finalYamlContent) : {};
     const finalParams = { ...parsedParams, ...trainingParams };
 
-    // If importing default config, use existing path but still create db record
-    if (isDefault) {
-      // Create training config in database with userId (no file save for default configs)
-      const config = await db.trainingConfig.create({
-        data: {
-          projectId: projectId,
-          userId: userId,
-          name: name,
-          epoch: finalParams.epochs || 100,
-          batchSize: finalParams.batchSize || 8,
-          baseLr: finalParams.baseLr || 0.001,
-          momentum: finalParams.momentum || 0.9,
-          weightDecay: finalParams.weightDecay || 0.0005,
-          scheduler: finalParams.scheduler || 'CosineDecay',
-          warmupEpochs: finalParams.warmupEpochs || 5,
-          maxEpochs: finalParams.maxEpochs || 100,
-          workerNum: finalParams.workerNum || 4,
-          evalHeight: finalParams.imageHeight || 640,
-          evalWidth: finalParams.imageWidth || 640,
-          useGpu: finalParams.useGpu !== undefined ? finalParams.useGpu : true,
-          logIter: finalParams.logIter || 20,
-          snapshotEpoch: finalParams.snapshotEpoch || 1,
-          iters: finalParams.iters ?? null,
-          saveInterval: finalParams.saveInterval ?? null,
-          saveDir: finalParams.saveDir || null,
-          outputDir: finalParams.outputDir || null,
-          weights: finalParams.weights || null,
-          pretrainWeights: finalParams.pretrainWeights || null,
-          yamlConfig: finalYamlContent || null,
-        },
-      });
+    // Always persist a per-user copy under
+    //   {userConfigsPath}/{username}/training/{name}.yml
+    // Applies to default-config imports and hand-authored configs alike, so
+    // the user always ends up with their own editable YAML on disk. Falls back
+    // to the legacy `workDir/configs/autotrain/training/user` path only when
+    // `userConfigsPath` is not configured.
+    if (finalYamlContent) {
+      const fileName = `${name.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_.-]/g, "").toLowerCase()}.yml`;
 
-      return NextResponse.json({
-        success: true,
-        data: {
-          config,
-          configPath: savedConfigPath,
-        },
-      });
-    }
-
-    // For user configs or new configs, save to autotrain/training/user folder
-    if (yamlContent) {
-      const userConfigDir = path.join(workDir, "configs", "autotrain", "training", "user");
-      
-      // Create directory if not exists
-      if (!fs.existsSync(userConfigDir)) {
-        fs.mkdirSync(userConfigDir, { recursive: true });
+      let userConfigDir = "";
+      let relPath = "";
+      if (userConfigsPath && currentUser?.username) {
+        userConfigDir = path.join(userConfigsPath, currentUser.username, "training");
+        relPath = path.join(currentUser.username, "training", fileName);
+      } else if (workDir) {
+        userConfigDir = path.join(workDir, "configs", "autotrain", "training", "user");
+        relPath = `configs/autotrain/training/user/${fileName}`;
       }
 
-      // Generate filename
-      const fileName = `${name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase()}.yml`;
-      const filePath = path.join(userConfigDir, fileName);
-      
-      // Save YAML file
-      fs.writeFileSync(filePath, yamlContent, "utf-8");
-      savedConfigPath = `configs/autotrain/training/user/${fileName}`;
+      if (userConfigDir) {
+        if (!fs.existsSync(userConfigDir)) fs.mkdirSync(userConfigDir, { recursive: true });
+        fs.writeFileSync(path.join(userConfigDir, fileName), finalYamlContent, "utf-8");
+        savedConfigPath = relPath;
+      }
     }
+
+    // Suppress unused-var warnings from the now-simplified flow.
+    void isDefault;
 
     // Create training config in database with userId
     const config = await db.trainingConfig.create({

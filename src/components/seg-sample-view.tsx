@@ -5,6 +5,14 @@ import { useEffect, useRef } from 'react'
 interface SegSampleViewProps {
   imagePath: string
   maskPath: string
+  /**
+   * Number of classes in the dataset. When provided, the mask URL is fetched
+   * with `colorize=1&classes=N` so that grayscale label-map masks (produced by
+   * labelme-to-paddleseg) get pseudo-colored server-side using the same VOC
+   * palette we render swatches with. Multi-channel (already pseudo-color)
+   * masks are passed through by the endpoint, so this is safe to always set.
+   */
+  numClasses?: number
   /** Class-0 (background) color to render transparent. */
   backgroundColor?: [number, number, number]
   /** Overlay opacity for non-background pixels (0..1). */
@@ -17,6 +25,10 @@ interface SegSampleViewProps {
 }
 
 const imageUrl = (p: string) => `/api/datasets/image?path=${encodeURIComponent(p)}`
+const maskUrl = (p: string, numClasses?: number) =>
+  numClasses && numClasses > 0
+    ? `${imageUrl(p)}&colorize=1&classes=${numClasses}`
+    : imageUrl(p)
 
 /**
  * Renders a segmentation sample: the original image with its pseudo-color mask
@@ -27,6 +39,7 @@ const imageUrl = (p: string) => `/api/datasets/image?path=${encodeURIComponent(p
 export function SegSampleView({
   imagePath,
   maskPath,
+  numClasses,
   backgroundColor = [128, 0, 0],
   opacity = 0.5,
   hideBackground = true,
@@ -92,10 +105,10 @@ export function SegSampleView({
     mask.onload = () => { maskReady = true; render() }
     mask.onerror = () => { maskReady = false; render() }
     img.src = imageUrl(imagePath)
-    mask.src = imageUrl(maskPath)
+    mask.src = maskUrl(maskPath, numClasses)
 
     return () => { cancelled = true }
-  }, [imagePath, maskPath, backgroundColor, opacity, hideBackground, maxSize])
+  }, [imagePath, maskPath, numClasses, backgroundColor, opacity, hideBackground, maxSize])
 
   return <canvas ref={canvasRef} className={className} />
 }

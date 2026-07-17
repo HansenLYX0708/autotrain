@@ -157,6 +157,7 @@ export function DatasetsPage() {
     trainRatio: 0.7,
     valRatio: 0.2,
     testRatio: 0.1,
+    targetFramework: 'COCO' as 'COCO' | 'PaddleSeg',
   })
   const [editingDataset, setEditingDataset] = useState<Dataset | null>(null)
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
@@ -191,7 +192,7 @@ export function DatasetsPage() {
   const [availableDatasets, setAvailableDatasets] = useState<Array<{
     name: string;
     path: string;
-    format: 'COCO' | 'labelme';
+    format: 'COCO' | 'labelme' | 'PaddleSeg';
     hasTrain: boolean;
     hasVal: boolean;
     hasAnnotations: boolean;
@@ -232,7 +233,7 @@ export function DatasetsPage() {
     name: '',
     description: '',
     projectId: '',
-    format: 'COCO',
+    format: 'COCO' as 'COCO' | 'PaddleSeg',
     numClasses: 1,
     trainImagePath: '',
     trainAnnoPath: '',
@@ -321,26 +322,69 @@ export function DatasetsPage() {
     }
   }
 
-  // Auto-fill form when dataset folder is selected
+  // Auto-fill form when dataset folder is selected. Fields differ per format:
+  //   COCO      -> datasetDir=COCO/{name}, image paths = data/train, data/val;
+  //                trainAnnoPath/evalAnnoPath = data/annotations/instance_*.json
+  //   PaddleSeg -> datasetDir=PaddleSeg/{name}/data (the PaddleSeg dataset_root,
+  //                which contains train.txt, val.txt, class_names.txt,
+  //                JPEGImages/, Annotations/); image paths are unused for seg.
   const handleDatasetSelect = (datasetName: string) => {
-    const selectedDataset = availableDatasets.find(d => d.name === datasetName)
-    if (selectedDataset) {
+    const selected = availableDatasets.find(d => d.name === datasetName)
+    if (!selected) {
+      setFormData(prev => ({ ...prev, name: datasetName }))
+      return
+    }
+    if (selected.format === 'PaddleSeg') {
       setFormData(prev => ({
         ...prev,
         name: datasetName,
-        datasetDir: `COCO/${datasetName}`,
-        trainImagePath: selectedDataset.hasTrain ? 'data/train' : '',
-        evalImagePath: selectedDataset.hasVal ? 'data/val' : '',
-        trainAnnoPath: selectedDataset.trainAnnotations.length > 0 
-          ? selectedDataset.trainAnnotations[0] 
-          : '',
-        evalAnnoPath: selectedDataset.valAnnotations.length > 0 
-          ? selectedDataset.valAnnotations[0] 
-          : '',
+        format: 'PaddleSeg',
+        datasetDir: `PaddleSeg/${datasetName}/data`,
+        trainImagePath: '',
+        evalImagePath: '',
+        trainAnnoPath: selected.trainAnnotations[0] || 'train.txt',
+        evalAnnoPath: selected.valAnnotations[0] || 'val.txt',
       }))
     } else {
-      setFormData(prev => ({ ...prev, name: datasetName }))
+      setFormData(prev => ({
+        ...prev,
+        name: datasetName,
+        format: 'COCO',
+        datasetDir: `COCO/${datasetName}`,
+        trainImagePath: selected.hasTrain ? 'data/train' : '',
+        evalImagePath: selected.hasVal ? 'data/val' : '',
+        trainAnnoPath: selected.trainAnnotations[0] || '',
+        evalAnnoPath: selected.valAnnotations[0] || '',
+      }))
     }
+  }
+
+  // Switching project may change the required dataset framework (COCO vs
+  // PaddleSeg). If the currently-selected dataset folder doesn't match the
+  // new project's framework, wipe the auto-filled paths so the user gets a
+  // clean slate to reselect from the freshly-filtered dropdown.
+  const handleProjectChange = (projectId: string) => {
+    const newProject = projects.find(p => p.id === projectId)
+    const expectedFormat: 'COCO' | 'PaddleSeg' =
+      newProject?.framework === 'PaddleSeg' ? 'PaddleSeg' : 'COCO'
+    setFormData(prev => {
+      const currentDs = availableDatasets.find(d => d.name === prev.name)
+      const compatible = !currentDs || currentDs.format === expectedFormat
+      if (compatible) {
+        return { ...prev, projectId, format: expectedFormat }
+      }
+      return {
+        ...prev,
+        projectId,
+        format: expectedFormat,
+        name: '',
+        datasetDir: '',
+        trainImagePath: '',
+        evalImagePath: '',
+        trainAnnoPath: '',
+        evalAnnoPath: '',
+      }
+    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -472,7 +516,7 @@ export function DatasetsPage() {
       name: dataset.name,
       description: dataset.description || '',
       projectId: dataset.projectId,
-      format: dataset.format,
+      format: (dataset.format === 'PaddleSeg' ? 'PaddleSeg' : 'COCO') as 'COCO' | 'PaddleSeg',
       numClasses: dataset.numClasses || 1,
       trainImagePath: dataset.trainImagePath || '',
       trainAnnoPath: dataset.trainAnnoPath || '',
@@ -539,9 +583,9 @@ export function DatasetsPage() {
         selectedLabelmeDataset: datasetName,
         labelmeImagesPath: `${basePath}/data/imgs`,
         labelmeAnnotationsPath: `${basePath}/data/jsons`,
-        // Auto-generate output directory based on dataset name
+        // Auto-generate output directory based on dataset name and target framework
         outputDatasetDir: prev.name
-          ? `${basePath.replace(/[/\\]labelme[/\\][^/\\]+$/, '')}/COCO/${prev.name}`
+          ? `${basePath.replace(/[/\\]labelme[/\\][^/\\]+$/, '')}/${prev.targetFramework}/${prev.name}`
           : '',
       }))
     } else {
@@ -557,48 +601,79 @@ export function DatasetsPage() {
     const selectedDataset = availableDatasets.find(
       d => d.name === labelmeFormData.selectedLabelmeDataset && d.format === 'labelme'
     )
-    let outputDir = ''
-    if (selectedDataset && name) {
-      const basePath = selectedDataset.path.replace(/[/\\]data$/, '')
-      outputDir = `${basePath.replace(/[/\\]labelme[/\\][^/\\]+$/, '')}/COCO/${name}`
-    }
-    setLabelmeFormData(prev => ({
-      ...prev,
-      name,
-      outputDatasetDir: outputDir,
-    }))
+    setLabelmeFormData(prev => {
+      let outputDir = ''
+      if (selectedDataset && name) {
+        const basePath = selectedDataset.path.replace(/[/\\]data$/, '')
+        outputDir = `${basePath.replace(/[/\\]labelme[/\\][^/\\]+$/, '')}/${prev.targetFramework}/${name}`
+      }
+      return { ...prev, name, outputDatasetDir: outputDir }
+    })
+  }
+
+  // Switch target framework (COCO / PaddleSeg) and recompute the auto-
+  // generated output directory so it points at the matching top-level folder.
+  const handleTargetFrameworkChange = (target: 'COCO' | 'PaddleSeg') => {
+    const selectedDataset = availableDatasets.find(
+      d => d.name === labelmeFormData.selectedLabelmeDataset && d.format === 'labelme'
+    )
+    setLabelmeFormData(prev => {
+      let outputDir = ''
+      if (selectedDataset && prev.name) {
+        const basePath = selectedDataset.path.replace(/[/\\]data$/, '')
+        outputDir = `${basePath.replace(/[/\\]labelme[/\\][^/\\]+$/, '')}/${target}/${prev.name}`
+      }
+      return { ...prev, targetFramework: target, outputDatasetDir: outputDir }
+    })
   }
 
   const handleLabelmeConvert = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // Validate ratios sum to 1
-    const total = labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio
-    if (Math.abs(total - 1.0) > 0.001) {
+    const isSeg = labelmeFormData.targetFramework === 'PaddleSeg'
+
+    // Validate ratios: for PaddleSeg only train/val (must sum to 1);
+    // for COCO the classic train/val/test triple applies.
+    if (isSeg) {
+      const total = labelmeFormData.trainRatio + labelmeFormData.valRatio
+      if (Math.abs(total - 1.0) > 0.001) {
+        toast({
+          title: 'Invalid ratios',
+          description: `Train + Val must equal 1.0 (current: ${total.toFixed(2)})`,
+          variant: 'destructive'
+        })
+        return
+      }
+    } else {
+      const total = labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio
+      if (Math.abs(total - 1.0) > 0.001) {
+        toast({
+          title: 'Invalid ratios',
+          description: `Train + Val + Test must equal 1.0 (current: ${total.toFixed(2)})`,
+          variant: 'destructive'
+        })
+        return
+      }
+    }
+
+    // Check if a dataset with the same name already exists in the target format.
+    const existingDataset = availableDatasets.find(
+      d => d.name === labelmeFormData.name && d.format === labelmeFormData.targetFramework
+    )
+    if (existingDataset) {
       toast({
-        title: 'Invalid ratios',
-        description: `Train + Val + Test must equal 1.0 (current: ${total.toFixed(2)})`,
+        title: 'Dataset name already exists',
+        description: `A ${labelmeFormData.targetFramework} dataset named "${labelmeFormData.name}" already exists. Please choose a different name.`,
         variant: 'destructive'
       })
       return
     }
 
-    // Check if dataset name already exists in COCO format
-    const existingCocoDataset = availableDatasets.find(
-      d => d.name === labelmeFormData.name && d.format === 'COCO'
-    )
-    if (existingCocoDataset) {
-      toast({
-        title: 'Dataset name already exists',
-        description: `A COCO dataset named "${labelmeFormData.name}" already exists. Please choose a different name.`,
-        variant: 'destructive'
-      })
-      return
-    }
+    const endpoint = isSeg ? '/api/datasets/labelme-to-paddleseg' : '/api/datasets/labelme-to-coco'
 
     setConverting(true)
     try {
-      const response = await fetch('/api/datasets/labelme-to-coco', {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(labelmeFormData),
@@ -606,9 +681,12 @@ export function DatasetsPage() {
       const result = await response.json()
       
       if (result.success) {
-        toast({ 
-          title: 'Conversion successful', 
-          description: `Created dataset with ${result.stats.trainCount} train, ${result.stats.valCount} val, ${result.stats.testCount} test images` 
+        const desc = isSeg
+          ? `Created PaddleSeg dataset with ${result.stats.trainCount} train, ${result.stats.valCount} val images (${result.stats.numClasses} classes: ${result.stats.classNames?.join(', ') ?? ''})`
+          : `Created dataset with ${result.stats.trainCount} train, ${result.stats.valCount} val, ${result.stats.testCount} test images`
+        toast({
+          title: 'Conversion successful',
+          description: desc,
         })
         fetchDatasets()
         setLabelmeDialogOpen(false)
@@ -622,6 +700,7 @@ export function DatasetsPage() {
           trainRatio: 0.7,
           valRatio: 0.2,
           testRatio: 0.1,
+          targetFramework: 'COCO',
         })
       } else {
         toast({ 
@@ -1078,18 +1157,45 @@ export function DatasetsPage() {
             <DialogTrigger asChild>
               <Button variant="outline">
                 <FileJson className="w-4 h-4 mr-2" />
-                Labelme → COCO
+                Convert Labelme
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>Convert Labelme to COCO</DialogTitle>
+                <DialogTitle>
+                  {labelmeFormData.targetFramework === 'PaddleSeg'
+                    ? 'Convert Labelme to PaddleSeg'
+                    : 'Convert Labelme to COCO'}
+                </DialogTitle>
                 <DialogDescription>
-                  Convert Labelme format dataset to COCO format with train/val/test split.
+                  {labelmeFormData.targetFramework === 'PaddleSeg'
+                    ? 'Convert Labelme polygon annotations to PaddleSeg (grayscale label masks + train/val list files).'
+                    : 'Convert Labelme format dataset to COCO format with train/val/test split.'}
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleLabelmeConvert}>
                 <div className="grid grid-cols-2 gap-4 py-4">
+                  <div className="col-span-2 space-y-2">
+                    <Label>Target Framework</Label>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant={labelmeFormData.targetFramework === 'COCO' ? 'default' : 'outline'}
+                        onClick={() => handleTargetFrameworkChange('COCO')}
+                        className="flex-1"
+                      >
+                        COCO (Detection)
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={labelmeFormData.targetFramework === 'PaddleSeg' ? 'default' : 'outline'}
+                        onClick={() => handleTargetFrameworkChange('PaddleSeg')}
+                        className="flex-1"
+                      >
+                        PaddleSeg (Segmentation)
+                      </Button>
+                    </div>
+                  </div>
                   <div className="col-span-2 space-y-2">
                     <Label htmlFor="lm-dataset-select">Select Labelme Dataset</Label>
                     <Select
@@ -1197,29 +1303,42 @@ export function DatasetsPage() {
                       required
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lm-test-ratio">Test Ratio</Label>
-                    <Input
-                      id="lm-test-ratio"
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="1"
-                      value={labelmeFormData.testRatio}
-                      onChange={(e) => setLabelmeFormData({ ...labelmeFormData, testRatio: parseFloat(e.target.value) || 0 })}
-                      required
-                    />
-                  </div>
+                  {labelmeFormData.targetFramework !== 'PaddleSeg' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="lm-test-ratio">Test Ratio</Label>
+                      <Input
+                        id="lm-test-ratio"
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="1"
+                        value={labelmeFormData.testRatio}
+                        onChange={(e) => setLabelmeFormData({ ...labelmeFormData, testRatio: parseFloat(e.target.value) || 0 })}
+                        required
+                      />
+                    </div>
+                  )}
                   <div className="col-span-2">
-                    <p className={`text-sm ${Math.abs(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio - 1.0) < 0.001 ? 'text-green-600' : 'text-red-600'}`}>
-                      Sum: {(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio).toFixed(2)} 
-                      {Math.abs(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio - 1.0) < 0.001 ? ' ✓' : ' (must equal 1.0)'}
-                    </p>
+                    {labelmeFormData.targetFramework === 'PaddleSeg' ? (
+                      <p className={`text-sm ${Math.abs(labelmeFormData.trainRatio + labelmeFormData.valRatio - 1.0) < 0.001 ? 'text-green-600' : 'text-red-600'}`}>
+                        Sum: {(labelmeFormData.trainRatio + labelmeFormData.valRatio).toFixed(2)}
+                        {Math.abs(labelmeFormData.trainRatio + labelmeFormData.valRatio - 1.0) < 0.001 ? ' ✓' : ' (train + val must equal 1.0)'}
+                      </p>
+                    ) : (
+                      <p className={`text-sm ${Math.abs(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio - 1.0) < 0.001 ? 'text-green-600' : 'text-red-600'}`}>
+                        Sum: {(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio).toFixed(2)}
+                        {Math.abs(labelmeFormData.trainRatio + labelmeFormData.valRatio + labelmeFormData.testRatio - 1.0) < 0.001 ? ' ✓' : ' (must equal 1.0)'}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <DialogFooter>
                   <Button type="submit" disabled={converting}>
-                    {converting ? 'Converting...' : 'Convert to COCO'}
+                    {converting
+                      ? 'Converting...'
+                      : labelmeFormData.targetFramework === 'PaddleSeg'
+                        ? 'Convert to PaddleSeg'
+                        : 'Convert to COCO'}
                   </Button>
                 </DialogFooter>
               </form>
@@ -1499,41 +1618,49 @@ export function DatasetsPage() {
             </DialogHeader>
             <form onSubmit={handleSubmit}>
               <div className="grid grid-cols-2 gap-4 py-4">
-                {!editingDataset && !isSegDataset && (
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Dataset Folder</Label>
-                    <Select
-                      value={formData.name}
-                      onValueChange={handleDatasetSelect}
-                      disabled={loadingAvailableDatasets}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select folder"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableDatasets.length === 0 ? (
-                          <SelectItem value="__empty__" disabled>
-                            No folders found in COCO directory
-                          </SelectItem>
-                        ) : (
-                          availableDatasets
-                            .filter(d => d.format === 'COCO')
-                            .map((dataset) => (
+                {!editingDataset && (() => {
+                  // Filter the dataset dropdown by the project's framework so
+                  // PaddleSeg projects only see PaddleSeg datasets and vice
+                  // versa. When no project is selected yet we default to COCO
+                  // for backwards compatibility.
+                  const expected: 'COCO' | 'PaddleSeg' = isSegDataset ? 'PaddleSeg' : 'COCO'
+                  const filtered = availableDatasets.filter(d => d.format === expected)
+                  return (
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Dataset Folder</Label>
+                      <Select
+                        value={formData.name}
+                        onValueChange={handleDatasetSelect}
+                        disabled={loadingAvailableDatasets}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={loadingAvailableDatasets ? "Loading..." : "Select folder"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {filtered.length === 0 ? (
+                            <SelectItem value="__empty__" disabled>
+                              No {expected} folders found
+                            </SelectItem>
+                          ) : (
+                            filtered.map((dataset) => (
                               <SelectItem key={dataset.name} value={dataset.name}>
                                 {dataset.name} {!dataset.hasTrain && !dataset.hasVal && !dataset.hasAnnotations ? '(invalid)' : ''}
                               </SelectItem>
                             ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                    {availableDatasets.length === 0 && !loadingAvailableDatasets && (
-                      <p className="text-xs text-amber-600">
-                        No dataset folders found. Please upload a dataset first.
-                      </p>
-                    )}
-                  </div>
-                )}
-                {(editingDataset || isSegDataset) && (
+                          )}
+                        </SelectContent>
+                      </Select>
+                      {filtered.length === 0 && !loadingAvailableDatasets && (
+                        <p className="text-xs text-amber-600">
+                          {expected === 'PaddleSeg'
+                            ? 'No PaddleSeg dataset folders found. Convert a labelme dataset first.'
+                            : 'No dataset folders found. Please upload a dataset first.'}
+                        </p>
+                      )}
+                    </div>
+                  )
+                })()}
+                {editingDataset && (
                   <div className="space-y-2">
                     <Label htmlFor="name">Dataset Name</Label>
                     <Input
@@ -1549,7 +1676,7 @@ export function DatasetsPage() {
                   <Label htmlFor="project">Project</Label>
                   <Select
                     value={formData.projectId}
-                    onValueChange={(value) => setFormData({ ...formData, projectId: value })}
+                    onValueChange={handleProjectChange}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select project" />
@@ -1557,7 +1684,7 @@ export function DatasetsPage() {
                     <SelectContent>
                       {projects.map((project) => (
                         <SelectItem key={project.id} value={project.id}>
-                          {project.name}
+                          {project.name} <span className="text-xs text-muted-foreground ml-1">({project.framework})</span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1577,15 +1704,18 @@ export function DatasetsPage() {
                   <Label htmlFor="format">Dataset Format</Label>
                   <Select
                     value={formData.format}
-                    onValueChange={(value) => setFormData({ ...formData, format: value })}
+                    onValueChange={(value) => setFormData({ ...formData, format: value as 'COCO' | 'PaddleSeg' })}
+                    disabled
                   >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="COCO">COCO</SelectItem>
+                      <SelectItem value="PaddleSeg">PaddleSeg</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">Determined by project framework.</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="datasetDir">Dataset Directory</Label>
@@ -2161,6 +2291,7 @@ export function DatasetsPage() {
                         <SegSampleView
                           imagePath={sample.imagePath}
                           maskPath={sample.maskPath}
+                          numClasses={selectedDataset?.numClasses}
                           opacity={overlayOpacity}
                           hideBackground={hideBackground}
                           maxSize={400}
@@ -2296,6 +2427,7 @@ export function DatasetsPage() {
                   <SegSampleView
                     imagePath={selectedSample.imagePath}
                     maskPath={selectedSample.maskPath}
+                    numClasses={selectedDataset?.numClasses}
                     opacity={overlayOpacity}
                     hideBackground={hideBackground}
                     maxSize={2048}

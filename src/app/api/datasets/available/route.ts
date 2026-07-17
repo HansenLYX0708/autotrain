@@ -118,15 +118,16 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Build paths for both COCO and labelme formats
+    // Build paths for COCO, labelme, and PaddleSeg formats
     const cocoPath = join(userDatabasePath, user.username, "COCO");
     const labelmePath = join(userDatabasePath, user.username, "labelme");
+    const paddleSegPath = join(userDatabasePath, user.username, "PaddleSeg");
 
-    // Read all dataset directories from both COCO and labelme folders
+    // Read all dataset directories from COCO, labelme, and PaddleSeg folders
     const datasets: Array<{
       name: string;
       path: string;
-      format: 'COCO' | 'labelme';
+      format: 'COCO' | 'labelme' | 'PaddleSeg';
       hasTrain: boolean;
       hasVal: boolean;
       hasAnnotations: boolean;
@@ -235,11 +236,55 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Scan PaddleSeg datasets (produced by labelme-to-paddleseg conversion).
+    // Structure: PaddleSeg/{name}/data/{train.txt, val.txt, class_names.txt,
+    // imgs/, masks/}. We surface the list files as trainAnnotations /
+    // valAnnotations so the Import Dataset UI can auto-fill them the same
+    // way it does for COCO instance_*.json paths.
+    if (existsSync(paddleSegPath)) {
+      const segEntries = await readdir(paddleSegPath, { withFileTypes: true });
+
+      for (const entry of segEntries) {
+        if (!entry.isDirectory()) continue;
+        const datasetPath = join(paddleSegPath, entry.name);
+        const dataPath = join(datasetPath, "data");
+        if (!existsSync(dataPath)) continue;
+
+        const trainListPath = join(dataPath, "train.txt");
+        const valListPath = join(dataPath, "val.txt");
+        const classNamesPath = join(dataPath, "class_names.txt");
+
+        const hasTrain = existsSync(trainListPath);
+        const hasVal = existsSync(valListPath);
+        const hasAnnotations = existsSync(classNamesPath);
+
+        // For PaddleSeg (labelme2seg style), the PaddleSeg `dataset_root` is
+        // the `data/` subdirectory itself (that's where JPEGImages/,
+        // Annotations/, train.txt all live), so surface that as `path` and
+        // the list files as simple relative names.
+        datasets.push({
+          name: entry.name,
+          path: dataPath,
+          format: 'PaddleSeg',
+          hasTrain,
+          hasVal,
+          hasAnnotations,
+          hasImgs: existsSync(join(dataPath, "JPEGImages")),
+          hasJsons: false,
+          trainAnnotations: hasTrain ? ["train.txt"] : [],
+          valAnnotations: hasVal ? ["val.txt"] : [],
+          images: [],
+          jsons: [],
+        });
+      }
+    }
+
     return NextResponse.json({
       success: true,
       datasets,
       cocoPath: existsSync(cocoPath) ? cocoPath : null,
       labelmePath: existsSync(labelmePath) ? labelmePath : null,
+      paddleSegPath: existsSync(paddleSegPath) ? paddleSegPath : null,
     });
 
   } catch (error) {

@@ -2,9 +2,100 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
 import { getWorkDir } from '@/lib/frameworks';
-import { spawn } from 'child_process';
-import { existsSync, readdirSync, statSync } from 'fs';
-import { join, basename, extname } from 'path';
+import { spawn, exec } from 'child_process';
+import { existsSync, readdirSync, statSync, mkdirSync } from 'fs';
+import { join, basename, extname, dirname } from 'path';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(exec);
+
+/**
+ * PaddleSeg's `paddleseg/utils/utils.py:get_image_list()` hard-codes its
+ * accepted image extensions to JPEG/JPG/BMP/PNG only. When the user hands
+ * `predict.py --image_path` a `.tif` file it falls through to the "treat as
+ * list file" branch and `open(path, 'r')` blows up on binary bytes
+ * (`UnicodeDecodeError: 'gbk' codec can't decode ...` on Windows). Same for
+ * directories — TIFFs are silently skipped.
+ *
+ * Fix: before spawning predict.py, transparently mirror any TIFF input into a
+ * staging folder with `.png` copies (via Pillow in the user's Python env) and
+ * feed the staging path to PaddleSeg instead. Non-TIFF inputs are returned
+ * unchanged so we don't add latency on happy-path cases.
+ *
+ * Returns the effective inferInputPath to hand to predict.py.
+ */
+async function stagePaddleSegTiffInput(
+  inferInputPath: string,
+  pythonPath: string,
+  inferOutputPath: string | undefined,
+): Promise<string> {
+  if (!inferInputPath || !existsSync(inferInputPath)) return inferInputPath;
+
+  const isTiff = (p: string) => /\.tiff?$/i.test(p);
+  const stat = statSync(inferInputPath);
+
+  // Detect whether staging is needed at all
+  let needsStaging = false;
+  if (stat.isFile()) {
+    needsStaging = isTiff(inferInputPath);
+  } else if (stat.isDirectory()) {
+    needsStaging = readdirSync(inferInputPath).some((f) => isTiff(f));
+  }
+  if (!needsStaging) return inferInputPath;
+
+  // Staging dir: next to the output dir when we have one (so cleanup is easy
+  // and everything for a run lives together); otherwise fall back to a folder
+  // beside the input.
+  const stagingRoot = inferOutputPath
+    ? join(inferOutputPath, '_input_staging')
+    : join(stat.isDirectory() ? inferInputPath : dirname(inferInputPath), '_input_staging');
+  mkdirSync(stagingRoot, { recursive: true });
+
+  // Python payload does the actual conversion. Written to a temp .py file
+  // rather than passed via `-c` to keep quoting sane on Windows.
+  const scriptPath = join(stagingRoot, '_convert.py');
+  const script = `import os, sys, shutil
+from PIL import Image
+Image.MAX_IMAGE_PIXELS = None  # allow large TEM images
+src = sys.argv[1]
+dst_dir = sys.argv[2]
+os.makedirs(dst_dir, exist_ok=True)
+def convert_one(path, out_dir):
+    stem, ext = os.path.splitext(os.path.basename(path))
+    out = os.path.join(out_dir, stem + '.png')
+    Image.open(path).save(out)
+    print(out)
+if os.path.isfile(src):
+    convert_one(src, dst_dir)
+else:
+    for name in sorted(os.listdir(src)):
+        full = os.path.join(src, name)
+        if not os.path.isfile(full):
+            continue
+        ext = os.path.splitext(name)[1].lower()
+        if ext in ('.tif', '.tiff'):
+            convert_one(full, dst_dir)
+        elif ext in ('.jpg', '.jpeg', '.png', '.bmp'):
+            # PaddleSeg already accepts these; just place them alongside the
+            # converted TIFFs so predict.py sees the whole set in one folder.
+            shutil.copy2(full, os.path.join(dst_dir, name))
+`;
+  const fs = await import('fs/promises');
+  await fs.writeFile(scriptPath, script, 'utf8');
+
+  const cmd = `"${pythonPath}" "${scriptPath}" "${inferInputPath}" "${stagingRoot}"`;
+  console.log(`[TIFF staging] ${cmd}`);
+  const { stdout, stderr } = await execFileAsync(cmd, { timeout: 5 * 60 * 1000 });
+  if (stderr) console.log(`[TIFF staging] stderr: ${stderr}`);
+  if (stdout) console.log(`[TIFF staging] converted:\n${stdout}`);
+
+  // For a single-file input we point predict.py at the produced PNG directly.
+  if (stat.isFile()) {
+    const stem = basename(inferInputPath, extname(inferInputPath));
+    return join(stagingRoot, stem + '.png');
+  }
+  return stagingRoot;
+}
 
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
@@ -281,6 +372,38 @@ export async function POST(request: NextRequest) {
 
     // If runImmediately is true, start the validation
     if (body.runImmediately && workDir && command) {
+      // PaddleSeg + infer + TIFF input: transparently convert to PNGs into a
+      // staging folder so predict.py's `get_image_list()` accepts them. The
+      // conversion is a no-op when no TIFFs are present.
+      let effectiveInferInput = body.inferInputPath;
+      if (framework === 'PaddleSeg' && body.type === 'infer' && body.inferInputPath) {
+        try {
+          effectiveInferInput = await stagePaddleSegTiffInput(
+            body.inferInputPath,
+            pythonPath,
+            body.inferOutputPath,
+          );
+          if (effectiveInferInput !== body.inferInputPath) {
+            console.log(`[Validation ${validationJob.id}] TIFF staging: "${body.inferInputPath}" -> "${effectiveInferInput}"`);
+          }
+        } catch (err) {
+          console.error(`[Validation ${validationJob.id}] TIFF staging failed:`, err);
+          const msg = err instanceof Error ? err.message : String(err);
+          await db.validationJob.update({
+            where: { id: validationJob.id },
+            data: {
+              status: 'failed',
+              errorMessage: `TIFF pre-conversion failed: ${msg}`,
+              completedAt: new Date(),
+            },
+          });
+          return NextResponse.json(
+            { success: false, error: `TIFF pre-conversion failed: ${msg}` },
+            { status: 500 }
+          );
+        }
+      }
+
       startValidationProcess(
         validationJob.id,
         command,
@@ -291,7 +414,7 @@ export async function POST(request: NextRequest) {
         body.type || 'eval',
         body.configPath,
         body.weightsPath,
-        body.inferInputPath,
+        effectiveInferInput,
         body.inferOutputPath,
         framework
       );
