@@ -55,6 +55,7 @@ import {
   Download,
   FileDown,
 } from 'lucide-react'
+import { DeployedModelsPanel, type DeployedModel } from '@/components/deployed-models-panel'
 
 // Types
 interface TrainingJob {
@@ -500,6 +501,13 @@ export function ValidationPage() {
   const [exportedFiles, setExportedFiles] = useState<string[]>([])
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null)
 
+  // Deployed models: when the user loads a registered model whose weights path
+  // is not the auto-selected first checkpoint, we stash the override here and
+  // apply it once fetchCheckpoints() finishes populating the list. This avoids
+  // racing setSelectedCheckpoint against the auto-first-pick inside the
+  // fetcher.
+  const [pendingCheckpointOverride, setPendingCheckpointOverride] = useState<string | null>(null)
+
   // Fetch system config for GPU Python mappings
   const fetchSystemConfig = useCallback(async () => {
     try {
@@ -637,16 +645,29 @@ export function ValidationPage() {
         setSaveDir(data.saveDir || '')
         setCheckpoints(data.checkpoints || [])
         if (data.checkpoints && data.checkpoints.length > 0) {
-          const firstCheckpoint = data.checkpoints[0]
-          setSelectedCheckpoint(firstCheckpoint.relativePath)
-          // Auto-populate exported files if they exist for the first checkpoint
-          if (firstCheckpoint.exportedFiles && firstCheckpoint.exportedFiles.length > 0) {
-            setExportedFiles(firstCheckpoint.exportedFiles)
+          // If a deployed model load queued a specific weights path, prefer it
+          // over the auto-first pick when a matching entry exists in the list.
+          const override = pendingCheckpointOverride
+          const overrideMatch = override
+            ? (data.checkpoints as Checkpoint[]).find(cp => cp.relativePath === override || cp.path === override)
+            : null
+          const chosen = overrideMatch || data.checkpoints[0]
+          setSelectedCheckpoint(overrideMatch ? override! : chosen.relativePath)
+          if (chosen.exportedFiles && chosen.exportedFiles.length > 0) {
+            setExportedFiles(chosen.exportedFiles)
           } else {
             setExportedFiles([])
           }
+          if (override) setPendingCheckpointOverride(null)
         } else {
-          setSelectedCheckpoint('')
+          // No files scanned yet but the override may still be a valid absolute
+          // path (e.g. deployed model registered before its dir was scannable).
+          if (pendingCheckpointOverride) {
+            setSelectedCheckpoint(pendingCheckpointOverride)
+            setPendingCheckpointOverride(null)
+          } else {
+            setSelectedCheckpoint('')
+          }
           setExportedFiles([])
         }
       }
@@ -656,6 +677,52 @@ export function ValidationPage() {
       setCheckpointsLoading(false)
     }
   }
+
+  // Load a DeployedModel entry into the validator: point selectedJobId at the
+  // provenance training job (if it exists in the list) and queue an override
+  // so fetchCheckpoints picks the exact weights the registry entry recorded.
+  // Falls back to a manual selection hint when provenance is missing.
+  const handleLoadDeployedModel = (m: DeployedModel) => {
+    if (!m.trainingJobId) {
+      toast({
+        title: 'No linked training job',
+        description: 'This deployed model has no provenance job. Copy the paths below and use them manually.',
+        variant: 'destructive',
+      })
+      return
+    }
+    const job = trainingJobs.find(j => j.id === m.trainingJobId)
+    if (!job) {
+      toast({
+        title: 'Training job not visible',
+        description: 'The provenance job may have been deleted or belongs to another user.',
+        variant: 'destructive',
+      })
+      return
+    }
+    setPendingCheckpointOverride(m.weightsPath)
+    if (selectedJobId === job.id) {
+      // Same job already selected → refetch to trigger override application.
+      fetchCheckpoints(job.id)
+    } else {
+      setSelectedJobId(job.id)
+    }
+    toast({ title: 'Loaded', description: `${m.name} · ${m.product}` })
+  }
+
+  // Provenance context passed to DeployedModelsPanel for the register dialog.
+  const registerContext = selectedJob && selectedCheckpoint
+    ? {
+        framework: selectedJob.project?.framework || 'PaddleDetection',
+        projectId: selectedJob.project?.id,
+        trainingJobId: selectedJob.id,
+        jobName: selectedJob.name,
+        configPath: selectedJob.absoluteConfigPath || selectedJob.configPath,
+        weightsPath: selectedCheckpoint,
+        exportedDir: exportedFiles?.[0] || null,
+        architecture: selectedJob.model?.architecture,
+      }
+    : null
 
   // Handle checkpoint selection change
   const handleCheckpointChange = (value: string) => {
@@ -1030,6 +1097,14 @@ export function ValidationPage() {
           Refresh
         </Button>
       </div>
+
+      {/* Deployed Models: quick per-product switcher; sits above the training
+          job picker so the common path is one-click. Registration reuses the
+          currently selected training job + checkpoint below as provenance. */}
+      <DeployedModelsPanel
+        onLoad={handleLoadDeployedModel}
+        registerContext={registerContext}
+      />
 
       {/* Job Selection */}
       <Card>

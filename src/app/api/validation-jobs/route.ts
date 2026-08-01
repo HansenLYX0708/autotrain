@@ -393,7 +393,9 @@ export async function POST(request: NextRequest) {
             where: { id: validationJob.id },
             data: {
               status: 'failed',
-              errorMessage: `TIFF pre-conversion failed: ${msg}`,
+              // ValidationJob has no dedicated errorMessage column; surface
+              // the failure through outputLog which the UI already renders.
+              outputLog: `TIFF pre-conversion failed: ${msg}`,
               completedAt: new Date(),
             },
           });
@@ -458,7 +460,7 @@ function startValidationProcess(
   let outputCollector: string[] = [];
 
   // Build environment
-  const env: Record<string, string> = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: '1',
     PYTHONPATH: workDir,

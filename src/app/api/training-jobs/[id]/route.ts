@@ -5,6 +5,14 @@ import { exec } from "child_process";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentUser } from "@/lib/auth";
 import { getWorkDir } from "@/lib/frameworks";
+import {
+  createParserState,
+  feed as feedParser,
+  flush as flushParser,
+  disposeParserState,
+  type JobParserState,
+  type ParsedTrainLog,
+} from "@/lib/log-parsers";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
@@ -52,6 +60,13 @@ async function checkFrameworkModuleAvailable(
 
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
+
+// Per-job log parser state. Mirrors the lifetime of `runningProcesses`
+// entries (created when a process is spawned, deleted on close/error).
+// Owning line-buffering + framework-aware dispatch here means the stdout
+// listener can be a thin adapter that just forwards ParsedTrainLog records
+// into the DB, keeping the routing logic in one place.
+const jobParserStates = new Map<string, JobParserState>();
 
 // Helper function to get Python path for a job
 async function getPythonPathForJob(job: any): Promise<string> {
@@ -367,7 +382,8 @@ export async function PUT(
                 pythonPath,
                 gpuIdsStr,
                 systemConfig.condaEnv || null,
-                systemConfig.condaPath || null
+                systemConfig.condaPath || null,
+                framework,
               );
               console.log(`[Job ${id}] Training process started successfully`);
             } catch (error) {
@@ -514,7 +530,8 @@ function startTrainingProcess(
   pythonPath: string, 
   gpuIds: string = '0',
   condaEnv: string | null = null,
-  condaPath: string | null = null
+  condaPath: string | null = null,
+  framework: string = 'PaddleDetection',
 ) {
   console.log(`\n========== TRAINING PROCESS START ==========`);
   console.log(`[Job ${jobId}] GPU(s): ${gpuIds}`);
@@ -528,7 +545,7 @@ function startTrainingProcess(
   let stderrCollector: string[] = [];
   
   // Build environment with CUDA_VISIBLE_DEVICES
-  const env: Record<string, string> = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
     CUDA_VISIBLE_DEVICES: gpuIds,
@@ -622,12 +639,21 @@ function startTrainingProcess(
 
   runningProcesses.set(jobId, childProcess);
 
+  // Framework-aware parser: owns line buffering + (Seg-only) multi-line EVAL
+  // accumulation. See `@/lib/log-parsers` for the dispatcher design.
+  const parserState = createParserState(framework);
+  jobParserStates.set(jobId, parserState);
+
   childProcess.stdout?.on("data", async (data: Buffer) => {
     const output = data.toString();
     console.log(`[Job ${jobId}] ${output}`);
-    
-    // Parse training progress from output
-    await parseAndUpdateProgress(jobId, output);
+
+    // Split chunk into complete lines and dispatch each to the appropriate
+    // per-framework parser. Zero, one, or many rows may come back per chunk.
+    const rows = feedParser(parserState, output);
+    for (const row of rows) {
+      await writeParsedLog(jobId, row);
+    }
   });
 
   childProcess.stderr?.on("data", (data: Buffer) => {
@@ -643,7 +669,21 @@ function startTrainingProcess(
 
   childProcess.on("close", async (code) => {
     runningProcesses.delete(jobId);
-    
+
+    // Drain any trailing line the parser was still buffering, then release
+    // the state map entry. Failure here is non-fatal to job closure.
+    const tailState = jobParserStates.get(jobId);
+    if (tailState) {
+      try {
+        const tail = flushParser(tailState);
+        for (const row of tail) await writeParsedLog(jobId, row);
+      } catch (e) {
+        console.error(`[Job ${jobId}] parser flush failed:`, e);
+      }
+      disposeParserState(tailState);
+      jobParserStates.delete(jobId);
+    }
+
     // Update job status
     const status = code === 0 ? "completed" : "failed";
     try {
@@ -674,6 +714,11 @@ function startTrainingProcess(
   childProcess.on("error", async (error) => {
     console.error(`[Job ${jobId} PROCESS ERROR]`, error);
     runningProcesses.delete(jobId);
+    const errState = jobParserStates.get(jobId);
+    if (errState) {
+      disposeParserState(errState);
+      jobParserStates.delete(jobId);
+    }
     
     // Update job with error
     try {
@@ -691,7 +736,86 @@ function startTrainingProcess(
   });
 }
 
-// Parse training output and update progress
+/**
+ * Persist one framework-parsed training log record into the DB, updating the
+ * `TrainingJob` progress snapshot in the same call.
+ *
+ * All framework specifics have already been resolved by the parser
+ * dispatcher in `@/lib/log-parsers`, so this function is a thin, uniform
+ * writer that never inspects log content itself.
+ *
+ * Failures are swallowed to keep the stdout listener resilient — an unwritten
+ * log row is worth much less than a training run that dies because a DB
+ * connection blipped.
+ */
+async function writeParsedLog(jobId: string, log: ParsedTrainLog): Promise<void> {
+  try {
+    // 1. Roll the TrainingJob progress snapshot forward. Only touch columns
+    //    the parser actually produced so an EVAL row (which has no loss/lr)
+    //    doesn't wipe the last known progress.
+    const jobUpdate: Record<string, unknown> = {};
+    if (log.epoch) jobUpdate.currentEpoch = log.epoch;
+    if (log.loss !== null && log.loss !== undefined) jobUpdate.currentLoss = log.loss;
+    if (log.learningRate !== null && log.learningRate !== undefined) {
+      jobUpdate.currentLr = log.learningRate;
+    }
+    if (log.bestIter !== null && log.bestIter !== undefined) {
+      jobUpdate.bestIter = log.bestIter;
+    }
+    if (log.bestMetric !== null && log.bestMetric !== undefined) {
+      jobUpdate.bestMetric = log.bestMetric;
+    }
+    if (Object.keys(jobUpdate).length > 0) {
+      await db.trainingJob.update({ where: { id: jobId }, data: jobUpdate });
+    }
+
+    // 2. Insert the detailed TrainingLog row. Per-class arrays are folded
+    //    into a JSON blob so num_classes doesn't leak into the schema.
+    const classMetrics =
+      log.classIoU || log.classPrecision || log.classRecall
+        ? JSON.stringify({
+            iou: log.classIoU ?? null,
+            precision: log.classPrecision ?? null,
+            recall: log.classRecall ?? null,
+          })
+        : null;
+
+    await db.trainingLog.create({
+      data: {
+        jobId,
+        epoch: log.epoch,
+        iteration: log.iteration,
+        totalIter: log.totalIter,
+        loss: log.loss,
+        lossCls: log.lossCls ?? null,
+        lossIou: log.lossIou ?? null,
+        lossDfl: log.lossDfl ?? null,
+        lossL1: log.lossL1 ?? null,
+        learningRate: log.learningRate,
+        mIoU: log.mIoU ?? null,
+        acc: log.acc ?? null,
+        kappa: log.kappa ?? null,
+        dice: log.dice ?? null,
+        eta: log.eta,
+        batchCost: log.batchCost,
+        dataCost: log.dataCost,
+        readerCost: log.readerCost,
+        ips: log.ips,
+        memReserved: log.memReserved,
+        memAllocated: log.memAllocated,
+        classMetrics,
+        rawLog: log.rawLog.slice(0, 2000),
+      },
+    });
+  } catch (error) {
+    // Non-fatal — one lost log line shouldn't kill the training run.
+    console.error(`[Job ${jobId}] writeParsedLog failed:`, error);
+  }
+}
+
+// Legacy inline parser retained for git-blame context; new code uses the
+// framework-aware dispatcher in `@/lib/log-parsers` via writeParsedLog above.
+// TODO(cleanup): delete once we're confident no code paths still call this.
 async function parseAndUpdateProgress(jobId: string, output: string) {
   try {
     // ---- PaddleSeg log format ----

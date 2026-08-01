@@ -50,3 +50,4 @@ server.log
 # Skills directory
 /skills/
 prisma/db/custom.db
+.venv-napari/

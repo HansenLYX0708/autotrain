@@ -53,6 +53,8 @@ interface TrainingJob {
   totalEpochs: number
   currentLoss: number | null
   currentLr: number | null
+  bestIter: number | null
+  bestMetric: number | null
   startedAt: string | null
   completedAt: string | null
   project: {
@@ -101,6 +103,10 @@ interface TrainingLog {
   acc: number | null
   kappa: number | null
   dice: number | null
+  // JSON string: {"iou":[..],"precision":[..],"recall":[..]} — populated on
+  // PaddleSeg EVAL rows only. Kept as JSON to accommodate variable
+  // num_classes without schema changes.
+  classMetrics: string | null
   rawLog: string | null
   timestamp: string
 }
@@ -357,6 +363,26 @@ export function MonitoringPage() {
 
   // Get latest log for current metrics
   const latestLog = logs[logs.length - 1]
+
+  // Latest PaddleSeg EVAL row (has mIoU + optional per-class metrics). Kept
+  // separate from `latestLog` because EVAL rows are interleaved with far
+  // more numerous TRAIN rows; the last TRAIN row won't have mIoU set.
+  const latestEvalLog = [...logs].reverse().find((l) => l.mIoU !== null)
+
+  // Parse latest per-class metrics JSON blob into arrays (safe: catch bad
+  // JSON so a corrupt row doesn't take down the page).
+  const latestClassMetrics: {
+    iou?: (number | null)[]
+    precision?: (number | null)[]
+    recall?: (number | null)[]
+  } | null = (() => {
+    if (!latestEvalLog?.classMetrics) return null
+    try {
+      return JSON.parse(latestEvalLog.classMetrics)
+    } catch {
+      return null
+    }
+  })()
 
   if (loading) {
     return (
@@ -643,7 +669,33 @@ export function MonitoringPage() {
                   mIoU / Acc / Kappa / Dice across evaluations
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-6">
+                {/* Best checkpoint summary — sourced from EVAL "best mIoU (X)
+                    was saved at iter N" line. Only shown for PaddleSeg jobs
+                    that have recorded at least one eval. */}
+                {(selectedJob?.bestMetric !== null && selectedJob?.bestMetric !== undefined) && (
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="p-4 rounded-lg border bg-muted/50">
+                      <div className="text-sm text-muted-foreground mb-1">Best mIoU</div>
+                      <div className="text-2xl font-bold">
+                        {selectedJob.bestMetric.toFixed(4)}
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-lg border bg-muted/50">
+                      <div className="text-sm text-muted-foreground mb-1">Best Checkpoint</div>
+                      <div className="text-2xl font-bold">
+                        iter {selectedJob.bestIter ?? '—'}
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-lg border bg-muted/50">
+                      <div className="text-sm text-muted-foreground mb-1">Latest mIoU</div>
+                      <div className="text-2xl font-bold">
+                        {latestEvalLog?.mIoU?.toFixed(4) ?? 'N/A'}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <ChartContainer config={segMetricChartConfig} className="h-[300px] w-full">
                   <LineChart data={segMetricChartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -657,6 +709,49 @@ export function MonitoringPage() {
                     <Line type="monotone" dataKey="dice" stroke="var(--chart-4)" strokeWidth={1.5} dot={false} name="Dice" />
                   </LineChart>
                 </ChartContainer>
+
+                {/* Per-class IoU / Precision / Recall table for the most
+                    recent eval. Class labels are unknown at this layer
+                    (they'd require a fetch to the dataset's `labels.txt`);
+                    we show them as `Class 0..N` and let the shape speak. */}
+                {latestClassMetrics && (
+                  <div className="overflow-x-auto">
+                    <div className="text-sm font-medium mb-2">
+                      Latest per-class metrics (eval @ iter {latestEvalLog?.iteration || '—'})
+                    </div>
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left py-2 px-3 font-medium text-muted-foreground">Metric</th>
+                          {(latestClassMetrics.iou ||
+                            latestClassMetrics.precision ||
+                            latestClassMetrics.recall ||
+                            []).map((_, i) => (
+                            <th key={i} className="text-right py-2 px-3 font-medium text-muted-foreground">
+                              Class {i}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(['iou', 'precision', 'recall'] as const).map((key) => {
+                          const arr = latestClassMetrics[key]
+                          if (!arr) return null
+                          return (
+                            <tr key={key} className="border-b last:border-0">
+                              <td className="py-2 px-3 font-medium capitalize">{key}</td>
+                              {arr.map((v, i) => (
+                                <td key={i} className="text-right py-2 px-3 font-mono">
+                                  {typeof v === 'number' ? v.toFixed(4) : '—'}
+                                </td>
+                              ))}
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

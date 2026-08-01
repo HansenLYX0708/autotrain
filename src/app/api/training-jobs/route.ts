@@ -344,11 +344,17 @@ export async function POST(request: NextRequest) {
     let inferCommand = '';
     const quotedConfigPath = `"${configFilePath}"`;
 
+    // Compute save_dir once for PaddleSeg (absolute when userDatabasePath is
+    // configured) so we can reuse it for both the CLI arg and the DB record.
+    // Storing the absolute path in `outputDir` is what lets the checkpoints
+    // API resolve `{save_dir}/best_model/model.pdparams` without any CLI
+    // reparse fallback.
+    const segSaveDir = (userDatabasePath && currentUser.username)
+      ? path.join(userDatabasePath, currentUser.username, 'jobs', jobName)
+      : `output/${project.name}/${jobName}`;
+
     if (framework === 'PaddleSeg') {
       // PaddleSeg: save_dir is a CLI argument (the YAML has no top-level save_dir).
-      const segSaveDir = (userDatabasePath && currentUser.username)
-        ? path.join(userDatabasePath, currentUser.username, 'jobs', jobName)
-        : `output/${project.name}/${jobName}`;
       const quotedSaveDir = `"${segSaveDir}"`;
       const bestModel = `"${path.join(segSaveDir, 'best_model', 'model.pdparams')}"`;
 
@@ -387,7 +393,9 @@ export async function POST(request: NextRequest) {
         inferCommand: inferCommand,
         configPath: configPath,
         totalEpochs: trainingConfig?.epoch || 100,
-        outputDir: `output/${project.name}/${jobName}`,
+        // For PaddleSeg persist the absolute save_dir so the checkpoints API
+        // can locate {save_dir}/best_model/... without parsing the command.
+        outputDir: framework === 'PaddleSeg' ? segSaveDir : `output/${project.name}/${jobName}`,
         vdlLogDir: useVdl ? `output/${project.name}/${jobName}/vdl` : null,
         trainingParams: JSON.stringify({
           gpuIds,

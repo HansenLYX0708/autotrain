@@ -354,7 +354,11 @@ export async function POST(request: NextRequest) {
     for (const file of jsonFiles) {
       const jsonPath = path.join(absoluteAnnotationsPath, file);
       try {
-        const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as LabelmeData;
+        // Strip UTF-8 BOM if present. PowerShell's `Set-Content -Encoding UTF8`
+        // and various labelme-adjacent tools emit BOM-prefixed JSON which
+        // `JSON.parse` rejects with `Unexpected token '\uFEFF'`.
+        const raw = fs.readFileSync(jsonPath, 'utf-8').replace(/^\uFEFF/, '');
+        const data = JSON.parse(raw) as LabelmeData;
         parsedJsons.push({ file, data });
         for (const shape of data.shapes || []) {
           if (shape.shape_type !== 'polygon' || (shape.points?.length ?? 0) < 3) continue;

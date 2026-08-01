@@ -1,0 +1,5 @@
+# napari 0.5+ requires Python >= 3.9 (this repo's default python is 3.8).
+# Create a dedicated venv, e.g.:  py -3.11 -m venv .venv-napari
+napari[all]>=0.5,<0.7
+numpy>=1.24,<3
+Pillow>=10,<12

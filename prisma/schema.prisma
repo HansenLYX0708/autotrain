@@ -28,6 +28,7 @@ model User {
   trainingJobs  TrainingJob[]
   validationJobs ValidationJob[]
   activityLogs  ActivityLog[]
+  deployedModels DeployedModel[]
 }
 model SystemConfig {
   id                    String   @id @default(cuid())
@@ -61,6 +62,7 @@ model Project {
   trainingConfigs TrainingConfig[]
   trainingJobs    TrainingJob[]
   validationJobs  ValidationJob[]
+  deployedModels  DeployedModel[]
   userId      String?
   user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
@@ -215,6 +217,11 @@ model TrainingJob {
   totalEpochs   Int    @default(100)
   currentLoss   Float?
   currentLr     Float?
+
+  // PaddleSeg: best checkpoint tracking, populated from EVAL "best mIoU (X)
+  // saved at iter N" line. Null for non-Seg frameworks.
+  bestIter    Int?
+  bestMetric  Float?  // Currently mIoU; kept generic for future eval keys
   
   // Paths
   outputDir     String?
@@ -243,6 +250,46 @@ model TrainingJob {
   config        TrainingConfig? @relation(fields: [configId], references: [id], onDelete: SetNull)
   
   logs        TrainingLog[]
+  deployedModels DeployedModel[]
+}
+
+// Deployed Model Registry: promotes a trained checkpoint (optionally its
+// TensorRT/inference export dir) into a first-class "production model" that
+// can be quickly switched per `product` label. Multiple entries can exist for
+// the same product; exactly one is expected to be isActive=true at a time
+// (enforced at the application layer inside a transaction).
+model DeployedModel {
+  id            String   @id @default(cuid())
+  name          String   // e.g. "line13-Aug-v3"
+  product       String   // product label, primary switching key
+  framework     String   // PaddleDetection / PaddleClas / PaddleSeg
+  architecture  String?  // e.g. "PP-YOLOE", "PP-LiteSeg"; informational
+
+  // Provenance (optional)
+  projectId     String?
+  trainingJobId String?
+
+  // Runtime artifacts used by inference/eval
+  configPath    String   // absolute path to merged YAML
+  weightsPath   String   // absolute path to .pdparams (or model file)
+  exportedDir   String?  // absolute path to export_model/<name> if exported
+
+  // Metadata
+  metrics       String?  // JSON: { mAP, mIoU, bestIter, ... }
+  notes         String?
+  isActive      Boolean  @default(false)
+
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project       Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  trainingJob   TrainingJob? @relation(fields: [trainingJobId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([product, framework])
+  @@index([userId, product])
+  @@unique([userId, product, name])
 }
 
 // Training Log
@@ -275,6 +322,12 @@ model TrainingLog {
   memReserved Int?    // MB
   memAllocated Int?   // MB
   
+  // PaddleSeg per-class arrays for the eval that produced this row. JSON
+  // string of shape {"iou":[..], "precision":[..], "recall":[..]}. Null
+  // outside PaddleSeg EVAL rows. Kept as JSON to accommodate variable
+  // num_classes without schema changes.
+  classMetrics String?
+
   rawLog      String?  // Original log line
   
   timestamp   DateTime @default(now())

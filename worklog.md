@@ -588,3 +588,33 @@ Stage Summary:
 Root Cause Analysis:
 - SystemConfig table was empty - no PaddleDetection path configured
 - User needs to configure paths in Settings before starting training
+
+---
+Task ID: napari Segmentation Annotator
+Agent: Main Agent
+Task: Add a manual segmentation annotation tool that produces PaddleSeg datasets
+
+Work Log:
+- Added tools/napari_seg/annotate.py: napari Labels-layer painter, so adjacent
+  regions share edges by construction (a pixel has exactly one class id)
+- Output layout mirrors src/app/api/datasets/labelme-to-paddleseg/route.ts
+  (JPEGImages/, Annotations/ paletted PNG, train.txt, val.txt, class_names.txt)
+- voc_colormap() and sanitize() are ports of getSegColorMap() in
+  src/lib/seg-colors.ts and sanitizeFilename() in the labelme-to-paddleseg route;
+  keep the three in sync or the dataset preview/statistics will disagree with training
+
+Environment Notes:
+- The default `python` on this machine is 3.8.10, which cannot install napari 0.5+.
+  Use `py -3.11 -m venv .venv-napari` then
+  `.venv-napari\Scripts\pip install -r tools\napari_seg\requirements.txt`
+- Verified against napari 0.6.6 / magicgui 0.10.2 / numpy 2.4.6 headless
+  (`QT_QPA_PLATFORM=offscreen`); viewer.close() fails offscreen for lack of an
+  OpenGL context, which is a test-harness limitation, not a tool bug
+
+Stage Summary:
+- Painting overwrites neighbouring classes (preserve_labels=False), so no gaps or
+  overlaps are possible between adjacent regions
+- Masks are 8-bit paletted PNGs whose palette index equals the class id; class 0 is
+  always _background_ and 255 is ignore_index
+- Saves happen on navigation, on explicit save, and on window close; existing masks
+  are reloaded so annotation can be resumed

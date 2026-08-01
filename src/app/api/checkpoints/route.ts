@@ -22,6 +22,25 @@ function extractSaveDir(yamlContent: string): string | null {
   return null;
 }
 
+// PaddleSeg keeps save_dir out of the YAML and passes it via CLI:
+//   ... tools/train.py --config "..." --save_dir "H:\...\jobs\<name>" ...
+// This extractor recovers it from a stored command string so historical jobs
+// (whose `outputDir` still holds only the relative fallback) can still resolve
+// their checkpoint folder.
+function extractSaveDirFromCommand(cmd: string | null | undefined): string | null {
+  if (!cmd) return null;
+  const patterns = [
+    /--save_dir\s+"([^"]+)"/,
+    /--save_dir\s+'([^']+)'/,
+    /--save_dir[=\s]+(\S+)/,
+  ];
+  for (const p of patterns) {
+    const m = cmd.match(p);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
 // GET /api/checkpoints - Get checkpoints from a directory or training job
 export async function GET(request: NextRequest) {
   try {
@@ -37,7 +56,10 @@ export async function GET(request: NextRequest) {
     if (jobId && !customDir) {
       const job = await db.trainingJob.findUnique({
         where: { id: jobId },
-        include: {
+        select: {
+          yamlConfig: true,
+          outputDir: true,
+          command: true,
           project: { select: { name: true, framework: true, user: { select: { username: true } } } },
         },
       });
@@ -51,14 +73,22 @@ export async function GET(request: NextRequest) {
 
       framework = job.project?.framework || 'PaddleDetection';
 
+      // PaddleSeg: save_dir lives on the CLI (`--save_dir "..."`), not in the
+      // YAML. Check the stored command first so freshly-trained Seg jobs
+      // resolve without users having to manually type a path.
+      if (framework === 'PaddleSeg' && !saveDir) {
+        const fromCmd = extractSaveDirFromCommand(job.command);
+        if (fromCmd) saveDir = fromCmd;
+      }
+
       // Try to get save_dir from yamlConfig
-      if (job.yamlConfig) {
+      if (!saveDir && job.yamlConfig) {
         const extractedDir = extractSaveDir(job.yamlConfig);
         if (extractedDir) {
           saveDir = extractedDir;
         }
       }
-      
+
       // Fallback to job's outputDir if no save_dir found
       if (!saveDir && job.outputDir) {
         saveDir = job.outputDir;
