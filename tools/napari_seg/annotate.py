@@ -20,11 +20,30 @@ The palette is the same VOC pseudo-color map as `src/lib/seg-colors.ts`
 (`getSegColorMap`), which keeps the platform's dataset preview and pixel
 statistics in sync with training.
 
+Filenames are rewritten on the way in: anything outside ASCII [A-Za-z0-9._-]
+becomes '_', because PaddleSeg splits list-file lines on whitespace, so a name
+like "cam 1.jpg" would be read as two tokens and break training. `--print-names`
+shows the mapping.
+
 Usage:
     python annotate.py --images D:/data/raw --out D:/data/out/data \
         --classes partA,partB
     # resume later (class names are read back from class_names.txt)
     python annotate.py --images D:/data/raw --out D:/data/out/data
+    # show how filenames are rewritten inside the dataset
+    python annotate.py --images D:/data/raw --out D:/data/out/data --print-names --no-gui
+    # pseudo-labelling: pull in model predictions, then review/fix them by hand
+    python annotate.py --images D:/data/new_raw --out D:/data/out/data \
+        --import-masks D:/pd/PaddleSeg/output/pseudo_color_prediction
+
+Growing the dataset with model predictions:
+    `paddleseg/core/predict.py` writes two directories. Only one is a label map:
+      added_prediction/        RGB image blended with the mask -- a preview, NOT
+                               a label; importing it is refused
+      pseudo_color_prediction/ 8-bit paletted PNG, index == class id -- this one
+    PaddleSeg builds that palette with `get_color_map_list()`, which drops the
+    leading black entry exactly like `src/lib/seg-colors.ts` does, so prediction
+    masks and masks painted here are byte-compatible.
 
 Keys:
     Ctrl+Right / Ctrl+Left   next / previous image (auto-saves)
@@ -53,6 +72,10 @@ BACKGROUND = "_background_"
 IGNORE_INDEX = 255
 IGNORE_NAME = "__ignore__"
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+# How far an RGB pixel may sit from a palette color before it counts as "not a
+# label map", and the share of such pixels that makes us reject the file.
+RGB_SNAP_TOL = 30.0
+RGB_SNAP_MAX_OFF = 0.05
 
 
 # --------------------------------------------------------------------------- #
@@ -107,7 +130,10 @@ def build_palette(num_classes: int) -> np.ndarray:
 
 def save_mask(path: Path, labels: np.ndarray, palette: np.ndarray) -> None:
     """Write an 8-bit paletted PNG whose palette index equals the class id."""
-    img = Image.fromarray(np.ascontiguousarray(labels, dtype=np.uint8), mode="P")
+    arr = np.ascontiguousarray(labels, dtype=np.uint8)
+    # `Image.fromarray(..., mode="P")` is deprecated (removed in Pillow 13);
+    # frombytes keeps the raw values as palette indices without any remapping.
+    img = Image.frombytes("P", (arr.shape[1], arr.shape[0]), arr.tobytes())
     img.putpalette(palette.reshape(-1).tolist())
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), optimize=True)
@@ -166,6 +192,159 @@ def resolve_class_names(out_dir: Path, classes_arg: Optional[str]) -> List[str]:
     return names
 
 
+def dataset_names(src: Path) -> Tuple[str, str]:
+    """Return the (image, mask) names `src` gets inside the dataset."""
+    safe = sanitize(src.name)
+    return safe, Path(safe).stem + ".png"
+
+
+def build_name_map(images: Sequence[Path]) -> Dict[Path, Tuple[str, str]]:
+    """Map every source image to its (image, mask) name, keeping them unique.
+
+    `sanitize()` is lossy: "工位1.png" and "产线1.png" both collapse to "1.png",
+    and a fully non-ASCII name collapses to "image.png". Applying it blindly
+    would make one image silently overwrite another, so colliding names get a
+    numeric suffix. Uniqueness is decided over the whole (sorted) image list, so
+    the result is stable as long as the source directory does not change.
+    """
+    used: Dict[str, Path] = {}
+    mapping: Dict[Path, Tuple[str, str]] = {}
+    for src in images:
+        safe, _ = dataset_names(src)
+        base, ext = os.path.splitext(safe)
+        stem, n = base, 2
+        while stem in used:
+            stem = "{}_{}".format(base, n)
+            n += 1
+        used[stem] = src
+        mapping[src] = (stem + ext, stem + ".png")
+    return mapping
+
+
+def rgb_to_indices(
+    rgb: np.ndarray, palette: np.ndarray, valid_ids: Sequence[int]
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Snap every RGB pixel to the closest palette entry. Returns (ids, distance)."""
+    a = rgb.astype(np.int32)
+    best = np.full(a.shape[:2], np.iinfo(np.int32).max, dtype=np.int32)
+    idx = np.zeros(a.shape[:2], dtype=np.uint8)
+    for cid in valid_ids:
+        d = ((a - palette[cid].astype(np.int32)) ** 2).sum(-1)
+        m = d < best
+        best[m] = d[m]
+        idx[m] = cid
+    return idx, np.sqrt(best.astype(np.float64))
+
+
+def read_external_mask(
+    path: Path,
+    shape: Tuple[int, int],
+    num_classes: int,
+    palette: np.ndarray,
+) -> Tuple[np.ndarray, str]:
+    """Read a mask produced elsewhere (e.g. PaddleSeg's pseudo_color_prediction).
+
+    Paletted / grayscale PNGs are taken at face value: the stored value already is
+    the class id, which is what `paddleseg/core/predict.py` writes. RGB files are
+    snapped to the nearest palette color, which rescues hand-made color masks but
+    rejects blended visualisations such as `added_prediction/`.
+    """
+    im = Image.open(str(path))
+    valid = list(range(num_classes)) + [IGNORE_INDEX]
+    note = im.mode
+
+    if im.mode in ("P", "L"):
+        arr = np.array(im).astype(np.uint8)
+    elif im.mode in ("RGB", "RGBA"):
+        arr, dist = rgb_to_indices(np.array(im.convert("RGB")), palette, valid)
+        off = float((dist > RGB_SNAP_TOL).mean())
+        if off > RGB_SNAP_MAX_OFF:
+            raise ValueError(
+                "{:.0%} of pixels are not PaddleSeg palette colors -- this looks "
+                "like a blended preview (added_prediction/), not a label map; use "
+                "pseudo_color_prediction/ instead".format(off)
+            )
+        note = "RGB snapped to palette ({:.2%} off-palette)".format(off)
+    else:
+        raise ValueError("unsupported image mode {}".format(im.mode))
+
+    if arr.ndim != 2:
+        raise ValueError("expected a 2-D mask, got shape {}".format(arr.shape))
+    if arr.shape != shape:
+        raise ValueError("mask is {} but the image is {}".format(arr.shape, shape))
+    unknown = [int(v) for v in np.unique(arr) if v not in valid]
+    if unknown:
+        raise ValueError(
+            "class ids {} are outside 0..{} (num_classes={})".format(
+                unknown, num_classes - 1, num_classes
+            )
+        )
+    return arr, note
+
+
+def index_masks_by_stem(mask_dir: Path) -> Dict[str, Path]:
+    """Map stem -> mask path, searching recursively.
+
+    PaddleSeg keeps the input sub-directory structure under
+    `pseudo_color_prediction/`, so a flat listing is not enough.
+    """
+    found: Dict[str, Path] = {}
+    for path in sorted(mask_dir.rglob("*")):
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTS:
+            found.setdefault(path.stem, path)
+    return found
+
+
+def import_masks(
+    images: Sequence[Path],
+    mask_dir: Path,
+    out_dir: Path,
+    class_names: Sequence[str],
+    overwrite: bool = False,
+) -> Dict[str, List[str]]:
+    """Fold externally produced masks (model predictions) into the dataset.
+
+    Both the image and the mask are stored under their sanitized names, so a
+    later `annotate.py` run picks them up for review.
+    """
+    palette = build_palette(len(class_names))
+    available = index_masks_by_stem(mask_dir)
+    names = build_name_map(images)
+    report: Dict[str, List[str]] = {
+        "imported": [], "skipped": [], "missing": [], "rejected": []
+    }
+
+    (out_dir / "JPEGImages").mkdir(parents=True, exist_ok=True)
+    (out_dir / "Annotations").mkdir(parents=True, exist_ok=True)
+
+    for src in images:
+        img_name, mask_name = names[src]
+        dst_mask = out_dir / "Annotations" / mask_name
+        source = available.get(src.stem)
+        if source is None:
+            report["missing"].append(src.name)
+            continue
+        if dst_mask.exists() and not overwrite:
+            report["skipped"].append("{} (already annotated)".format(src.name))
+            continue
+        try:
+            image = read_image(src)
+            labels, note = read_external_mask(
+                source, (image.shape[0], image.shape[1]), len(class_names), palette
+            )
+        except (ValueError, OSError) as exc:
+            report["rejected"].append("{}: {}".format(src.name, exc))
+            continue
+
+        save_mask(dst_mask, labels, palette)
+        dst_img = out_dir / "JPEGImages" / img_name
+        if not dst_img.exists():
+            shutil.copy2(str(src), str(dst_img))
+        report["imported"].append("{} -> {} [{}]".format(src.name, mask_name, note))
+
+    return report
+
+
 def write_lists(
     out_dir: Path,
     images: Sequence[Path],
@@ -174,12 +353,12 @@ def write_lists(
 ) -> Tuple[int, int]:
     """Write train.txt / val.txt for every image that already has a mask."""
     annotations = out_dir / "Annotations"
+    names = build_name_map(images)
     lines: List[str] = []
     for src in images:
-        safe = sanitize(src.name)
-        stem = Path(safe).stem
-        if (annotations / (stem + ".png")).exists():
-            lines.append("JPEGImages/{} Annotations/{}.png".format(safe, stem))
+        img_name, mask_name = names[src]
+        if (annotations / mask_name).exists():
+            lines.append("JPEGImages/{} Annotations/{}".format(img_name, mask_name))
 
     random.Random(seed).shuffle(lines)
     cut = int(len(lines) * train_ratio)
@@ -214,6 +393,7 @@ class Annotator:
             raise SystemExit("no images found in {}".format(images_dir))
 
         self.out = out_dir
+        self.names = build_name_map(self.images)
         self.class_names = class_names
         self.palette = build_palette(len(class_names))
         self.train_ratio = train_ratio
@@ -239,10 +419,10 @@ class Annotator:
     # -- paths ------------------------------------------------------------- #
 
     def image_dst(self, src: Path) -> Path:
-        return self.out / "JPEGImages" / sanitize(src.name)
+        return self.out / "JPEGImages" / self.names[src][0]
 
     def mask_dst(self, src: Path) -> Path:
-        return self.out / "Annotations" / (Path(sanitize(src.name)).stem + ".png")
+        return self.out / "Annotations" / self.names[src][1]
 
     # -- widgets ----------------------------------------------------------- #
 
@@ -534,6 +714,30 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="comma separated foreground class names; '_background_' is prepended "
              "automatically. Omit to reuse <out>/class_names.txt",
     )
+    parser.add_argument(
+        "--import-masks",
+        type=Path,
+        metavar="DIR",
+        help="fold existing masks into the dataset before annotating, matching "
+             "them to --images by filename stem (searched recursively). Point "
+             "this at PaddleSeg's output/pseudo_color_prediction to review and "
+             "correct model predictions instead of labelling from scratch",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="let --import-masks replace masks that already exist",
+    )
+    parser.add_argument(
+        "--no-gui",
+        action="store_true",
+        help="only run --import-masks / --print-names, do not open napari",
+    )
+    parser.add_argument(
+        "--print-names",
+        action="store_true",
+        help="print how each source filename is rewritten inside the dataset",
+    )
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--brush-size", type=int, default=12)
@@ -551,6 +755,51 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "{}={}".format(i, n) for i, n in enumerate(class_names)
     )))
     print("num_classes for the training config: {}".format(len(class_names)))
+
+    images = list_images(args.images)
+    if not images:
+        raise SystemExit("no images found in {}".format(args.images))
+
+    if args.print_names:
+        names = build_name_map(images)
+        print("\nsource name -> dataset name (anything outside ASCII "
+              "[A-Za-z0-9._-] becomes '_', because PaddleSeg list files split "
+              "lines on whitespace)")
+        renamed = deduped = 0
+        for src in images:
+            img_name, mask_name = names[src]
+            tags = []
+            if img_name != src.name:
+                tags.append("renamed")
+                renamed += 1
+            if img_name != dataset_names(src)[0]:
+                tags.append("de-duplicated: sanitizing collided with another file")
+                deduped += 1
+            print("  {}\n    JPEGImages/{}\n    Annotations/{}{}".format(
+                src.name, img_name, mask_name,
+                "\n    ^ " + "; ".join(tags) if tags else ""))
+        print("{} of {} renamed, {} de-duplicated".format(renamed, len(images), deduped))
+
+    if args.import_masks:
+        if not args.import_masks.is_dir():
+            raise SystemExit("--import-masks is not a directory: {}".format(args.import_masks))
+        (args.out / "class_names.txt").write_text(
+            "\n".join(class_names) + "\n", encoding="utf-8"
+        )
+        report = import_masks(
+            images, args.import_masks, args.out, class_names, overwrite=args.overwrite
+        )
+        print("\nimported {} / skipped {} / missing {} / rejected {}".format(
+            *(len(report[k]) for k in ("imported", "skipped", "missing", "rejected"))
+        ))
+        for key in ("rejected", "missing", "skipped", "imported"):
+            for line in report[key]:
+                print("  [{}] {}".format(key, line))
+        n_train, n_val = write_lists(args.out, images, args.train_ratio, args.seed)
+        print("train.txt {} / val.txt {}".format(n_train, n_val))
+
+    if args.no_gui:
+        return 0
 
     try:
         annotator = Annotator(

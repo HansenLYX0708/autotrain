@@ -1,0 +1,11 @@
+# The repo's .venv-napari (Python 3.11) already satisfies numpy/Pillow; this adds
+# the rest. Install into that venv:
+#   .\.venv-napari\Scripts\pip install -r tools\tem_analysis\requirements.txt
+numpy>=1.24,<3
+Pillow>=10,<12
+scipy>=1.10
+matplotlib>=3.7
+# Optional: only used for cv2.ximgproc.thinning(THINNING_GUOHALL). Without it the
+# tool falls back to the NumPy Guo-Hall implementation in skeleton.py, which
+# selftest.py verifies is pixel-identical (just slower).
+opencv-contrib-python>=4.8

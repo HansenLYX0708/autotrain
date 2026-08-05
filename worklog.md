@@ -618,3 +618,34 @@ Stage Summary:
   always _background_ and 255 is ignore_index
 - Saves happen on navigation, on explicit save, and on window close; existing masks
   are reloaded so annotation can be resumed
+
+---
+Task ID: napari Annotator - Prediction Import + Name Mapping
+Agent: Main Agent
+Task: Reuse model predictions as labels, and explain/expose the dataset filename rewrite
+
+Work Log:
+- Added --import-masks/--overwrite/--no-gui/--print-names to tools/napari_seg/annotate.py
+- import_masks() matches masks to images by filename stem, searched recursively because
+  paddleseg/core/predict.py mirrors the input sub-directory layout under
+  pseudo_color_prediction/
+- Verified against the local PaddleSeg checkout (D:\_work\projects\autoTraining\pd\PaddleSeg):
+  paddleseg/utils/visualize.py get_color_map_list() ends with color_map = color_map[3:],
+  so class 0 is (128,0,0) -- byte-identical to getSegColorMap() in src/lib/seg-colors.ts
+  for all 256 entries. Prediction masks can therefore be imported without remapping.
+- predict.py writes added_prediction/ (RGB image blended with the mask, NOT a label) and
+  pseudo_color_prediction/ (paletted PNG, index == class id). Importing the former is
+  refused by a palette-distance check instead of silently producing garbage labels.
+- Fixed a latent data-loss bug: sanitize() is lossy, so "工位1.png" and "产线1.png" both
+  collapse to "1.png" and one would overwrite the other. build_name_map() now de-duplicates
+  with a _2/_3 suffix over the whole sorted image list, and Annotator/import_masks/write_lists
+  all share that single map. NOTE: sanitizeFilename() in the labelme-to-paddleseg route has
+  the same collision hazard and was NOT changed.
+- save_mask() now uses Image.frombytes("P", ...) since Image.fromarray(mode="P") is
+  deprecated and disappears in Pillow 13
+
+Stage Summary:
+- Pseudo-labelling loop: predict -> --import-masks -> review/fix in napari -> export lists
+- --print-names shows source -> JPEGImages/Annotations names and flags renames/collisions
+- Import validates mode, size, and class-id range; bad files are reported, never written
+- --no-gui path needs no napari, so it runs on the repo's default Python 3.8
