@@ -21,7 +21,10 @@ from context import AnalysisContext
 # Dotted paths into the JSON `results` block, plus a few top-level fields.
 CSV_COLUMNS: List[str] = [
     "image",
+    "fov_nm",
+    "image_width_px",
     "scale_nm_per_px",
+    "scale_source",
     "rotation.applied",
     "rotation.angle_deg_image",
     "results.leveling.angle_deg_image",
@@ -37,12 +40,20 @@ CSV_COLUMNS: List[str] = [
     "results.interfaces.b1.y_px",
     "results.interfaces.a1_b1.dx.nm",
     "results.interfaces.a1_b1.dy.nm",
+    "results.interfaces.b3.x_px",
+    "results.interfaces.b3.y_px",
+    "results.interfaces.a1_b3.dx.nm",
+    "results.interfaces.a1_b3.dy.nm",
     "results.interfaces.a2.x_px",
     "results.interfaces.a2.y_px",
     "results.interfaces.b2.x_px",
     "results.interfaces.b2.y_px",
     "results.interfaces.a2_b2.dx.nm",
     "results.interfaces.a2_b2.dy.nm",
+    "results.interfaces.b4.x_px",
+    "results.interfaces.b4.y_px",
+    "results.interfaces.a2_b4.dx.nm",
+    "results.interfaces.a2_b4.dy.nm",
     "results.interfaces.saf_ru_l_dip.max_downward_deviation.nm",
     "results.interfaces.saf_ru_l_dip.max_downward_arclength.nm",
     "results.interfaces.saf_ru_r_dip.max_downward_deviation.nm",
@@ -200,13 +211,7 @@ def render_overlay(
             ax.plot([a[0], b[0]], [a[1], b[1]], **kw)
 
     mgo = res.get("mgo_c") or {}
-    line_between(
-        _pt(mgo.get("fit_p1")),
-        _pt(mgo.get("fit_p2")),
-        color="cyan",
-        ls="--",
-        lw=1.2,
-    )
+    line_between(_pt(mgo.get("b3")), _pt(mgo.get("b4")), color="cyan", ls="--", lw=1.2)
 
     nmg = res.get("non_mag") or {}
     if nmg.get("edge_polyline"):
@@ -277,6 +282,8 @@ def render_overlay(
         ("a2", (res.get("interfaces") or {}).get("a2"), "red", (7, 7)),
         ("b1", (res.get("interfaces") or {}).get("b1"), "cyan", (-4, 9)),
         ("b2", (res.get("interfaces") or {}).get("b2"), "cyan", (4, 9)),
+        ("b3", (res.get("interfaces") or {}).get("b3"), "deepskyblue", (-4, -13)),
+        ("b4", (res.get("interfaces") or {}).get("b4"), "deepskyblue", (4, -13)),
         ("m1", (res.get("milling_l") or {}).get("max_curvature_point"), "orange", (8, -3)),
         ("m2", (res.get("milling_r") or {}).get("max_curvature_point"), "orange", (8, -3)),
         # Above the point: m1/m2 sit just below these two and would collide.
@@ -372,6 +379,9 @@ def _fmt(value: Any, spec: str = "{:.3f}") -> str:
 def _legend_text(record: Dict[str, Any]) -> str:
     g = lambda p: dig(record, p)  # noqa: E731
     rows = [
+        "scale            {} nm/px (FOV {} nm)".format(
+            _fmt(g("scale_nm_per_px"), "{:.5f}"), _fmt(g("fov_nm"), "{:.2f}")
+        ),
         "leveling angle   {} deg".format(_fmt(g("results.leveling.angle_deg_image"))),
         "MgO_C angle/R2   {} deg / {}".format(
             _fmt(g("results.mgo_c.angle_deg_image")), _fmt(g("results.mgo_c.fit_r2"), "{:.4f}")
@@ -380,9 +390,17 @@ def _legend_text(record: Dict[str, Any]) -> str:
             _fmt(g("results.interfaces.a1_b1.dx.nm")),
             _fmt(g("results.interfaces.a1_b1.dy.nm")),
         ),
+        "a1-b3 dx,dy      {}, {} nm".format(
+            _fmt(g("results.interfaces.a1_b3.dx.nm")),
+            _fmt(g("results.interfaces.a1_b3.dy.nm")),
+        ),
         "a2-b2 dx,dy      {}, {} nm".format(
             _fmt(g("results.interfaces.a2_b2.dx.nm")),
             _fmt(g("results.interfaces.a2_b2.dy.nm")),
+        ),
+        "a2-b4 dx,dy      {}, {} nm".format(
+            _fmt(g("results.interfaces.a2_b4.dx.nm")),
+            _fmt(g("results.interfaces.a2_b4.dy.nm")),
         ),
         "L dip / R dip    {} / {} nm".format(
             _fmt(g("results.interfaces.saf_ru_l_dip.max_downward_deviation.nm")),

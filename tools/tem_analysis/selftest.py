@@ -297,6 +297,17 @@ def test_untilted_absolute() -> None:
         close("  a1->b1 dy", it["a1_b1"]["dy"]["px"], -3.0, 1.0, " px")
         close("  a2->b2 dx", it["a2_b2"]["dx"]["px"], -20.0, 1.5, " px")
         close("  a2->b2 dy", it["a2_b2"]["dy"]["px"], -3.0, 1.0, " px")
+        # MgO_C is a perfectly straight rectangle here, so the fitted segment ends
+        # (b3/b4) must coincide with the raw skeleton tips (b1/b2), and the offsets
+        # measured against them must match.
+        close("  b3 x", it["b3"]["x_px"], 470.0, 1.5, " px")
+        close("  b3 y", it["b3"]["y_px"], 403.0, 1.0, " px")
+        close("  b4 x", it["b4"]["x_px"], 640.0, 1.5, " px")
+        close("  b4 y", it["b4"]["y_px"], 403.0, 1.0, " px")
+        close("  a1->b3 dx", it["a1_b3"]["dx"]["px"], 40.0, 1.5, " px")
+        close("  a1->b3 dy", it["a1_b3"]["dy"]["px"], -3.0, 1.0, " px")
+        close("  a2->b4 dx", it["a2_b4"]["dx"]["px"], -20.0, 1.5, " px")
+        close("  a2->b4 dy", it["a2_b4"]["dy"]["px"], -3.0, 1.0, " px")
         close(
             "  flat layer has no dip",
             it["saf_ru_l_dip"]["max_downward_deviation"]["px"],
@@ -488,6 +499,45 @@ def test_tilted_invariants() -> None:
         )
 
 
+def test_scale_from_filename() -> None:
+    print("scale: field of view parsed out of the filename")
+    cases = [
+        ("751845_RMF 24(12,15)_1300kx_FOV_76.37nm.png", 76.37),
+        ("a_FOV_120nm.png", 120.0),
+        ("a_fov-8.5 nm.tif", 8.5),
+        ("no_scale_here.png", None),
+        ("1300kx_only.png", None),
+    ]
+    for name, want in cases:
+        got = labelmap.parse_fov_nm(name)
+        check(
+            "  {:44s} -> {}".format(name, want),
+            got == want,
+            "got {}".format(got),
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "synthetic_1300kx_FOV_76.37nm.png"
+        write_scene(path, 0.0)
+        params = analyze.build_parser().parse_args(
+            ["--mask", str(path), "--out", tmp, "--no-overlay", "--no-rotate"]
+        )
+        rec = analyze.analyze_one(path, params)
+        rec.pop("_ctx", None)
+        width = rec["image_width_px"]
+        close("  FOV", rec["fov_nm"], 76.37, 1e-9, " nm")
+        close("  nm/px", rec["scale_nm_per_px"], 76.37 / width, 1e-12)
+        check("  source", rec["scale_source"] == "filename", rec["scale_source"])
+        # A distance in nm must be exactly the pixel distance times the scale.
+        blk = rec["results"]["non_mag"]
+        close(
+            "  nm conversion",
+            blk["length"]["nm"],
+            blk["length"]["px"] * 76.37 / width,
+            1e-9,
+            " nm",
+        )
+
+
 def test_decoy_component() -> None:
     """A spurious Non_mag band larger than the real box must not win.
 
@@ -539,6 +589,7 @@ TESTS: List[Callable[[], None]] = [
     test_contour,
     test_untilted_absolute,
     test_tilted_invariants,
+    test_scale_from_filename,
     test_decoy_component,
     test_numpy_backend_end_to_end,
 ]

@@ -1,5 +1,9 @@
 """Requirement 6: fit a line to the Non_mag edge away from Block_D, and its endpoints.
 
+Non_mag1 / Non_mag2 are that fitted line extended outward until it reaches the x
+extent of the Non_mag region -- i.e. the intersection with the region's leftmost and
+rightmost columns -- rather than wherever the fitted samples happened to stop.
+
 Which of the two horizontal edges to use is decided by adjacency rather than
 hard-coded as "top" or "bottom": the wanted edge is the one *not* touching Block_D.
 Counting Block_D contacts on both candidate edges makes the choice survive a sample
@@ -87,11 +91,20 @@ def measure(ctx: AnalysisContext) -> Dict[str, Any]:
     used = edge[keep]
     ols = fit_line_ols(used, axis="y~x")
 
-    # Endpoints are the fitted line evaluated over the surviving x-range, not raw
-    # pixels, so corner rounding cannot shift them.
-    x1, x2 = float(used[:, 0].min()), float(used[:, 0].max())
+    # The fitted line is extrapolated out to the full x extent of the Non_mag region,
+    # not just to the columns that survived sigma-clipping. The clipped columns are
+    # exactly the rounded left/right corners, so stopping there would pull the
+    # endpoints inward by however much the corners happen to round off; extending to
+    # the region edge makes Non_mag1/Non_mag2 a property of the region rather than of
+    # the clipping threshold. Evaluating the line (not taking raw pixels) keeps the
+    # corner rounding itself out of the y coordinate.
+    cols = np.nonzero(mask.any(axis=0))[0]
+    x1, x2 = float(cols.min()), float(cols.max())
     p1 = np.array([x1, line.y_at(x1)])
     p2 = np.array([x2, line.y_at(x2)])
+    extrapolated = ctx.dist(
+        float(max(used[:, 0].min() - x1, x2 - used[:, 0].max(), 0.0))
+    )
     dropped = int((~keep).sum())
     if dropped > 0.25 * len(edge):
         ctx.warn(
@@ -107,6 +120,9 @@ def measure(ctx: AnalysisContext) -> Dict[str, Any]:
         "columns_dropped": dropped,
         "Non_mag1": ctx.point(p1),
         "Non_mag2": ctx.point(p2),
+        "endpoint_rule": "the fitted line extended to the x extent of the region",
+        "region_x_range_px": [x1, x2],
+        "max_extrapolation": extrapolated,
         "angle_deg_image": line.angle_deg_image,
         "angle_deg_math": line.angle_deg_math,
         "length": ctx.dist(float(np.linalg.norm(p2 - p1))),

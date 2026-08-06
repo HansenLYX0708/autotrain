@@ -49,8 +49,12 @@ def measure(ctx: AnalysisContext) -> Dict[str, Any]:
         "rmse": ctx.dist(ols["rmse_px"]),
         "max_residual": ctx.dist(ols["max_residual_px"]),
         "perp_rmse": ctx.dist(float(np.sqrt((resid**2).mean()))),
-        "fit_p1": ctx.point(p1),
-        "fit_p2": ctx.point(p2),
+        # b3/b4 are the ends of the *fitted segment*: the extreme skeleton points
+        # projected onto the fit line. b1/b2 (in `interfaces`) are the raw skeleton
+        # endpoints. They differ by the local waviness of the layer, which is exactly
+        # what comparing a1-b1 against a1-b3 isolates.
+        "b3": ctx.point(p1),
+        "b4": ctx.point(p2),
         "fit_length": ctx.dist(float(np.linalg.norm(p2 - p1))),
         "residual_profile": [
             [ctx.nm(float(s)), ctx.nm(float(r))] for s, r in zip(line.s, resid)

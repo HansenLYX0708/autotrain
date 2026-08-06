@@ -55,10 +55,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, required=True, help="output directory")
     p.add_argument(
         "--scale-nm",
+        default="auto",
+        help="nm per pixel. 'auto' (default) reads the field of view out of the "
+             "filename (e.g. ..._FOV_76.37nm.png) and divides by the image width. "
+             "Pass a number to override",
+    )
+    p.add_argument(
+        "--fov-nm",
         type=float,
-        default=0.0755,
-        help="nm per pixel (default 0.0755). Note 76.37 nm / 1024 px would be "
-             "0.0746, so double-check the calibration for your FOV",
+        help="field of view in nm, overriding what the filename says; still divided "
+             "by the image width to get nm/px",
     )
     p.add_argument(
         "--classes",
@@ -212,10 +218,60 @@ def _raw_background(ctx: AnalysisContext, stem: str, folder: Path) -> Optional[n
     return None
 
 
+def resolve_scale(
+    path: Path, shape: tuple, params: argparse.Namespace, warnings: List[str]
+) -> Dict[str, Any]:
+    """nm per pixel for this image, plus a record of where the number came from.
+
+    The scale is per-image because it is read from the filename, and a batch can mix
+    fields of view. Dividing by the actual image width rather than a hard-coded 1024
+    keeps it right if a mask is ever exported at a different size.
+    """
+    width = int(shape[1])
+    if params.scale_nm != "auto" and params.fov_nm is None:
+        return {
+            "scale_nm_per_px": float(params.scale_nm),
+            "scale_source": "--scale-nm",
+            "fov_nm": None,
+            "image_width_px": width,
+        }
+    fov = params.fov_nm if params.fov_nm is not None else labelmap.parse_fov_nm(path.name)
+    if fov is None:
+        if params.scale_nm != "auto":
+            warnings.append(
+                "no FOV in the filename; fell back to --scale-nm {}".format(
+                    params.scale_nm
+                )
+            )
+            return {
+                "scale_nm_per_px": float(params.scale_nm),
+                "scale_source": "--scale-nm (no FOV in filename)",
+                "fov_nm": None,
+                "image_width_px": width,
+            }
+        raise ValueError(
+            "cannot read a field of view from {!r}; expected something like "
+            "..._FOV_76.37nm.png. Pass --fov-nm or --scale-nm "
+            "explicitly".format(path.name)
+        )
+    if width != 1024:
+        warnings.append(
+            "image is {} px wide, not 1024; the scale is {:.5f} nm/px "
+            "({:.4f} nm / {} px)".format(width, fov / width, fov, width)
+        )
+    return {
+        "scale_nm_per_px": float(fov) / width,
+        "scale_source": "--fov-nm" if params.fov_nm is not None else "filename",
+        "fov_nm": float(fov),
+        "image_width_px": width,
+    }
+
+
 def analyze_one(path: Path, params: argparse.Namespace) -> Dict[str, Any]:
     classes = labelmap.resolve_classes(params.classes, path)
     ids, note = labelmap.load_label_map(path, len(classes))
     warnings: List[str] = []
+    scale = resolve_scale(path, ids.shape, params, warnings)
 
     pre: Dict[str, Any] = {}
     rect = Rectifier.identity(ids.shape)
@@ -229,7 +285,7 @@ def analyze_one(path: Path, params: argparse.Namespace) -> Dict[str, Any]:
     ctx = AnalysisContext(
         ids=rect.apply(ids),
         classes=classes,
-        scale_nm=params.scale_nm,
+        scale_nm=scale["scale_nm_per_px"],
         params=params,
         rect=rect,
         warnings=warnings,
@@ -242,7 +298,7 @@ def analyze_one(path: Path, params: argparse.Namespace) -> Dict[str, Any]:
         "image_size_px": [int(ids.shape[1]), int(ids.shape[0])],
         "mask_note": note,
         "classes": classes,
-        "scale_nm_per_px": float(params.scale_nm),
+        **scale,
         "tool_version": VERSION,
         "params": {
             k: (str(v) if isinstance(v, Path) else v)

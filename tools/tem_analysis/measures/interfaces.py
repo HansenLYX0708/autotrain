@@ -2,8 +2,9 @@
 
 Requirement 2  a1 = right end of the SAF_Ru_L centerline
                a2 = left  end of the SAF_Ru_R centerline
-               b1, b2 = left / right ends of the MgO_C centerline
-               report dx, dy for (a1, b1) and (a2, b2)
+               b1, b2 = left / right ends of the MgO_C centerline (raw skeleton tips)
+               b3, b4 = the same ends of the MgO_C *fitted* segment
+               report dx, dy for (a1, b1), (a1, b3), (a2, b2) and (a2, b4)
 
 Requirement 3  walk `--window-nm` (5 nm) back along the SAF_Ru_L centerline from
                a1 and report the largest *downward* excursion. The baseline is the
@@ -62,21 +63,35 @@ def measure(ctx: AnalysisContext) -> Dict[str, Any]:
     out["b2"] = ctx.point(b2)
     out["mgo_c_skeleton_length"] = ctx.dist(mgo_c.length)
 
-    for tag, cls, end, other in (
-        ("a1", "SAF_Ru_L", "xmax", b1),
-        ("a2", "SAF_Ru_R", "xmin", b2),
+    # b3/b4 are the ends of the MgO_C *fitted* segment, computed by measures/mgo_c.py
+    # (which the registry runs first). Reported alongside b1/b2 so the offset can be
+    # read either against the raw skeleton tip or against the straight-line model.
+    b3 = ctx.measured_point("mgo_c", "b3")
+    b4 = ctx.measured_point("mgo_c", "b4")
+    if b3 is None or b4 is None:
+        ctx.warn("MgO_C fitted segment unavailable, so a1-b3 / a2-b4 were skipped")
+    out["b3"] = ctx.point(b3) if b3 is not None else None
+    out["b4"] = ctx.point(b4) if b4 is not None else None
+
+    for tag, cls, end, raw, fitted, raw_tag, fit_tag in (
+        ("a1", "SAF_Ru_L", "xmax", b1, b3, "b1", "b3"),
+        ("a2", "SAF_Ru_R", "xmin", b2, b4, "b2", "b4"),
     ):
         try:
             line = ctx.centerline(cls, extend=(end,))
         except MissingClass as exc:
             ctx.warn("{}: {}".format(tag, exc))
             out[tag] = None
-            out["{}_{}".format(tag, "b1" if tag == "a1" else "b2")] = None
+            out["{}_{}".format(tag, raw_tag)] = None
+            out["{}_{}".format(tag, fit_tag)] = None
             out["{}_dip".format(cls.lower())] = None
             continue
         a = line.endpoint(end)
         out[tag] = ctx.point(a)
-        out["{}_{}".format(tag, "b1" if tag == "a1" else "b2")] = ctx.offset(a, other)
+        out["{}_{}".format(tag, raw_tag)] = ctx.offset(a, raw)
+        out["{}_{}".format(tag, fit_tag)] = (
+            ctx.offset(a, fitted) if fitted is not None else None
+        )
         out["{}_skeleton_length".format(cls.lower())] = ctx.dist(line.length)
         out["{}_dip".format(cls.lower())] = _dip(ctx, line, end, window_nm)
 

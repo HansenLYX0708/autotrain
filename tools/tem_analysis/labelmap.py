@@ -10,6 +10,7 @@ apart. It only imports napari inside function bodies, so importing it is cheap.
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -43,6 +44,21 @@ RGB_SNAP_MAX_OFF = 0.05
 
 _ANNOTATE_PY = Path(__file__).resolve().parent.parent / "napari_seg" / "annotate.py"
 _annotate = None
+
+# "751845_RMF 24(12,15)_1300kx_FOV_76.37nm.png" -> 76.37
+_FOV_RE = re.compile(r"fov[_\-\s]*([0-9]*\.?[0-9]+)\s*nm", re.IGNORECASE)
+
+
+def parse_fov_nm(name: str) -> Optional[float]:
+    """Field of view in nm, read out of the filename, or None if it is not there."""
+    match = _FOV_RE.search(name)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return value if value > 0 else None
 
 
 def _annotate_module():
