@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { notFoundOrDenied, requireOwnedScope } from "@/lib/auth";
+import { isInside, toSafeSlug } from "@/lib/safe-path";
 import { readdir, rmdir, unlink } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -24,6 +26,29 @@ async function deleteDirectory(dirPath: string): Promise<void> {
   await rmdir(dirPath);
 }
 
+/**
+ * Resolve the on-disk folder for a job's outputs.
+ *
+ * The folder is named after the *slug* of the job name, which is what
+ * `POST /api/training-jobs` uses when it creates the job. Reading the raw
+ * `job.name` here (as this route used to) meant any job whose name contained a
+ * space or capital letter never matched its own folder, so "delete files"
+ * silently did nothing.
+ */
+function jobFolderName(job: { name: string; trainingParams: string | null }): string {
+  try {
+    if (job.trainingParams) {
+      const parsed = JSON.parse(job.trainingParams) as { jobSlug?: unknown };
+      if (typeof parsed.jobSlug === "string" && parsed.jobSlug) {
+        return toSafeSlug(parsed.jobSlug, "job");
+      }
+    }
+  } catch {
+    // Fall through to deriving it from the name.
+  }
+  return toSafeSlug(job.name, "job");
+}
+
 // DELETE /api/training-jobs/[id]/files - Delete all checkpoint and export model files for a job
 export async function DELETE(
   request: NextRequest,
@@ -32,52 +57,66 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    // Get the job details
-    const job = await db.trainingJob.findUnique({
-      where: { id },
-      include: {
-        project: {
-          select: {
-            user: {
-              select: {
-                username: true,
-              },
-            },
-          },
-        },
+    // Authenticate and scope the lookup. Previously this route had no auth at
+    // all: any anonymous caller could recursively delete another user's
+    // training outputs just by guessing a job id.
+    const scope = await requireOwnedScope(request, id);
+    if (scope instanceof NextResponse) return scope;
+
+    const job = await db.trainingJob.findFirst({
+      where: scope.where,
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        trainingParams: true,
+        user: { select: { username: true } },
+        project: { select: { user: { select: { username: true } } } },
       },
     });
 
-    if (!job) {
+    if (!job) return notFoundOrDenied("Training job");
+
+    if (job.status === "running") {
       return NextResponse.json(
-        { error: "Training job not found" },
-        { status: 404 }
+        { success: false, error: "Cannot delete files while the job is running. Stop it first." },
+        { status: 409 }
       );
     }
 
-    // Get system config for userDatabasePath
     const systemConfig = await db.systemConfig.findFirst();
-    const userDatabasePath = (systemConfig as any)?.userDatabasePath;
+    const userDatabasePath = systemConfig?.userDatabasePath;
 
     if (!userDatabasePath) {
       return NextResponse.json(
-        { error: "User database path not configured" },
+        { success: false, error: "User database path not configured" },
         { status: 500 }
       );
     }
 
-    const username = job.project?.user?.username;
+    // Prefer the job's own owner; fall back to the project owner for legacy
+    // rows created before jobs carried a userId.
+    const username = job.user?.username ?? job.project?.user?.username;
     if (!username) {
       return NextResponse.json(
-        { error: "Job owner not found" },
+        { success: false, error: "Job owner not found" },
         { status: 500 }
       );
     }
 
-    // Build the job folder path: {userDatabasePath}/{username}/jobs/{jobName}
-    const jobFolderPath = join(userDatabasePath, username, "jobs", job.name);
+    const jobsRoot = join(userDatabasePath, toSafeSlug(username, "user"), "jobs");
+    const jobFolderPath = join(jobsRoot, jobFolderName(job));
 
-    // Check if job directory exists
+    // Defence in depth: even with a slugified name, never delete anything that
+    // is not strictly beneath this user's jobs directory.
+    if (!isInside(jobsRoot, jobFolderPath) || jobFolderPath === jobsRoot) {
+      console.error(`[Job Files Delete] Refusing unsafe path: ${jobFolderPath}`);
+      return NextResponse.json(
+        { success: false, error: "Refusing to delete an unsafe path" },
+        { status: 400 }
+      );
+    }
+
     if (!existsSync(jobFolderPath)) {
       return NextResponse.json({
         success: true,
@@ -86,7 +125,6 @@ export async function DELETE(
       });
     }
 
-    // Delete the job directory recursively
     await deleteDirectory(jobFolderPath);
 
     console.log(`[Job Files Delete] Deleted job folder: ${jobFolderPath}`);
@@ -99,7 +137,11 @@ export async function DELETE(
   } catch (error) {
     console.error("Error deleting job files:", error);
     return NextResponse.json(
-      { error: "Failed to delete job files", message: error instanceof Error ? error.message : "Unknown error" },
+      {
+        success: false,
+        error: "Failed to delete job files",
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 }
     );
   }

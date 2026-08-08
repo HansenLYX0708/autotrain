@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { spawn } from "child_process";
 import { exec } from "child_process";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, notFoundOrDenied, requireOwnedScope } from "@/lib/auth";
 import { getWorkDir } from "@/lib/frameworks";
 import {
   createParserState,
@@ -111,8 +111,11 @@ export async function GET(
   try {
     const { id } = await params;
 
-    const job = await db.trainingJob.findUnique({
-      where: { id },
+    const scope = await requireOwnedScope(request, id);
+    if (scope instanceof NextResponse) return scope;
+
+    const job = await db.trainingJob.findFirst({
+      where: scope.where,
       include: {
         project: {
           select: {
@@ -196,12 +199,7 @@ export async function GET(
       },
     });
 
-    if (!job) {
-      return NextResponse.json(
-        { error: "Training job not found" },
-        { status: 404 }
-      );
-    }
+    if (!job) return notFoundOrDenied("Training job");
 
     // Get Python path for this job
     const pythonPath = await getPythonPathForJob(job);
@@ -223,41 +221,56 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+
+    const scope = await requireOwnedScope(request, id);
+    if (scope instanceof NextResponse) return scope;
+
     const body = await request.json();
 
-    // Check if job exists
-    const existingJob = await db.trainingJob.findUnique({
-      where: { id },
+    // Check if job exists and belongs to the caller
+    const existingJob = await db.trainingJob.findFirst({
+      where: scope.where,
       include: {
         project: { select: { framework: true } },
       },
     });
-    
+
+    if (!existingJob) return notFoundOrDenied("Training job");
+
     // Parse training params for GPU info
     let trainingParams: Record<string, unknown> = {};
     try {
-      trainingParams = existingJob?.trainingParams 
-        ? JSON.parse(existingJob.trainingParams as string) 
+      trainingParams = existingJob.trainingParams
+        ? JSON.parse(existingJob.trainingParams as string)
         : {};
     } catch {
       // Ignore parse errors
     }
 
-    if (!existingJob) {
-      return NextResponse.json(
-        { error: "Training job not found" },
-        { status: 404 }
-      );
-    }
-
     // Build update data object with only provided fields
     const updateData: Record<string, unknown> = {};
 
-    // Basic fields
-    if (body.name !== undefined) updateData.name = body.name;
-    if (body.status !== undefined) updateData.status = body.status;
-    if (body.command !== undefined) updateData.command = body.command;
-    
+    // Basic fields.
+    //
+    // `command` is deliberately NOT accepted from the request body. It is
+    // executed further down via `spawn(..., { shell: true })`, so honouring a
+    // caller-supplied value turned this endpoint into arbitrary command
+    // execution. The command is generated server-side at job creation and is
+    // the only thing we will ever run.
+    if (typeof body.name === "string" && body.name.trim()) {
+      updateData.name = body.name.trim();
+    }
+    if (body.status !== undefined) {
+      const allowedStatuses = ["pending", "running", "completed", "failed", "stopped"];
+      if (!allowedStatuses.includes(body.status)) {
+        return NextResponse.json(
+          { error: `Invalid status. Expected one of: ${allowedStatuses.join(", ")}` },
+          { status: 400 }
+        );
+      }
+      updateData.status = body.status;
+    }
+
     // Error message
     if (body.errorMessage !== undefined) updateData.errorMessage = body.errorMessage;
 
@@ -471,23 +484,30 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    // Check if job exists
-    const existingJob = await db.trainingJob.findUnique({
-      where: { id },
+    const scope = await requireOwnedScope(request, id);
+    if (scope instanceof NextResponse) return scope;
+
+    // Check if job exists and belongs to the caller
+    const existingJob = await db.trainingJob.findFirst({
+      where: scope.where,
     });
 
-    if (!existingJob) {
-      return NextResponse.json(
-        { error: "Training job not found" },
-        { status: 404 }
-      );
-    }
+    if (!existingJob) return notFoundOrDenied("Training job");
 
-    // Kill running process if exists
-    const process = runningProcesses.get(id);
-    if (process) {
-      process.kill();
+    // Kill running process if exists.
+    // `process.kill()` only signals the launcher; `paddle.distributed.launch`
+    // forks worker processes that survive it and keep holding the GPU. Use the
+    // same whole-tree kill the stop path uses.
+    const child = runningProcesses.get(id);
+    if (child) {
+      if (child.pid) killProcessTree(child.pid);
+      else child.kill();
       runningProcesses.delete(id);
+    }
+    const staleParser = jobParserStates.get(id);
+    if (staleParser) {
+      disposeParserState(staleParser);
+      jobParserStates.delete(id);
     }
 
     // Log activity
@@ -516,10 +536,39 @@ export async function DELETE(
   }
 }
 
+/**
+ * Kill a process and all of its descendants.
+ *
+ * `paddle.distributed.launch` forks one worker per GPU, so signalling only the
+ * launcher leaves workers running and holding GPU memory. On Windows `taskkill
+ * /T` walks the tree; on POSIX we signal the process *group*, which the child
+ * gets because it is spawned with `detached: true`.
+ */
 function killProcessTree(pid: number) {
-  exec(`taskkill /PID ${pid} /T /F`, (err) => {
-    if (err) console.error(err);
-  });
+  if (process.platform === "win32") {
+    exec(`taskkill /PID ${pid} /T /F`, (err) => {
+      if (err) console.error(`[killProcessTree] taskkill failed for ${pid}:`, err);
+    });
+    return;
+  }
+  try {
+    // Negative pid targets the whole process group.
+    process.kill(-pid, "SIGTERM");
+    setTimeout(() => {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }, 5000);
+  } catch (err) {
+    console.error(`[killProcessTree] failed to signal group ${pid}:`, err);
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  }
 }
 
 // Start training process
@@ -635,6 +684,10 @@ function startTrainingProcess(
     cwd: workDir,
     shell: true,
     env,
+    // POSIX: put the child in its own process group so `killProcessTree` can
+    // signal the whole group (paddle.distributed.launch forks GPU workers).
+    // No effect on Windows, where taskkill /T handles the tree.
+    detached: process.platform !== "win32",
   });
 
   runningProcesses.set(jobId, childProcess);

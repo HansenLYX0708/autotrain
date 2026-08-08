@@ -1,9 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { notFoundOrDenied, requireOwnedScope } from '@/lib/auth';
 
 // Helper function to validate ID
 function isValidId(id: string): boolean {
   return typeof id === 'string' && id.length > 0;
+}
+
+/**
+ * Authenticate and confirm the caller owns this project.
+ *
+ * All three handlers previously ran unauthenticated, so any client could read a
+ * project's full contents, rename it, switch its framework, or cascade-delete
+ * every dataset/model/job under it by guessing an id.
+ */
+async function requireProjectAccess(request: NextRequest, id: string) {
+  const scope = await requireOwnedScope(request, id);
+  if (scope instanceof NextResponse) return { error: scope };
+
+  const project = await db.project.findFirst({ where: scope.where });
+  if (!project) return { error: notFoundOrDenied('Project') };
+
+  return { scope, project };
 }
 
 // GET /api/projects/[id] - Get a single project with related data
@@ -23,6 +41,9 @@ export async function GET(
         { status: 400 }
       );
     }
+
+    const access = await requireProjectAccess(request, id);
+    if (access.error) return access.error;
 
     const project = await db.project.findUnique({
       where: {
@@ -119,32 +140,24 @@ export async function PUT(
       );
     }
 
+    const access = await requireProjectAccess(request, id);
+    if (access.error) return access.error;
+    const existingProject = access.project;
+
     const body = await request.json();
     const { name, description, framework, task, status } = body;
 
     const allowedTasks = ['detection', 'instance_segmentation'];
 
-    // Check if project exists
-    const existingProject = await db.project.findUnique({
-      where: { id },
-    });
-
-    if (!existingProject) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Project not found',
-        },
-        { status: 404 }
-      );
-    }
-
-    // If name is being updated, check for duplicates
+    // If name is being updated, check for duplicates within the caller's own
+    // projects. Checking globally leaked the existence of other users' project
+    // names and blocked legitimate renames.
     if (name && name !== existingProject.name) {
       const duplicateName = await db.project.findFirst({
         where: {
           name: name.trim(),
           id: { not: id },
+          userId: existingProject.userId,
         },
       });
 
@@ -247,7 +260,9 @@ export async function DELETE(
       );
     }
 
-    // Check if project exists
+    const access = await requireProjectAccess(request, id);
+    if (access.error) return access.error;
+
     const existingProject = await db.project.findUnique({
       where: { id },
       include: {
@@ -262,13 +277,20 @@ export async function DELETE(
       },
     });
 
-    if (!existingProject) {
+    if (!existingProject) return notFoundOrDenied('Project');
+
+    // Refuse while training is in flight: the cascade would drop the job row
+    // while its OS process keeps running and writing to disk.
+    const runningJobs = await db.trainingJob.count({
+      where: { projectId: id, status: 'running' },
+    });
+    if (runningJobs > 0) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Project not found',
+          error: `Cannot delete: ${runningJobs} training job(s) are still running. Stop them first.`,
         },
-        { status: 404 }
+        { status: 409 }
       );
     }
 

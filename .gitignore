@@ -49,5 +49,15 @@ prompt
 server.log
 # Skills directory
 /skills/
-prisma/db/custom.db
 .venv-napari/
+
+# SQLite databases. The live database lives OUTSIDE the repo (see AGENTS.md);
+# nothing here should ever be committed. `db/custom.db` used to be tracked and
+# held a pre-user-system schema, which was both dead weight and a data-leak
+# risk once real accounts existed.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/db/
+prisma/db/

@@ -71,3 +71,44 @@ export function buildUserFilter(userId: string, role: string, userIdField: strin
     ]
   };
 }
+
+/**
+ * Authenticate the request and build a Prisma `where` clause that scopes a
+ * single record lookup to what the caller is allowed to touch.
+ *
+ * Use this in every `[id]` route. Fetching by bare `{ id }` and then acting on
+ * the result is an IDOR: the id is guessable/enumerable and the row may belong
+ * to another user. Admins get unrestricted access; everyone else is limited to
+ * rows they own, plus legacy rows with no owner (matching `buildUserFilter`).
+ *
+ * Returns a 401 `NextResponse` when unauthenticated, so callers should do:
+ *
+ *     const scope = await requireOwnedScope(request, id);
+ *     if (scope instanceof NextResponse) return scope;
+ *     const row = await db.thing.findFirst({ where: scope.where });
+ *     if (!row) return notFound();
+ */
+export async function requireOwnedScope(
+  request: NextRequest,
+  id: string,
+  userIdField: string = 'userId'
+): Promise<{ userId: string; role: string; where: Record<string, unknown> } | NextResponse> {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+
+  const { userId, role } = auth;
+  const where: Record<string, unknown> =
+    role === 'admin'
+      ? { id }
+      : { id, OR: [{ [userIdField]: userId }, { [userIdField]: null }] };
+
+  return { userId, role, where };
+}
+
+/** Standard 404 for "does not exist, or you may not touch it". */
+export function notFoundOrDenied(entity: string): NextResponse {
+  return NextResponse.json(
+    { success: false, error: `${entity} not found or access denied` },
+    { status: 404 }
+  );
+}

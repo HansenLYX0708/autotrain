@@ -1,8 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-
-// Default PaddleDetection path
-const DEFAULT_PADDLE_DETECTION_PATH = "/home/z/PaddleDetection";
+import { requireAdmin, requireAuth } from "@/lib/auth";
 
 // Default model YAML configurations
 const DEFAULT_MODEL_YAML = `# PP-YOLOE+ Model Configuration
@@ -99,10 +97,20 @@ TestDataset:
 
 /**
  * POST /api/init-defaults
- * Initialize default test data including project, dataset, model, and training config
+ * Seed a sample project/dataset/model/training-config for a fresh install.
+ *
+ * Admin-only. This used to be unauthenticated, which let anyone write rows into
+ * the database. Worse, the rows were created with `userId: null`, and
+ * `buildUserFilter` deliberately treats ownerless rows as visible to *every*
+ * user — so an anonymous request could inject a project that shows up in all
+ * accounts. Everything created here is now owned by the calling admin.
  */
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAdmin(request);
+    if (auth instanceof NextResponse) return auth;
+    const { userId } = auth;
+
     const results = {
       project: null as unknown,
       dataset: null as unknown,
@@ -111,26 +119,21 @@ export async function POST() {
       systemConfig: null as unknown,
     };
 
-    // 1. Create or update system config with default PaddleDetection path
+    // 1. Ensure a SystemConfig row exists.
+    //    Framework paths are intentionally left empty: they are machine-specific
+    //    and must be set in Settings. The previous code defaulted
+    //    paddleDetectionPath to a hardcoded Linux path from the original
+    //    scaffold ("/home/z/PaddleDetection"), which is wrong everywhere.
     let systemConfig = await db.systemConfig.findFirst();
     if (!systemConfig) {
       systemConfig = await db.systemConfig.create({
         data: {
-          pythonPath: "python",
           condaEnv: "",
           condaPath: "",
-          paddleDetectionPath: DEFAULT_PADDLE_DETECTION_PATH,
+          paddleDetectionPath: "",
           paddleClasPath: "",
           paddleSegPath: "",
-          defaultGpu: 0,
           defaultFramework: "PaddleDetection",
-        },
-      });
-    } else if (!systemConfig.paddleDetectionPath) {
-      systemConfig = await db.systemConfig.update({
-        where: { id: systemConfig.id },
-        data: {
-          paddleDetectionPath: DEFAULT_PADDLE_DETECTION_PATH,
         },
       });
     }
@@ -138,15 +141,17 @@ export async function POST() {
 
     // 2. Create default project if not exists
     let project = await db.project.findFirst({
-      where: { name: "Default Project" },
+      where: { name: "Default Project", userId },
     });
     if (!project) {
       project = await db.project.create({
         data: {
           name: "Default Project",
-          description: "Default test project for PaddleDetection",
+          description: "Sample project for PaddleDetection",
           framework: "PaddleDetection",
+          task: "detection",
           status: "active",
+          userId,
         },
       });
     }
@@ -160,8 +165,9 @@ export async function POST() {
       dataset = await db.dataset.create({
         data: {
           name: "Default Dataset",
-          description: "Default test dataset with COCO format",
+          description: "Sample COCO-format dataset",
           projectId: project.id,
+          userId,
           format: "COCO",
           numClasses: 1,
           numAnnotations: 0,
@@ -182,8 +188,9 @@ export async function POST() {
       model = await db.model.create({
         data: {
           name: "PP-YOLOE+ Small",
-          description: "PP-YOLOE+ small model for object detection (default test config)",
+          description: "PP-YOLOE+ small model for object detection (sample config)",
           projectId: project.id,
+          userId,
           architecture: "YOLOv3",
           backbone: "CSPResNet",
           neck: "CustomCSPPAN",
@@ -200,14 +207,18 @@ export async function POST() {
     }
     results.model = model;
 
-    // 5. Create default training config if not exists
+    // 5. Create default training config if not exists.
+    //    `projectId` is required by the schema; omitting it (as the previous
+    //    code did) makes this call throw, so POST could never succeed.
     let trainingConfig = await db.trainingConfig.findFirst({
-      where: { name: "Default Training Config" },
+      where: { name: "Default Training Config", projectId: project.id },
     });
     if (!trainingConfig) {
       trainingConfig = await db.trainingConfig.create({
         data: {
           name: "Default Training Config",
+          projectId: project.id,
+          userId,
           epoch: 100,
           batchSize: 8,
           baseLr: 0.001,
@@ -231,7 +242,7 @@ export async function POST() {
 
     return NextResponse.json({
       success: true,
-      message: "Default test data initialized successfully",
+      message: "Default sample data initialized successfully",
       data: results,
     });
   } catch (error) {
@@ -251,13 +262,17 @@ export async function POST() {
  * GET /api/init-defaults
  * Check if default data exists
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+    const { userId } = auth;
+
     const [project, dataset, model, trainingConfig, systemConfig] = await Promise.all([
-      db.project.findFirst({ where: { name: "Default Project" } }),
-      db.dataset.findFirst({ where: { name: "Default Dataset" } }),
-      db.model.findFirst({ where: { name: "PP-YOLOE+ Small" } }),
-      db.trainingConfig.findFirst({ where: { name: "Default Training Config" } }),
+      db.project.findFirst({ where: { name: "Default Project", userId } }),
+      db.dataset.findFirst({ where: { name: "Default Dataset", userId } }),
+      db.model.findFirst({ where: { name: "PP-YOLOE+ Small", userId } }),
+      db.trainingConfig.findFirst({ where: { name: "Default Training Config", userId } }),
       db.systemConfig.findFirst(),
     ]);
 

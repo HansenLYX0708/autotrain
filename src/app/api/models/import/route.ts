@@ -3,6 +3,8 @@ import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { getWorkDir } from "@/lib/frameworks";
 import { ensureDefaultConfigs, getDefaultFolderName } from "@/lib/default-configs";
+import { asConfigFramework } from "@/lib/training-yaml";
+import { defaultModelParams, modelParamsToColumns, parseModelParams } from "@/lib/model-yaml";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -225,28 +227,29 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Parse YAML content to extract model info
-    const parsedInfo = parseYamlConfig(finalYamlContent || "");
+    // Derive the display columns from the YAML using the framework-aware
+    // parser. The previous hand-rolled line scanner only recognised
+    // PaddleDetection's flat keys, so every imported PaddleSeg model was
+    // recorded as "YOLOv3 / CSPResNet" regardless of its real architecture.
+    const configFramework = asConfigFramework(framework);
+    const resolvedParams = {
+      ...defaultModelParams(configFramework),
+      ...parseModelParams(configFramework, finalYamlContent),
+    };
 
-    // Create model in database with userId
+    // Create model in database with userId.
+    // NOTE: persist `finalYamlContent`, not `yamlContent`. Preset imports send
+    // only `configPath` and let the server read the file, so keying off the
+    // request field stored NULL and left the model with no config at all,
+    // which then produced a training job with an empty model section.
     const model = await db.model.create({
       data: {
         name: name,
         description: description || null,
         projectId: projectId,
         userId: userId,
-        architecture: parsedInfo.architecture || "YOLOv3",
-        backbone: parsedInfo.backbone || "CSPResNet",
-        neck: parsedInfo.neck || "CustomCSPPAN",
-        head: parsedInfo.head || "PPYOLOEHead",
-        numClasses: parsedInfo.numClasses || 1,
-        normType: parsedInfo.normType || "sync_bn",
-        useEma: parsedInfo.useEma ?? true,
-        emaDecay: parsedInfo.emaDecay || 0.9998,
-        depthMult: parsedInfo.depthMult || 0.33,
-        widthMult: parsedInfo.widthMult || 0.50,
-        pretrainWeights: parsedInfo.pretrainWeights || null,
-        yamlConfig: yamlContent || null,
+        ...modelParamsToColumns(resolvedParams),
+        yamlConfig: finalYamlContent || null,
       },
     });
 
@@ -264,84 +267,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-// Parse YAML config to extract model info
-function parseYamlConfig(yamlContent: string): {
-  architecture?: string;
-  backbone?: string;
-  neck?: string;
-  head?: string;
-  numClasses?: number;
-  normType?: string;
-  useEma?: boolean;
-  emaDecay?: number;
-  depthMult?: number;
-  widthMult?: number;
-  pretrainWeights?: string;
-} {
-  const result: {
-    architecture?: string;
-    backbone?: string;
-    neck?: string;
-    head?: string;
-    numClasses?: number;
-    normType?: string;
-    useEma?: boolean;
-    emaDecay?: number;
-    depthMult?: number;
-    widthMult?: number;
-    pretrainWeights?: string;
-  } = {};
-  
-  try {
-    // Simple YAML parsing for key fields
-    const lines = yamlContent.split('\n');
-    
-    for (const line of lines) {
-      const trimmed = line.trim();
-      
-      // Skip comments and empty lines
-      if (trimmed.startsWith('#') || !trimmed) continue;
-      
-      // Extract key-value pairs
-      const match = trimmed.match(/^(\w+):\s*(.+)$/);
-      if (match) {
-        const [, key, value] = match;
-        
-        // Parse different fields
-        if (key === 'architecture') result.architecture = value;
-        if (key === 'norm_type') result.normType = value;
-        if (key === 'use_ema') result.useEma = value.toLowerCase() === 'true';
-        if (key === 'ema_decay') result.emaDecay = parseFloat(value);
-        if (key === 'depth_mult') result.depthMult = parseFloat(value);
-        if (key === 'width_mult') result.widthMult = parseFloat(value);
-        if (key === 'num_classes') result.numClasses = parseInt(value);
-        if (key === 'pretrain_weights') result.pretrainWeights = value;
-      }
-      
-      // Extract nested values for backbone, neck, head
-      const archMatch = trimmed.match(/^(\w+):\s*$/);
-      if (archMatch) {
-        const archKey = archMatch[1];
-        // Look at next lines for backbone, neck, head
-        const idx = lines.indexOf(line);
-        for (let i = idx + 1; i < lines.length && lines[i].startsWith('  '); i++) {
-          const nestedMatch = lines[i].trim().match(/^(\w+):\s*(.+)$/);
-          if (nestedMatch) {
-            const [, nestedKey, nestedValue] = nestedMatch;
-            if (archKey === result.architecture || archKey === 'YOLOv3' || archKey === 'PPYOLOE') {
-              if (nestedKey === 'backbone') result.backbone = nestedValue;
-              if (nestedKey === 'neck') result.neck = nestedValue;
-              if (nestedKey === 'yolo_head') result.head = nestedValue;
-            }
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.error("Error parsing YAML:", e);
-  }
-  
-  return result;
 }

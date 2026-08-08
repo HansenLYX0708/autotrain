@@ -1,5 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { notFoundOrDenied, requireOwnedScope } from '@/lib/auth';
+
+/**
+ * Fields a client may change on a dataset.
+ *
+ * PATCH used to forward the whole request body straight into
+ * `db.dataset.update({ data: body })`, which let a caller reassign `userId`
+ * (stealing or dumping a row onto another account) or rewrite `id`.
+ */
+const MUTABLE_DATASET_FIELDS = [
+  'name', 'description', 'format',
+  'trainImagePath', 'trainAnnoPath', 'evalImagePath', 'evalAnnoPath',
+  'datasetDir', 'numClasses', 'numAnnotations', 'numTrainImages',
+  'numEvalImages', 'classStats', 'yamlConfig',
+] as const;
+
+function pickMutableFields(body: Record<string, unknown>): Record<string, unknown> {
+  const data: Record<string, unknown> = {};
+  for (const field of MUTABLE_DATASET_FIELDS) {
+    if (body[field] !== undefined) data[field] = body[field];
+  }
+  return data;
+}
+
+/**
+ * Authenticate and confirm the caller owns this dataset. These handlers
+ * previously ran unauthenticated, so any client could read, rewrite, or delete
+ * another user's dataset by guessing an id.
+ */
+async function requireDatasetAccess(request: NextRequest, id: string) {
+  const scope = await requireOwnedScope(request, id);
+  if (scope instanceof NextResponse) return { error: scope };
+
+  const dataset = await db.dataset.findFirst({ where: scope.where });
+  if (!dataset) return { error: notFoundOrDenied('Dataset') };
+
+  return { scope, dataset };
+}
 
 // GET /api/datasets/[id] - Get a single dataset by ID
 export async function GET(
@@ -8,6 +46,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+
+    const access = await requireDatasetAccess(request, id);
+    if (access.error) return access.error;
 
     const dataset = await db.dataset.findUnique({
       where: { id },
@@ -71,36 +112,28 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+
+    const access = await requireDatasetAccess(request, id);
+    if (access.error) return access.error;
+    const { scope, dataset: existingDataset } = access;
+
     const body = await request.json();
 
-    // Check if dataset exists
-    const existingDataset = await db.dataset.findUnique({
-      where: { id },
-    });
-
-    if (!existingDataset) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Dataset not found',
-          message: `Dataset with id ${id} does not exist`,
-        },
-        { status: 404 }
-      );
-    }
-
-    // If projectId is being changed, verify the new project exists
+    // If projectId is being changed, verify the caller also owns the target
+    // project — otherwise a dataset could be moved into someone else's project.
     if (body.projectId && body.projectId !== existingDataset.projectId) {
-      const project = await db.project.findUnique({
-        where: { id: body.projectId },
+      const project = await db.project.findFirst({
+        where:
+          scope.role === 'admin'
+            ? { id: body.projectId }
+            : { id: body.projectId, OR: [{ userId: scope.userId }, { userId: null }] },
       });
 
       if (!project) {
         return NextResponse.json(
           {
             success: false,
-            error: 'Project not found',
-            message: `Project with id ${body.projectId} does not exist`,
+            error: 'Project not found or access denied',
           },
           { status: 404 }
         );
@@ -163,7 +196,9 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    // Check if dataset exists
+    const access = await requireDatasetAccess(request, id);
+    if (access.error) return access.error;
+
     const existingDataset = await db.dataset.findUnique({
       where: { id },
       include: {
@@ -175,14 +210,21 @@ export async function DELETE(
       },
     });
 
-    if (!existingDataset) {
+    if (!existingDataset) return notFoundOrDenied('Dataset');
+
+    // Deleting a dataset cascades to its training jobs. Make that explicit
+    // instead of silently destroying training history, and never do it while a
+    // job is still running.
+    const runningJobs = await db.trainingJob.count({
+      where: { datasetId: id, status: 'running' },
+    });
+    if (runningJobs > 0) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Dataset not found',
-          message: `Dataset with id ${id} does not exist`,
+          error: `Cannot delete: ${runningJobs} training job(s) using this dataset are still running. Stop them first.`,
         },
-        { status: 404 }
+        { status: 409 }
       );
     }
 
@@ -219,27 +261,23 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+
+    const access = await requireDatasetAccess(request, id);
+    if (access.error) return access.error;
+
     const body = await request.json();
+    const data = pickMutableFields(body);
 
-    // Check if dataset exists
-    const existingDataset = await db.dataset.findUnique({
-      where: { id },
-    });
-
-    if (!existingDataset) {
+    if (Object.keys(data).length === 0) {
       return NextResponse.json(
-        {
-          success: false,
-          error: 'Dataset not found',
-          message: `Dataset with id ${id} does not exist`,
-        },
-        { status: 404 }
+        { success: false, error: 'No updatable fields provided' },
+        { status: 400 }
       );
     }
 
     const updatedDataset = await db.dataset.update({
       where: { id },
-      data: body,
+      data,
       include: {
         project: {
           select: {

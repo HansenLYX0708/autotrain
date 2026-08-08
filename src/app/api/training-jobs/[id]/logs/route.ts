@@ -1,5 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { notFoundOrDenied, requireOwnedScope } from "@/lib/auth";
+
+/**
+ * Authenticate and confirm the caller may act on this job's logs.
+ *
+ * All three handlers here previously ran unauthenticated, which let anyone
+ * read another user's training metrics, inject fabricated log rows (POST also
+ * rewrites the parent job's progress), or wipe a job's history.
+ */
+async function requireJobAccess(request: NextRequest, id: string) {
+  const scope = await requireOwnedScope(request, id);
+  if (scope instanceof NextResponse) return { error: scope };
+
+  const job = await db.trainingJob.findFirst({
+    where: scope.where,
+    select: { id: true, name: true, status: true },
+  });
+  if (!job) return { error: notFoundOrDenied("Training job") };
+
+  return { job };
+}
 
 // GET /api/training-jobs/[id]/logs - Get logs for a training job
 export async function GET(
@@ -10,9 +31,14 @@ export async function GET(
     const { id } = await params;
     const { searchParams } = new URL(request.url);
 
-    // Pagination
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "100");
+    const access = await requireJobAccess(request, id);
+    if (access.error) return access.error;
+    const job = access.job;
+
+    // Pagination. Clamp so a hostile or accidental `limit=1000000` cannot pull
+    // the entire log table into memory.
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+    const limit = Math.min(1000, Math.max(1, parseInt(searchParams.get("limit") || "100") || 100));
     const skip = (page - 1) * limit;
 
     // Filters
@@ -21,20 +47,7 @@ export async function GET(
     const maxLoss = searchParams.get("maxLoss");
 
     // Sort order
-    const sortOrder = searchParams.get("sort") || "desc"; // desc = newest first
-
-    // Check if job exists
-    const job = await db.trainingJob.findUnique({
-      where: { id },
-      select: { id: true, name: true, status: true },
-    });
-
-    if (!job) {
-      return NextResponse.json(
-        { error: "Training job not found" },
-        { status: 404 }
-      );
-    }
+    const sortOrder = searchParams.get("sort") === "asc" ? "asc" : "desc";
 
     // Build filter conditions
     const where: Record<string, unknown> = { jobId: id };
@@ -52,7 +65,7 @@ export async function GET(
         where,
         skip,
         take: limit,
-        orderBy: { timestamp: sortOrder as "asc" | "desc" },
+        orderBy: { timestamp: sortOrder },
       }),
       db.trainingLog.count({ where }),
     ]);
@@ -129,19 +142,11 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+
+    const access = await requireJobAccess(request, id);
+    if (access.error) return access.error;
+
     const body = await request.json();
-
-    // Check if job exists
-    const job = await db.trainingJob.findUnique({
-      where: { id },
-    });
-
-    if (!job) {
-      return NextResponse.json(
-        { error: "Training job not found" },
-        { status: 404 }
-      );
-    }
 
     const log = await db.trainingLog.create({
       data: {
@@ -196,17 +201,8 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    // Check if job exists
-    const job = await db.trainingJob.findUnique({
-      where: { id },
-    });
-
-    if (!job) {
-      return NextResponse.json(
-        { error: "Training job not found" },
-        { status: 404 }
-      );
-    }
+    const access = await requireJobAccess(request, id);
+    if (access.error) return access.error;
 
     // Delete all logs for this job
     const result = await db.trainingLog.deleteMany({
@@ -214,6 +210,7 @@ export async function DELETE(
     });
 
     return NextResponse.json({
+      success: true,
       message: "Training logs deleted successfully",
       deletedCount: result.count,
     });

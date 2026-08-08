@@ -1,5 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { notFoundOrDenied, requireOwnedScope } from '@/lib/auth';
+
+/**
+ * Authenticate and confirm the caller owns this validation job. These handlers
+ * previously ran unauthenticated, so anyone could read another user's inference
+ * results and output paths, or delete their jobs.
+ */
+async function requireValidationJobAccess(request: NextRequest, id: string) {
+  const scope = await requireOwnedScope(request, id);
+  if (scope instanceof NextResponse) return { error: scope };
+
+  const job = await db.validationJob.findFirst({ where: scope.where });
+  if (!job) return { error: notFoundOrDenied('Validation job') };
+
+  return { scope, job };
+}
 
 // GET /api/validation-jobs/[id] - Get a single validation job by ID
 export async function GET(
@@ -8,6 +24,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+
+    const access = await requireValidationJobAccess(request, id);
+    if (access.error) return access.error;
 
     const validationJob = await db.validationJob.findUnique({
       where: { id },
@@ -51,19 +70,11 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+
+    const access = await requireValidationJobAccess(request, id);
+    if (access.error) return access.error;
+
     const body = await request.json();
-
-    // Check if validation job exists
-    const existingJob = await db.validationJob.findUnique({
-      where: { id },
-    });
-
-    if (!existingJob) {
-      return NextResponse.json(
-        { success: false, error: 'Validation job not found' },
-        { status: 404 }
-      );
-    }
 
     // Validate type if provided
     const validTypes = ['eval', 'infer'];
@@ -94,7 +105,9 @@ export async function PUT(
     if (body.inferInputPath !== undefined) updateData.inferInputPath = body.inferInputPath || null;
     if (body.inferOutputPath !== undefined) updateData.inferOutputPath = body.inferOutputPath || null;
     if (body.status !== undefined) updateData.status = body.status;
-    if (body.command !== undefined) updateData.command = body.command || null;
+    // `command` is intentionally not accepted: validation commands are built
+    // server-side in POST /api/validation-jobs and executed with a shell, so a
+    // client-supplied value would be arbitrary command execution.
     if (body.resultJson !== undefined) updateData.resultJson = body.resultJson || null;
     if (body.resultPath !== undefined) updateData.resultPath = body.resultPath || null;
     if (body.outputLog !== undefined) updateData.outputLog = body.outputLog || null;
@@ -141,17 +154,8 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    // Check if validation job exists
-    const existingJob = await db.validationJob.findUnique({
-      where: { id },
-    });
-
-    if (!existingJob) {
-      return NextResponse.json(
-        { success: false, error: 'Validation job not found' },
-        { status: 404 }
-      );
-    }
+    const access = await requireValidationJobAccess(request, id);
+    if (access.error) return access.error;
 
     await db.validationJob.delete({
       where: { id },
