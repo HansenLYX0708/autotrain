@@ -195,7 +195,7 @@ footer{color:var(--dim);font-size:13px;margin-top:60px;padding-top:20px;border-t
 <tr><td>Non_mag ↔ Milling 拐角偏移</td><td><span class="badge b-ok">已实现</span></td><td>M7</td></tr>
 <tr><td>Block_D 下边缘（blockD1/blockD2）</td><td><span class="badge b-no">缺失</span></td><td>早期需求，当前仓库版本已被 M7 取代，见 <a href="#s8">§8</a></td></tr>
 <tr><td>逐类形状统计（面积/周长）</td><td><span class="badge b-no">缺失</span></td><td>见 <a href="#s8">§8</a></td></tr>
-<tr><td>批次趋势图 / 分布图</td><td><span class="badge b-no">缺失</span></td><td>目前只有 CSV，画图靠外部</td></tr>
+<tr><td>批次趋势图 / 分布图</td><td><span class="badge b-ok">已实现</span></td><td><code>plot_summary.py</code>，4 张图 + 统计 CSV</td></tr>
 <tr><td>量测结果回写数据库 / 网页展示</td><td><span class="badge b-no">缺失</span></td><td>分析工具目前是独立 CLI</td></tr>
 </tbody>
 </table>
@@ -257,12 +257,13 @@ footer{color:var(--dim);font-size:13px;margin-top:60px;padding-top:20px;border-t
     --out    G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm_out `
     --classes SAF_Ru_L,SAF_Ru_R,MgO_L,MgO_R,MgO_C,Non_mag,Milling_L,Milling_R,Leveling,Block_U,Block_D</code></pre>
 
-<div class="ph">
-  <div class="tag">缺图 · 请提供</div>
-  <div class="title">napari 标注界面截图</div>
-  <div class="desc">希望能看到：左侧图层列表（image + label）、右侧自定义面板（类别下拉、笔刷大小、contour 开关、"write train.txt / val.txt" 按钮），画布上是一张标了一半的 TEM 图。截个全窗口图即可。</div>
-  <div class="file">放到 assets/11_napari_ui.png</div>
-</div>
+<figure><img src="assets/11_napari_ui.png" alt="napari 标注界面">
+<figcaption>标注界面。左侧是 napari 自带的图层控制（<code>label</code> 叠在 <code>image</code> 上，opacity 0.5）；
+右侧是这个工具加的面板：类别下拉、笔刷大小、<code>outline only</code>、上一张/下一张、保存、
+<code>train ratio</code> 与 <code>write train.txt / val.txt</code>，标题栏显示 <code>[1/24] … | saved 20/24</code> 的进度。
+底部那行提示写明了操作约定，其中最关键的一条是
+<b>"paint over a neighbour to move the shared edge"</b> —— 直接盖过邻层来挪共享边界，
+而不是先擦后画，这样两层之间不会留下一条背景缝。</figcaption></figure>
 
 <h3 id="s2-2">2.2 一个训练任务 = 三份 YAML 深合并</h3>
 
@@ -313,11 +314,16 @@ python -m paddle.distributed.launch --gpus 0 tools/train.py `
 <li>典型基线预设：80k iters @ 512×512，SGD + PolynomialDecay(power 0.9)，<code>batch_size 4</code>；先用 20k 的 quick 预设跑通全链路再上正式训练。</li>
 </ul>
 
-<div class="ph">
-  <div class="tag">缺图 · 请提供</div>
-  <div class="title">网页端训练任务页 + 训练曲线截图</div>
-  <div class="desc">两张：(a) 任务列表/详情页，能看到状态、进度、生成的命令；(b) loss 与 mIoU 随 iter 的曲线。这两张能直观说明"训练是被平台托管的"，比文字有说服力。</div>
-  <div class="file">放到 assets/12_train_job.png、assets/13_train_curve.png</div>
+<div class="grid2">
+  <figure><img src="assets/12_train_job.png" alt="创建训练任务">
+  <figcaption>创建任务对话框：<b>数据集 / 模型 / 训练配置三个下拉各选一份</b>（这里是
+  <code>tem_seg_merged</code> + <code>tem_segment</code> + <code>tem_cfg_160k</code>），加上 GPU、AMP、VDL 等运行时选项。
+  最下方的 <b>Generated Command</b> 是服务端根据这些选择拼出来的完整命令，先展示再执行 ——
+  用户从头到尾没有机会自己写命令。</figcaption></figure>
+  <figure><img src="assets/13_train_curve.png" alt="训练 loss 曲线">
+  <figcaption>训练 loss（由 stdout 逐行解析进 <code>TrainingLog</code> 表后绘制）。约 5000 iter，
+  从 5.1 降到 0.5 附近后进入平台期。图例里的 Cls / IoU / DFL / L1 是检测任务的分项 loss，
+  分割任务只有 Total Loss 有数据，其余为空。</figcaption></figure>
 </div>
 
 <h3 id="s2-4">2.4 预测产出</h3>
@@ -432,8 +438,15 @@ python tools\tem_analysis\selftest.py</code></pre>
 <li>代价：旋转带来重采样噪声，层骨架会毛糙 1–2 px。自检里校平后残余角 0.007°，但 dy 误差可达约 5 px。<code>--no-rotate</code> 可完全避开。</li>
 </ul>
 
-<figure><img src="assets/09_leveling_zoom.png" alt="Leveling 层">
-<figcaption>Leveling 层（图像最下方那条绿带）。白线 = Guo–Hall 骨架，亮绿虚线 = 校平后重新拟合的直线，用来自检旋转是否真的把它放平了。</figcaption></figure>
+<div class="grid2">
+  <figure><img src="assets/30_leveling_raw.png" alt="Leveling 原图">
+  <figcaption>原始 TEM 灰度图（同一区域，已做局部对比度拉伸）</figcaption></figure>
+  <figure><img src="assets/30_leveling_ovl.png" alt="Leveling 叠加">
+  <figcaption>量测叠加：白线 = Guo–Hall 骨架，亮绿虚线 = 校平后重新拟合的直线</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">图像最下方那条 <code>Leveling</code> 带。
+<b>它在原图里对比度极低</b> —— 这正是要用分割而不是阈值法把它取出来的原因。
+右图的亮绿虚线是校平<b>之后</b>重新拟合的结果，用来自检旋转是否真的把它放平了。</p>
 
 <!-- ============================================================ -->
 <h2 class="sec" id="s4"><span class="n">04</span>逐项量测说明</h2>
@@ -461,6 +474,17 @@ python tools\tem_analysis\selftest.py</code></pre>
 Leveling / MgO_C / Non_mag 都是这种情况。结果里带 <code>fit_r2_degenerate: true</code> 标记和 <code>fit_r2_note</code> 说明。
 <b>判断平直度请看 <code>rmse</code> 和 <code>max_residual</code>。</b></div>
 
+<div class="grid2">
+  <figure><img src="assets/30_leveling_raw.png" alt="Leveling 原图">
+  <figcaption>原始 TEM 灰度图（同区域，局部对比度拉伸）</figcaption></figure>
+  <figure><img src="assets/30_leveling_ovl.png" alt="Leveling 叠加">
+  <figcaption>白线 = 骨架，亮绿虚线 = 校平后重新拟合的直线</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px"><code>Leveling</code> 带在原图里<b>对比度极低</b>，
+用阈值法根本切不出来 —— 这正是把它交给分割模型的理由。
+但它跨越整幅画面（骨架长 1029 px），是全图<b>最长</b>的一条线，因此角度的标准误只有 0.012°，
+反过来成了最可靠的校平基准。</p>
+
 <!-- ---------------- M2 ---------------- -->
 <h3 id="m2">M2 · <code>mgo_c</code> — MgO_C 层的平直度与倾角</h3>
 <p><b>量什么：</b>中间那条 MgO 势垒层拟合成直线后的角度、拟合优度，以及这条拟合线段的两个端点 <code>b3</code>/<code>b4</code>。</p>
@@ -477,8 +501,18 @@ Leveling / MgO_C / Non_mag 都是这种情况。结果里带 <code>fit_r2_degene
 <h3 id="m3">M3 · <code>interfaces</code> — 层间端点偏差 a↔b</h3>
 <p><b>量什么：</b>左右两侧 SAF_Ru 层的内端点，相对 MgO_C 层端点的横纵偏移。这是这套系统最核心的一组数。</p>
 
-<figure><img src="assets/06_interfaces_zoom.png" alt="a1 b1 b3 端点">
-<figcaption>中央区域放大。<span style="color:#f66">a1/a2</span> = SAF_Ru 内端点；<span style="color:#0ff">b1/b2</span> = MgO_C 骨架端点；<span style="color:#3bf">b3/b4</span> = MgO_C 拟合线段端点（青色虚线即拟合线）；<span style="color:#f4f">洋红</span>部分是 M4 的 5 nm 窗口。</figcaption></figure>
+<div class="grid2">
+  <figure><img src="assets/33_interfaces_raw.png" alt="中央区域原图">
+  <figcaption>原始 TEM 灰度图（同区域，局部对比度拉伸）</figcaption></figure>
+  <figure><img src="assets/33_interfaces_ovl.png" alt="a1 b1 b3 端点">
+  <figcaption>量测叠加</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">中央区域放大。
+<span style="color:#f66">a1/a2</span> = SAF_Ru 内端点；<span style="color:#0ff">b1/b2</span> = MgO_C 骨架端点；
+<span style="color:#3bf">b3/b4</span> = MgO_C 拟合线段端点（青色虚线即拟合线）；
+<span style="color:#f4f">洋红</span>部分是 M4 的 5 nm 窗口。
+对着左边的原图看：<b>a1 与 b1 之间那 5.3 nm 的横向间距，在灰度图上是一段没有明显边界的过渡区</b> ——
+人工量测时端点定在哪里全凭经验，这正是结果不可复现的根源。</p>
 
 <table>
 <tbody>
@@ -501,6 +535,16 @@ Guo–Hall（任何形态学细化都一样）会从区域尖端回缩约<b>半�
 <!-- ---------------- M4 ---------------- -->
 <h3 id="m4">M4 · <code>*_dip</code> — 端点 5 nm 内的最大下沉量</h3>
 <p><b>量什么：</b>从 a1（或 a2）沿 SAF_Ru 骨架往回走 5 nm，这段里层最多往下掉了多少。表征端点附近的塌陷/弯曲。</p>
+
+<div class="grid2">
+  <figure><img src="assets/31_dip_raw.png" alt="5 nm 窗口原图">
+  <figcaption>原始 TEM 灰度图（同区域，局部对比度拉伸）</figcaption></figure>
+  <figure><img src="assets/31_dip_ovl.png" alt="5 nm 窗口叠加">
+  <figcaption>洋红：加粗段 = 被搜索的 5 nm 弧长，两端竖线 = 窗口边界，虚线 = 端点基准，箭头 = 最大偏差</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">左端 a1 附近放大。左图能看出那条亮层<b>在靠近端点时确实向下弯了一点</b>，
+但幅度只有 0.522 nm ≈ 7 px —— 肉眼可见却难以手工量准，正是需要沿弧长逐点求极值的场景。</p>
+
 <table>
 <tbody>
 <tr><th style="width:130px">基准</th><td>端点自身：<code>dev = y − y(端点)</code>，正值 = 更低</td></tr>
@@ -517,8 +561,16 @@ Guo–Hall（任何形态学细化都一样）会从区域尖端回缩约<b>半�
 <h3 id="m5">M5 · <code>milling_l</code> / <code>milling_r</code> — 研磨面曲率与 m1/m2</h3>
 <p><b>量什么：</b>离子研磨加工出来的那个侧面，它的形状是"直—弯—直"，要找到弯得最厉害的那个点（m1 左 / m2 右）以及那里的曲率半径。</p>
 
-<figure><img src="assets/07_milling_zoom.png" alt="Milling 曲率">
-<figcaption>左侧 Milling 带放大。<span style="color:#fa0">橙色</span>曲线 = 选中的研磨面（样条采样），<span style="color:#fa0">m1</span> = 曲率最大点，<span style="color:#3cf">蓝色点圆</span> = 在该点对原始边缘点拟合的密切圆——半径估得准不准，一眼就能看出来。</figcaption></figure>
+<div class="grid2">
+  <figure><img src="assets/34_milling_raw.png" alt="Milling 原图">
+  <figcaption>原始 TEM 灰度图（同区域，局部对比度拉伸）</figcaption></figure>
+  <figure><img src="assets/34_milling_ovl.png" alt="Milling 曲率">
+  <figcaption>量测叠加</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">左侧 Milling 带放大。
+<span style="color:#fa0">橙色</span>曲线 = 选中的研磨面（样条采样），<span style="color:#fa0">m1</span> = 曲率最大点，
+<span style="color:#3cf">蓝色点圆</span> = 在该点对原始边缘点拟合的密切圆——半径估得准不准，一眼就能看出来。
+对照左图可以确认<b>选中的确实是朝真空那一侧</b>（外侧是均匀的背景，内侧才是器件层）。</p>
 
 <h4>(a) 取哪一侧：邻接判据，不是骨架法向</h4>
 <p>一条 Milling 带有两个侧面，一侧贴器件（MgO_L/MgO_R/Block_*），一侧朝真空。默认 <code>outer</code> = 朝真空那侧，
@@ -562,8 +614,17 @@ Milling 带跑出视场左右边界，外侧边缘于是包含一段由裁剪产
 <h3 id="m6">M6 · <code>non_mag</code> — Non_mag 横向边缘与 Non_mag1/2</h3>
 <p><b>量什么：</b>Non_mag 方块背离 Block_D 那一侧的横向边缘，拟合成直线，给出角度、长度和两个端点。</p>
 
-<figure><img src="assets/08_nonmag_zoom.png" alt="Non_mag 边缘">
-<figcaption>右侧区域。<span style="color:#ff0">黄色</span>细线 = 逐列提取的原始边缘，黄色虚线 = σ 剔除后的拟合直线，两端 <span style="color:#ff0">Non_mag1/Non_mag2</span> 是把这条线延伸到区域 x 范围端点得到的。</figcaption></figure>
+<div class="grid2">
+  <figure><img src="assets/35_nonmag_raw.png" alt="Non_mag 原图">
+  <figcaption>原始 TEM 灰度图（同区域，局部对比度拉伸）</figcaption></figure>
+  <figure><img src="assets/35_nonmag_ovl.png" alt="Non_mag 边缘">
+  <figcaption>量测叠加</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">右侧区域。
+<span style="color:#ff0">黄色</span>细线 = 逐列提取的原始边缘，黄色虚线 = σ 剔除后的拟合直线，
+两端 <span style="color:#ff0">Non_mag1/Non_mag2</span> 是把这条线延伸到区域 x 范围端点得到的。
+左图里 Non_mag 方块<b>两个下角明显是圆的</b> —— 被 σ 剔除掉的就是这些列，
+也正是端点必须延伸到区域边界、而不能停在拟合列上的原因。</p>
 
 <table>
 <tbody>
@@ -583,6 +644,18 @@ Milling 带跑出视场左右边界，外侧边缘于是包含一段由裁剪产
 <!-- ---------------- M7 ---------------- -->
 <h3 id="m7">M7 · <code>corner_offsets</code> — Non_mag 端点 ↔ Milling 拐点</h3>
 <p><b>量什么：</b><code>Non_mag1 → m1</code> 和 <code>Non_mag2 → m2</code> 的 dx/dy 和直线距离。描述"方块的角"和"研磨面拐弯处"错开了多少。</p>
+
+<div class="grid2">
+  <figure><img src="assets/32_corner_raw.png" alt="左侧拐角原图">
+  <figcaption>原始 TEM 灰度图（同区域，局部对比度拉伸）</figcaption></figure>
+  <figure><img src="assets/32_corner_ovl.png" alt="左侧拐角叠加">
+  <figcaption><span style="color:#00fa9a">青绿点划 L 形</span>：横段 = dx，竖段 = dy，中间标出数值</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">左侧拐角放大：<span style="color:#ff0">Non_mag1</span>（黄，Non_mag 方块的左下角）
+到 <span style="color:#fa0">m1</span>（橙，研磨面曲率最大点）。这张图最能说明这项量测<b>为什么必须组合两个模块</b> ——
+两个点分属完全不同的类、由完全不同的算法定出，但它们之间的相对位置才是工艺关心的量。
+本图 d = (−1.94, +2.32) nm。</p>
+
 <table>
 <tbody>
 <tr><th style="width:130px">特殊之处</th><td>这是<b>唯一一个组合其它量测结果</b>的模块。它不重算，而是从 <code>ctx.results</code> 里把 M5、M6 的结果读回来——所以在注册表里必须排在 <code>non_mag</code> / <code>milling_*</code> 之后。</td></tr>
@@ -807,12 +880,49 @@ Milling 带跑出视场左右边界，外侧边缘于是包含一段由裁剪产
 </tbody>
 </table>
 
-<div class="ph">
-  <div class="tag">缺图 · 可后补</div>
-  <div class="title">批次分布图 / 趋势图</div>
-  <div class="desc">用 summary.csv 画几张箱线图或散点图（如 a1_b1.dx 按 wafer 位置分布、m1/m2 半径分布）会让这一节直观很多。目前工具只出 CSV，画图需要外部脚本 —— 如果需要，我可以补一个 <code>plot_summary.py</code>。</div>
-  <div class="file">放到 assets/14_batch_stats.png</div>
-</div>
+<h3>批次可视化：<code>plot_summary.py</code></h3>
+
+<p>上面这张表是 <code>summary.csv</code> 的手工摘要。同目录下的 <code>plot_summary.py</code> 把它自动化了 ——
+读一份（或多份）<code>summary.csv</code>，产出四张图加一份统计 CSV：</p>
+
+<pre><code>python tools\tem_analysis\plot_summary.py `
+    --csv "G:\datasets\TEM\1300kgroup1\analysis_batch\summary.csv" `
+    --out "...\analysis_batch\plots" --stats-csv
+
+# 跨批次对比：多给几个 --csv
+python tools\tem_analysis\plot_summary.py `
+    --csv runA\summary.csv --csv runB\summary.csv --labels A,B</code></pre>
+
+<table>
+<thead><tr><th>产物</th><th>回答什么问题</th></tr></thead>
+<tbody>
+<tr><td><code>summary_distributions.png</code></td><td>分布多宽？哪些图是离群值？</td></tr>
+<tr><td><code>summary_trend.png</code></td><td>沿采图顺序有没有漂移？</td></tr>
+<tr><td><code>summary_symmetry.png</code></td><td>左右两侧对称吗？</td></tr>
+<tr><td><code>summary_quality.png</code></td><td>哪些图该去开叠加图看？</td></tr>
+<tr><td><code>summary_stats.csv</code></td><td>每个指标的 median / sd / MAD / 极值 / 离群图名</td></tr>
+</tbody>
+</table>
+
+<div class="note"><b>离群判据用 median/MAD，不用 mean/σ</b>
+26 行数据里，一个坏预测足以把均值拉过去、同时把 σ 撑大到刚好把自己盖住。
+这里用修正 z 分数 <code>0.6745·(x−median)/MAD</code>，<code>|z| &gt; 3.5</code> 判为离群（Iglewicz &amp; Hoaglin）。
+MAD 为 0（指标恒定）时直接关闭该项检测，而不是把所有行都标红。</div>
+
+<figure><img src="assets/14_batch_stats.png" alt="批次分布图">
+<figcaption>按单位分组的箱线图 + 散点。右侧数字是 median (sd) n；红圈是离群点。
+右侧指标（<code>a2_b2.dx</code>、<code>Nm2-m2.dx</code>）自动<b>取反</b>后与左侧同轴显示，否则两簇数据会分居轴的两端，白白浪费整个面板。</figcaption></figure>
+
+<figure><img src="assets/14b_batch_trend.png" alt="批次趋势图">
+<figcaption>按 CSV 顺序（≈采图顺序）看漂移。虚线 = 中位数，浅色带 = 稳健 ±3.5 MAD 区间，红圈标出离群图并注明序号，
+琥珀色竖线表示该图这一项<b>量测失败</b>。第 3 张图的 Leveling 倾角 −2.26° 明显偏离，是这批里唯一被标出的。</figcaption></figure>
+
+<details><summary>另外两张图（对称性 / 运行质量）</summary>
+<figure><img src="assets/14c_batch_quality.png" alt="运行质量">
+<figcaption>(a) 每图 warning 条数——<b>红条就是要去看叠加图的图</b>；(b) warning 类型（数字被掩码后归并）；
+(c) 决定一行能不能用的几个标志位：<code>local_circle.reliable</code>、<code>non_mag.edge_side</code>、<code>scale_source</code>。
+这批 26 张全部 <code>reliable=True</code>、全部取 <code>bottom</code> 边、标尺全部来自文件名——三项一致，说明批次是齐的。</figcaption></figure>
+</details>
 
 <!-- ============================================================ -->
 <h2 class="sec" id="s7"><span class="n">07</span>新增一项量测的模板</h2>
@@ -953,7 +1063,7 @@ def measure_combined(ctx: AnalysisContext) -> Dict[str, Any]:
 <tr><td><b>逐类形状统计</b>（每类的面积 px/nm²、轮廓周长、骨架长度）</td><td>无。当前只有个别模块顺带输出了自己那条骨架的长度。</td><td>小。一个遍历 <code>ctx.classes</code> 的模块即可，但 CSV 会膨胀到 ~100 列（11 类 × 8 项）</td></tr>
 <tr><td><b>MgO_L / MgO_R / Block_U 的量测</b></td><td>这三类被标注了、也被分割了，但<b>没有任何量测用到它们</b>（只在 Milling 分侧时作为"邻居"参与判断）。</td><td>取决于需求定义</td></tr>
 <tr><td><b>层厚度</b>（每层垂直方向的厚度及其沿 x 的分布）</td><td>无。目前所有量测都是端点/边缘/角度，没有"厚度"。</td><td>中。需要定义"沿哪个法向测"，以及处理层弯曲</td></tr>
-<tr><td><b>批次统计与画图</b></td><td>只出 CSV，箱线图/趋势图要自己画。</td><td>小。一个 <code>plot_summary.py</code></td></tr>
+<tr><td><b>批次统计与画图</b></td><td><span class="badge b-ok">已补</span> <code>plot_summary.py</code>（见 <a href="#s6">§6</a>）：分布 / 趋势 / 对称性 / 运行质量四张图 + <code>summary_stats.csv</code>，支持多批次对比。</td><td>—</td></tr>
 <tr><td><b>结果回写数据库 / 网页展示</b></td><td>分析工具是<b>完全独立的 CLI</b>，与 Next.js 平台之间没有任何代码耦合，结果也不进数据库。</td><td>中。需要设计表结构 + 一个触发分析的 API 路由</td></tr>
 <tr><td><b>与人工量测的对比验证</b></td><td>自检验证的是"算法实现是否符合定义"，<b>没有验证"定义是否符合客户想要的"</b>。</td><td>需要一批人工量过的图作为标定集</td></tr>
 </tbody>
@@ -986,11 +1096,18 @@ def measure_combined(ctx: AnalysisContext) -> Dict[str, Any]:
 <tr><td><code>assets/03_added.png</code></td><td>混合预览（反例）</td><td>同图的 <code>added_prediction/</code></td></tr>
 <tr><td><code>assets/04_overlay_raw.png</code></td><td>量测叠加图（画在原图上）</td><td><code>normal_test_analysis/*_overlay.png</code></td></tr>
 <tr><td><code>assets/05_overlay_mask.png</code></td><td>量测叠加图（画在掩膜上）</td><td><code>1300kgroup1\analysis\751845_RMF 24(12,15)_...</code></td></tr>
-<tr><td><code>assets/06_interfaces_zoom.png</code></td><td>a1/b1/b3 + 5 nm 窗口放大</td><td>从 05 裁切</td></tr>
-<tr><td><code>assets/07_milling_zoom.png</code></td><td>m1 与密切圆放大</td><td>从 05 裁切</td></tr>
-<tr><td><code>assets/08_nonmag_zoom.png</code></td><td>Non_mag 边缘与端点放大</td><td>从 05 裁切</td></tr>
-<tr><td><code>assets/09_leveling_zoom.png</code></td><td>Leveling 层与校平拟合线</td><td>从 05 裁切</td></tr>
+<tr><td colspan="3" style="background:#141c26"><b>六组「原图 ↔ 叠加图」配对放大</b>　每组 <code>*_raw.png</code> 与 <code>*_ovl.png</code> 取自<b>同一个裁剪框</b>：叠加图画在校平后的坐标系里，所以原始 <code>.tif</code> 先按 JSON 里记录的角度重建同一个校平变换再裁，两边才逐像素对齐。<code>*_raw</code> 另做了局部对比度拉伸。</td></tr>
+<tr><td><code>assets/30_leveling_{raw,ovl}.png</code></td><td>M1 · Leveling 层与校平拟合线</td><td>全幅宽条带</td></tr>
+<tr><td><code>assets/33_interfaces_{raw,ovl}.png</code></td><td>M2 / M3 · a1/b1/b3 端点</td><td>中央区域</td></tr>
+<tr><td><code>assets/31_dip_{raw,ovl}.png</code></td><td>M4 · 左端 5 nm 下沉窗口</td><td>a1 附近</td></tr>
+<tr><td><code>assets/34_milling_{raw,ovl}.png</code></td><td>M5 · m1 与密切圆</td><td>左侧 Milling 带</td></tr>
+<tr><td><code>assets/35_nonmag_{raw,ovl}.png</code></td><td>M6 · Non_mag 边缘与端点</td><td>右侧区域</td></tr>
+<tr><td><code>assets/32_corner_{raw,ovl}.png</code></td><td>M7 · Non_mag1 → m1 拐角偏移</td><td>左侧拐角</td></tr>
 <tr><td><code>assets/10_legend.png</code></td><td>叠加图文字图例</td><td>从 05 裁切</td></tr>
+<tr><td><code>assets/14_batch_stats.png</code></td><td>批次分布（8 组箱线图）</td><td><code>plot_summary.py</code> → <code>summary_distributions.png</code></td></tr>
+<tr><td><code>assets/14b_batch_trend.png</code></td><td>批次趋势</td><td><code>plot_summary.py</code> → <code>summary_trend.png</code></td></tr>
+<tr><td><code>assets/14c_batch_quality.png</code></td><td>运行质量（warning / 标志位）</td><td><code>plot_summary.py</code> → <code>summary_quality.png</code></td></tr>
+<tr><td><code>assets/14d_batch_slide.png</code></td><td>16:9 四面板版（给分页版用）</td><td><code>plot_summary.py --slide-figure</code></td></tr>
 </tbody>
 </table>
 
@@ -1002,7 +1119,6 @@ def measure_combined(ctx: AnalysisContext) -> Dict[str, Any]:
 <tr><td><code>assets/11_napari_ui.png</code></td><td>§2.1</td><td>napari 标注界面全窗口截图：图层列表 + 自定义面板（类别下拉/笔刷/contour/导出按钮）+ 标了一半的画布</td></tr>
 <tr><td><code>assets/12_train_job.png</code></td><td>§2.3</td><td>网页端训练任务页：状态、进度、生成的命令</td></tr>
 <tr><td><code>assets/13_train_curve.png</code></td><td>§2.3</td><td>loss 与 mIoU 随 iter 的训练曲线</td></tr>
-<tr><td><code>assets/14_batch_stats.png</code></td><td>§6</td><td>批次分布图/箱线图（如果需要，我可以写脚本从 summary.csv 生成）</td></tr>
 <tr><td><code>assets/15_definition.png</code></td><td>§4 开头</td><td><b>最有价值的一张</b>：客户原始的量测定义示意图（<code>G:\datasets\TEM\TEM metrology\*.pptx</code> 里应该有）。把它和我们的叠加图并排放，可以直接证明"我们量的就是他们要的"</td></tr>
 <tr><td><code>assets/16_manual_vs_auto.png</code></td><td>§8.2</td><td>人工量测 vs 自动量测的对比（散点或表格截图），用于回答"准不准"</td></tr>
 </tbody>

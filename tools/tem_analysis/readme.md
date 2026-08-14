@@ -64,6 +64,41 @@ cd D:\_work\projects\autoTraining\Autotrain_g
 
 单项量测失败只会让该项变成 `null` 并写入 `warnings`，不会中断整批。
 
+## 批次可视化：plot_summary.py
+
+`analyze.py` 只出数字：能跨批次 diff 的是固定列 CSV，不是图。`plot_summary.py` 是另一半——
+把一份（或多份）`summary.csv` 变成实际会去看的图。
+
+```powershell
+.\.venv-napari\Scripts\python tools\tem_analysis\plot_summary.py `
+    --csv "G:\datasets\TEM\1300kgroup1\analysis_batch\summary.csv" `
+    --out "G:\datasets\TEM\1300kgroup1\analysis_batch\plots" `
+    --stats-csv --slide-figure
+
+# 跨批次对比：多给几个 --csv，趋势图会在批次边界画分隔线并标出批次名
+.\.venv-napari\Scripts\python tools\tem_analysis\plot_summary.py `
+    --csv runA\summary.csv --csv runB\summary.csv --labels A,B --out plots
+```
+
+| 产物 | 回答什么问题 |
+|------|------|
+| `<prefix>_distributions.png` | 分布多宽？哪些图是离群值？按单位分成 8 组箱线图 + 逐图散点 |
+| `<prefix>_trend.png` | 沿采图顺序有没有漂移？中位数线 + 稳健 ±3.5 MAD 带；琥珀色竖线 = 该图这项量测失败 |
+| `<prefix>_symmetry.png` | 左右对称吗？三组左右配对的散点 + 对角线 |
+| `<prefix>_quality.png` | 该去看哪几张叠加图？每图 warning 数、warning 类型、`reliable`/`edge_side`/`scale_source` 标志位 |
+| `<prefix>_slide.png` | `--slide-figure`：16:9 四面板大字版，给汇报用 |
+| `<prefix>_stats.csv` | 每个指标的 n / median / sd / MAD / 极值 / 离群图名 |
+
+几个约定：
+
+- **离群判据用 median/MAD，不用 mean/σ。** 26 行数据里，一个坏预测足以把均值拉过去、同时
+  把 σ 撑大到刚好把自己盖住。这里用修正 z 分数 `0.6745*(x-median)/MAD`，`|z| > 3.5` 判为
+  离群（Iglewicz & Hoaglin）。MAD 为 0（指标恒定）时关闭该项检测，而不是把所有行标红。
+- **右侧指标自动取反。** `a2_b2.dx` 约 −5.3 nm、`a1_b1.dx` 约 +5.3 nm，不翻转就分居轴的
+  两端，整个面板浪费在中间的空隙上；翻转后同轴，左右一致性一眼可见。图例里标 `(flipped)`。
+- **散点抖动是确定性的。** 同一份 CSV 必须产出逐像素相同的图，否则两次运行看起来像两个批次。
+- **所有文字都是 ASCII。** matplotlib 默认字体栈没有 CJK 字形，中文标签只会变成豆腐块。
+
 ## 量测项
 
 | JSON 键 | 需求 | 说明 |

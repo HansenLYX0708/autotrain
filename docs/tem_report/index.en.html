@@ -195,7 +195,7 @@ The approach is to let a segmentation model identify each layer first, then meas
 <tr><td>Non_mag ↔ Milling corner offsets</td><td><span class="badge b-ok">done</span></td><td>M7</td></tr>
 <tr><td>Block_D lower edge (blockD1/blockD2)</td><td><span class="badge b-no">missing</span></td><td>An early requirement, superseded by M7 in the current tree — see <a href="#s8">§8</a></td></tr>
 <tr><td>Per-class shape statistics (area / perimeter)</td><td><span class="badge b-no">missing</span></td><td>See <a href="#s8">§8</a></td></tr>
-<tr><td>Batch trend / distribution plots</td><td><span class="badge b-no">missing</span></td><td>CSV only today; plotting is external</td></tr>
+<tr><td>Batch trend / distribution plots</td><td><span class="badge b-ok">done</span></td><td><code>plot_summary.py</code> — 4 figures + a statistics CSV</td></tr>
 <tr><td>Results written back to the DB / shown in the web UI</td><td><span class="badge b-no">missing</span></td><td>The analysis tool is a standalone CLI</td></tr>
 </tbody>
 </table>
@@ -257,12 +257,14 @@ The tool refuses it on purpose: when snapping RGB onto the palette, if more than
     --out    G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm_out `
     --classes SAF_Ru_L,SAF_Ru_R,MgO_L,MgO_R,MgO_C,Non_mag,Milling_L,Milling_R,Leveling,Block_U,Block_D</code></pre>
 
-<div class="ph">
-  <div class="tag">figure needed</div>
-  <div class="title">napari annotator screenshot</div>
-  <div class="desc">Ideally showing: the layer list on the left (image + label), the custom panel on the right (class dropdown, brush size, contour toggle, "write train.txt / val.txt" button), and a half-annotated TEM image on the canvas. A full-window capture is fine.</div>
-  <div class="file">drop it at assets/11_napari_ui.png</div>
-</div>
+<figure><img src="assets/11_napari_ui.png" alt="napari annotator">
+<figcaption>The annotator. On the left, napari's own layer controls (<code>label</code> over <code>image</code> at 0.5 opacity);
+on the right, the panel this tool adds: class dropdown, brush size, <code>outline only</code>, prev/next, save,
+<code>train ratio</code> and <code>write train.txt / val.txt</code>. The title bar tracks progress as
+<code>[1/24] … | saved 20/24</code>.
+The hint line at the bottom states the working conventions, the important one being
+<b>"paint over a neighbour to move the shared edge"</b> — push into the adjacent layer rather than erasing
+first and painting after, so the two layers never end up separated by a one-pixel seam of background.</figcaption></figure>
 
 <h3 id="s2-2">2.2 One training job = three YAMLs, deep-merged</h3>
 
@@ -312,11 +314,16 @@ python -m paddle.distributed.launch --gpus 0 tools/train.py `
 <li>Typical baseline preset: 80k iters @ 512×512, SGD + PolynomialDecay(power 0.9), <code>batch_size 4</code>. Run the 20k "quick" preset first to prove the pipeline end-to-end before committing to a full run.</li>
 </ul>
 
-<div class="ph">
-  <div class="tag">figures needed</div>
-  <div class="title">Training job page + training curves</div>
-  <div class="desc">Two shots: (a) the job list/detail page showing status, progress and the generated command; (b) loss and mIoU against iteration. These two make the "training is managed by the platform" point far better than prose.</div>
-  <div class="file">drop them at assets/12_train_job.png and assets/13_train_curve.png</div>
+<div class="grid2">
+  <figure><img src="assets/12_train_job.png" alt="Create training job">
+  <figcaption>The create-job dialog: <b>one dropdown each for dataset, model and training config</b>
+  (here <code>tem_seg_merged</code> + <code>tem_segment</code> + <code>tem_cfg_160k</code>), plus runtime options
+  (GPU, AMP, VDL). The <b>Generated Command</b> box at the bottom is assembled server-side from those choices
+  and shown before it runs — the user never gets to write a command.</figcaption></figure>
+  <figure><img src="assets/13_train_curve.png" alt="Training loss curve">
+  <figcaption>Training loss, plotted from the <code>TrainingLog</code> rows the stdout parser produced.
+  About 5000 iterations, falling from 5.1 to roughly 0.5 before flattening. The Cls / IoU / DFL / L1 entries
+  in the legend are detection-task loss components; for a segmentation job only Total Loss carries data.</figcaption></figure>
 </div>
 
 <h3 id="s2-4">2.4 Prediction output</h3>
@@ -431,8 +438,16 @@ The statement "dy is how far down it sits" only has physical meaning after this 
 <li>The cost: resampling noise of 1–2 px on layer skeletons. In the self-test the residual angle after rectification is 0.007°, but dy error can reach about 5 px. <code>--no-rotate</code> avoids it entirely.</li>
 </ul>
 
-<figure><img src="assets/09_leveling_zoom.png" alt="Leveling layer">
-<figcaption>The Leveling layer (the green band at the bottom of the frame). White = Guo–Hall skeleton; bright green dashed = the line re-fitted <i>after</i> rectification, which is how the tool self-checks that the rotation really did flatten it.</figcaption></figure>
+<div class="grid2">
+  <figure><img src="assets/30_leveling_raw.png" alt="Leveling, raw">
+  <figcaption>Raw TEM greyscale, same crop (locally contrast-stretched)</figcaption></figure>
+  <figure><img src="assets/30_leveling_ovl.png" alt="Leveling, overlay">
+  <figcaption>Overlay: white = Guo–Hall skeleton, bright green dashed = the line re-fitted after rectification</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">The <code>Leveling</code> band at the bottom of the frame.
+<b>Its contrast in the raw image is very low</b> — which is exactly why it is extracted by segmentation rather
+than by thresholding. The bright green dashed line on the right is fitted <i>after</i> rectification and is how
+the tool self-checks that the rotation really did flatten it.</p>
 
 <!-- ============================================================ -->
 <h2 class="sec" id="s4"><span class="n">04</span>Measurements, one by one</h2>
@@ -460,6 +475,17 @@ Each is described below as <b>what it measures / how it is defined / algorithm /
 Leveling, MgO_C and Non_mag are all like this. Results therefore carry <code>fit_r2_degenerate: true</code> and an explanatory <code>fit_r2_note</code>.
 <b>Judge straightness by <code>rmse</code> and <code>max_residual</code>.</b></div>
 
+<div class="grid2">
+  <figure><img src="assets/30_leveling_raw.png" alt="Leveling, raw">
+  <figcaption>Raw TEM greyscale, same crop (locally contrast-stretched)</figcaption></figure>
+  <figure><img src="assets/30_leveling_ovl.png" alt="Leveling, overlay">
+  <figcaption>White = skeleton, bright green dashed = line re-fitted after rectification</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">The <code>Leveling</code> band has <b>very low contrast</b>
+in the raw image and cannot be thresholded out — which is precisely why it is handed to the segmentation model.
+What makes it a good datum is that it spans the whole frame (1029 px of skeleton), the <b>longest</b> line
+available, so its angle has a standard error of only 0.012°.</p>
+
 <!-- ---------------- M2 ---------------- -->
 <h3 id="m2">M2 · <code>mgo_c</code> — MgO_C straightness and tilt</h3>
 <p><b>What it measures:</b> the angle and goodness of fit of the central MgO barrier layer once fitted to a line, plus the two endpoints <code>b3</code>/<code>b4</code> of that fitted segment.</p>
@@ -476,8 +502,19 @@ Leveling, MgO_C and Non_mag are all like this. Results therefore carry <code>fit
 <h3 id="m3">M3 · <code>interfaces</code> — interface endpoint offsets a ↔ b</h3>
 <p><b>What it measures:</b> the horizontal and vertical offset of each SAF_Ru layer's inner endpoint relative to the MgO_C endpoints. This is the core set of numbers in the whole system.</p>
 
-<figure><img src="assets/06_interfaces_zoom.png" alt="a1 b1 b3 endpoints">
-<figcaption>Close-up of the central region. <span style="color:#f66">a1/a2</span> = SAF_Ru inner tips; <span style="color:#0ff">b1/b2</span> = MgO_C skeleton tips; <span style="color:#3bf">b3/b4</span> = MgO_C fitted-segment endpoints (the cyan dashed line is the fit); the <span style="color:#f4f">magenta</span> parts belong to M4's 5 nm window.</figcaption></figure>
+<div class="grid2">
+  <figure><img src="assets/33_interfaces_raw.png" alt="central region, raw">
+  <figcaption>Raw TEM greyscale, same crop (locally contrast-stretched)</figcaption></figure>
+  <figure><img src="assets/33_interfaces_ovl.png" alt="a1 b1 b3 endpoints">
+  <figcaption>Measurement overlay</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">Close-up of the central region.
+<span style="color:#f66">a1/a2</span> = SAF_Ru inner tips; <span style="color:#0ff">b1/b2</span> = MgO_C skeleton tips;
+<span style="color:#3bf">b3/b4</span> = MgO_C fitted-segment endpoints (the cyan dashed line is the fit);
+the <span style="color:#f4f">magenta</span> parts belong to M4's 5 nm window.
+Look at the raw image on the left: <b>the 5.3 nm gap between a1 and b1 is a gradual transition with no crisp
+boundary</b> — where a human puts the endpoint is a judgement call, and that is the root cause of the old
+measurements not being reproducible.</p>
 
 <table>
 <tbody>
@@ -500,6 +537,18 @@ The saving grace: dx/dy are <b>differences</b> of two endpoints, so when both re
 <!-- ---------------- M4 ---------------- -->
 <h3 id="m4">M4 · <code>*_dip</code> — maximum downward excursion within 5 nm of the endpoint</h3>
 <p><b>What it measures:</b> walking 5 nm back along the SAF_Ru skeleton from a1 (or a2), how far down does the layer dip? It characterises sagging/bending near the tip.</p>
+
+<div class="grid2">
+  <figure><img src="assets/31_dip_raw.png" alt="5 nm window, raw">
+  <figcaption>Raw TEM greyscale, same crop (locally contrast-stretched)</figcaption></figure>
+  <figure><img src="assets/31_dip_ovl.png" alt="5 nm window, overlay">
+  <figcaption>Magenta: thickened span = the searched 5 nm of arclength, end ticks = window bounds, dashed = endpoint baseline, arrow = the maximum</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">Close-up around the left endpoint a1. The raw image on the
+left does show the bright layer <b>bending downward as it approaches the tip</b>, but only by 0.522 nm ≈ 7 px —
+visible to the eye, yet hard to measure by hand. This is exactly the case for scanning the whole window
+point by point along arclength.</p>
+
 <table>
 <tbody>
 <tr><th style="width:150px">Baseline</th><td>The endpoint itself: <code>dev = y − y(endpoint)</code>, positive = lower</td></tr>
@@ -517,8 +566,18 @@ The same applies to M5's <code>curvature_profile</code> and M2's <code>residual_
 <h3 id="m5">M5 · <code>milling_l</code> / <code>milling_r</code> — milled-flank curvature, m1/m2</h3>
 <p><b>What it measures:</b> the flank produced by ion milling. Its shape is straight–curved–straight; the goal is the point of sharpest bend (m1 left / m2 right) and the curvature radius there.</p>
 
-<figure><img src="assets/07_milling_zoom.png" alt="Milling curvature">
-<figcaption>Close-up of the left Milling band. The <span style="color:#fa0">orange</span> curve is the selected milled flank (spline sample), <span style="color:#fa0">m1</span> is the curvature maximum, and the <span style="color:#3cf">blue dotted circle</span> is the osculating circle fitted to the raw edge points there — whether the radius estimate is sane is visible at a glance.</figcaption></figure>
+<div class="grid2">
+  <figure><img src="assets/34_milling_raw.png" alt="Milling, raw">
+  <figcaption>Raw TEM greyscale, same crop (locally contrast-stretched)</figcaption></figure>
+  <figure><img src="assets/34_milling_ovl.png" alt="Milling curvature">
+  <figcaption>Measurement overlay</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">Close-up of the left Milling band. The
+<span style="color:#fa0">orange</span> curve is the selected milled flank (spline sample),
+<span style="color:#fa0">m1</span> is the curvature maximum, and the <span style="color:#3cf">blue dotted
+circle</span> is the osculating circle fitted to the raw edge points there — whether the radius estimate is sane
+is visible at a glance. The raw image confirms that <b>the flank picked is the one facing vacuum</b>: uniform
+background outside it, device layers inside.</p>
 
 <h4>(a) Which flank: adjacency, not the skeleton normal</h4>
 <p>A Milling band has two flanks: one against the device stack (MgO_L/MgO_R/Block_*), one facing vacuum. The default <code>outer</code> is the vacuum-facing one,
@@ -562,8 +621,18 @@ The bend actually sits at about 73% of the arclength, not the midpoint, so <code
 <h3 id="m6">M6 · <code>non_mag</code> — Non_mag horizontal edge and Non_mag1/2</h3>
 <p><b>What it measures:</b> the horizontal edge of the Non_mag block on the side away from Block_D, fitted to a line, giving its angle, length and two endpoints.</p>
 
-<figure><img src="assets/08_nonmag_zoom.png" alt="Non_mag edge">
-<figcaption>Right-hand region. The thin <span style="color:#ff0">yellow</span> line is the raw per-column edge; the yellow dashed line is the sigma-clipped fit; <span style="color:#ff0">Non_mag1/Non_mag2</span> are that line extended to the x extent of the region.</figcaption></figure>
+<div class="grid2">
+  <figure><img src="assets/35_nonmag_raw.png" alt="Non_mag, raw">
+  <figcaption>Raw TEM greyscale, same crop (locally contrast-stretched)</figcaption></figure>
+  <figure><img src="assets/35_nonmag_ovl.png" alt="Non_mag edge">
+  <figcaption>Measurement overlay</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">Right-hand region. The thin
+<span style="color:#ff0">yellow</span> line is the raw per-column edge; the yellow dashed line is the
+sigma-clipped fit; <span style="color:#ff0">Non_mag1/Non_mag2</span> are that line extended to the x extent of
+the region. In the raw image the Non_mag block's <b>two lower corners are visibly rounded</b> — those are the
+columns sigma clipping removes, and the reason the endpoints must run out to the region boundary rather than
+stop at the last fitted column.</p>
 
 <table>
 <tbody>
@@ -583,6 +652,20 @@ Other classes still use size; any discarded component raises a warning that also
 <!-- ---------------- M7 ---------------- -->
 <h3 id="m7">M7 · <code>corner_offsets</code> — Non_mag endpoints ↔ Milling bend points</h3>
 <p><b>What it measures:</b> dx/dy and straight-line distance for <code>Non_mag1 → m1</code> and <code>Non_mag2 → m2</code>, i.e. how far the block corner and the milled bend are offset from each other.</p>
+
+<div class="grid2">
+  <figure><img src="assets/32_corner_raw.png" alt="left corner, raw">
+  <figcaption>Raw TEM greyscale, same crop (locally contrast-stretched)</figcaption></figure>
+  <figure><img src="assets/32_corner_ovl.png" alt="left corner, overlay">
+  <figcaption><span style="color:#00fa9a">Spring-green dotted L</span>: horizontal leg = dx, vertical leg = dy, value annotated between them</figcaption></figure>
+</div>
+<p class="dim" style="font-size:13px;margin-top:-4px">The left corner, zoomed:
+<span style="color:#ff0">Non_mag1</span> (yellow, the block's lower-left corner) to
+<span style="color:#fa0">m1</span> (orange, the milled flank's curvature maximum). This figure shows best
+<b>why the measurement has to combine two modules</b>: the two points belong to different classes and are
+located by completely different algorithms, yet it is their relative position that the process cares about.
+Here d = (−1.94, +2.32) nm.</p>
+
 <table>
 <tbody>
 <tr><th style="width:150px">What makes it special</th><td>It is the <b>only module that combines other measurements</b>. It does not recompute anything; it reads M5 and M6 back out of <code>ctx.results</code> — which is why it must sit after <code>non_mag</code> and <code>milling_*</code> in the registry.</td></tr>
@@ -807,12 +890,53 @@ On the mask alone, a segmentation that placed a boundary 3 px off still looks pe
 </tbody>
 </table>
 
-<div class="ph">
-  <div class="tag">figure — can follow later</div>
-  <div class="title">Batch distribution / trend plots</div>
-  <div class="desc">A few box plots or scatter plots from summary.csv (e.g. a1_b1.dx by wafer position, m1/m2 radius distribution) would make this section far more legible. The tool currently emits CSV only, so plotting needs an external script — I can add a <code>plot_summary.py</code> if that is wanted.</div>
-  <div class="file">drop it at assets/14_batch_stats.png</div>
-</div>
+<h3>Batch visualisation: <code>plot_summary.py</code></h3>
+
+<p>The table above is a hand-written summary of <code>summary.csv</code>. <code>plot_summary.py</code>, in the same
+directory, automates it — it reads one (or several) <code>summary.csv</code> files and produces four figures
+plus a statistics CSV:</p>
+
+<pre><code>python tools\tem_analysis\plot_summary.py `
+    --csv "G:\datasets\TEM\1300kgroup1\analysis_batch\summary.csv" `
+    --out "...\analysis_batch\plots" --stats-csv
+
+# compare batches: pass --csv more than once
+python tools\tem_analysis\plot_summary.py `
+    --csv runA\summary.csv --csv runB\summary.csv --labels A,B</code></pre>
+
+<table>
+<thead><tr><th>Output</th><th>Question it answers</th></tr></thead>
+<tbody>
+<tr><td><code>summary_distributions.png</code></td><td>How wide is the spread, and which images are outliers?</td></tr>
+<tr><td><code>summary_trend.png</code></td><td>Is anything drifting along acquisition order?</td></tr>
+<tr><td><code>summary_symmetry.png</code></td><td>Are the left and right sides symmetric?</td></tr>
+<tr><td><code>summary_quality.png</code></td><td>Which images should I open the overlay for?</td></tr>
+<tr><td><code>summary_stats.csv</code></td><td>median / sd / MAD / extremes / outlier image names, per metric</td></tr>
+</tbody>
+</table>
+
+<div class="note"><b>Outliers use median/MAD, not mean/σ</b>
+With 26 rows, one bad prediction moves the mean towards itself and inflates σ just enough to hide.
+The modified z-score <code>0.6745·(x−median)/MAD</code> with <code>|z| &gt; 3.5</code> is used instead
+(Iglewicz &amp; Hoaglin). A zero MAD (a constant metric) disables the test rather than flagging every row.</div>
+
+<figure><img src="assets/14_batch_stats.png" alt="Batch distributions">
+<figcaption>Box plots plus jittered points, grouped by unit. The numbers on the right are median (sd) n; red rings are outliers.
+Right-hand metrics (<code>a2_b2.dx</code>, <code>Nm2-m2.dx</code>) are <b>sign-flipped</b> so they share an axis with their
+left-hand twin — without the flip the two clusters sit at opposite ends and the whole panel is wasted on the gap.</figcaption></figure>
+
+<figure><img src="assets/14b_batch_trend.png" alt="Batch trend">
+<figcaption>Drift along CSV order (≈ acquisition order). Dashed = median, shaded = robust ±3.5 MAD band, red rings mark
+outliers with their index, and an amber vertical line means that measurement <b>failed</b> on that image.
+Image #3's Leveling tilt of −2.26° is the only point flagged in this batch.</figcaption></figure>
+
+<details><summary>The other two figures (symmetry / run quality)</summary>
+<figure><img src="assets/14c_batch_quality.png" alt="Run quality">
+<figcaption>(a) warnings per image — <b>every red bar is an image whose overlay you should open</b>; (b) warning types,
+bucketed with digits masked; (c) the flags that decide whether a row is usable: <code>local_circle.reliable</code>,
+<code>non_mag.edge_side</code>, <code>scale_source</code>. All 26 images here are <code>reliable=True</code>, all took the
+<code>bottom</code> edge, and all got their scale from the filename — three consistent columns mean the batch is homogeneous.</figcaption></figure>
+</details>
 
 <!-- ============================================================ -->
 <h2 class="sec" id="s7"><span class="n">07</span>Template for adding a measurement</h2>
@@ -957,7 +1081,7 @@ def measure_combined(ctx: AnalysisContext) -> Dict[str, Any]:
 <tr><td><b>Per-class shape statistics</b> (area px/nm², contour perimeter, skeleton length per class)</td><td>Absent. Only a few modules incidentally report the length of their own skeleton.</td><td>Low — a module iterating <code>ctx.classes</code>. But the CSV would grow to ~100 columns (11 classes × 8 items)</td></tr>
 <tr><td><b>Measurements on MgO_L / MgO_R / Block_U</b></td><td>These three are annotated and segmented but <b>no measurement uses them</b> (they only participate as "neighbours" in Milling side selection).</td><td>Depends on the requirement</td></tr>
 <tr><td><b>Layer thickness</b> (per-layer thickness and its variation along x)</td><td>Absent. Every current measurement is an endpoint, an edge or an angle — none is a thickness.</td><td>Medium — needs a definition of "along which normal", plus handling of layer curvature</td></tr>
-<tr><td><b>Batch statistics and plots</b></td><td>CSV only; box plots / trend plots must be produced externally.</td><td>Low — one <code>plot_summary.py</code></td></tr>
+<tr><td><b>Batch statistics and plots</b></td><td><span class="badge b-ok">added</span> <code>plot_summary.py</code> (see <a href="#s6">§6</a>): distributions / trend / symmetry / run quality, plus <code>summary_stats.csv</code>, with multi-batch comparison.</td><td>—</td></tr>
 <tr><td><b>Results written back to the DB / shown in the UI</b></td><td>The analyser is a <b>fully standalone CLI</b> with no code coupling to the Next.js platform, and results never reach the database.</td><td>Medium — needs a schema plus an API route to trigger analysis</td></tr>
 <tr><td><b>Validation against manual measurement</b></td><td>The self-test proves the implementation matches the definition; it does <b>not</b> prove the definition matches what the customer wants.</td><td>Needs a set of manually measured images as a reference</td></tr>
 </tbody>
@@ -990,11 +1114,18 @@ The "missing" entries above are missing relative to <b>the current repository co
 <tr><td><code>assets/03_added.png</code></td><td>Blended preview (counter-example)</td><td>Same image, <code>added_prediction/</code></td></tr>
 <tr><td><code>assets/04_overlay_raw.png</code></td><td>Measurement overlay on the raw image</td><td><code>normal_test_analysis/*_overlay.png</code></td></tr>
 <tr><td><code>assets/05_overlay_mask.png</code></td><td>Measurement overlay on the mask</td><td><code>1300kgroup1\analysis\751845_RMF 24(12,15)_...</code></td></tr>
-<tr><td><code>assets/06_interfaces_zoom.png</code></td><td>a1/b1/b3 and the 5 nm window, zoomed</td><td>Crop of 05</td></tr>
-<tr><td><code>assets/07_milling_zoom.png</code></td><td>m1 and the osculating circle, zoomed</td><td>Crop of 05</td></tr>
-<tr><td><code>assets/08_nonmag_zoom.png</code></td><td>Non_mag edge and endpoints, zoomed</td><td>Crop of 05</td></tr>
-<tr><td><code>assets/09_leveling_zoom.png</code></td><td>Leveling layer and the rectified fit line</td><td>Crop of 05</td></tr>
+<tr><td colspan="3" style="background:#141c26"><b>Six matched "raw ↔ overlay" close-ups.</b>　Each <code>*_raw.png</code> and <code>*_ovl.png</code> comes from the <b>same crop box</b>: the overlay lives in the rectified frame, so the untouched <code>.tif</code> is first put through the same rectification (rebuilt from the angle recorded in the JSON) and only then cropped, which makes the two align pixel for pixel. The <code>*_raw</code> versions are additionally contrast-stretched locally.</td></tr>
+<tr><td><code>assets/30_leveling_{raw,ovl}.png</code></td><td>M1 · Leveling layer and the rectified fit line</td><td>Full-width strip</td></tr>
+<tr><td><code>assets/33_interfaces_{raw,ovl}.png</code></td><td>M2 / M3 · a1/b1/b3 endpoints</td><td>Central region</td></tr>
+<tr><td><code>assets/31_dip_{raw,ovl}.png</code></td><td>M4 · left 5 nm dip window</td><td>Around a1</td></tr>
+<tr><td><code>assets/34_milling_{raw,ovl}.png</code></td><td>M5 · m1 and the osculating circle</td><td>Left Milling band</td></tr>
+<tr><td><code>assets/35_nonmag_{raw,ovl}.png</code></td><td>M6 · Non_mag edge and endpoints</td><td>Right-hand region</td></tr>
+<tr><td><code>assets/32_corner_{raw,ovl}.png</code></td><td>M7 · Non_mag1 → m1 corner offset</td><td>Left corner</td></tr>
 <tr><td><code>assets/10_legend.png</code></td><td>Overlay text legend</td><td>Crop of 05</td></tr>
+<tr><td><code>assets/14_batch_stats.png</code></td><td>Batch distributions (8 grouped box plots)</td><td><code>plot_summary.py</code> → <code>summary_distributions.png</code></td></tr>
+<tr><td><code>assets/14b_batch_trend.png</code></td><td>Batch trend</td><td><code>plot_summary.py</code> → <code>summary_trend.png</code></td></tr>
+<tr><td><code>assets/14c_batch_quality.png</code></td><td>Run quality (warnings / flags)</td><td><code>plot_summary.py</code> → <code>summary_quality.png</code></td></tr>
+<tr><td><code>assets/14d_batch_slide.png</code></td><td>16:9 four-panel version (used by the deck)</td><td><code>plot_summary.py --slide-figure</code></td></tr>
 </tbody>
 </table>
 
@@ -1006,7 +1137,6 @@ The "missing" entries above are missing relative to <b>the current repository co
 <tr><td><code>assets/11_napari_ui.png</code></td><td>§2.1</td><td>Full-window napari screenshot: layer list + custom panel (class dropdown / brush / contour / export button) + a half-annotated canvas</td></tr>
 <tr><td><code>assets/12_train_job.png</code></td><td>§2.3</td><td>Web app training job page: status, progress, generated command</td></tr>
 <tr><td><code>assets/13_train_curve.png</code></td><td>§2.3</td><td>Loss and mIoU against iteration</td></tr>
-<tr><td><code>assets/14_batch_stats.png</code></td><td>§6</td><td>Batch distribution / box plots (I can write a script to generate these from summary.csv)</td></tr>
 <tr><td><code>assets/15_definition.png</code></td><td>§4 intro</td><td><b>The most valuable one</b>: the customer's original measurement-definition diagram (should be in <code>G:\datasets\TEM\TEM metrology\*.pptx</code>). Placed next to our overlay, it directly demonstrates that we measure what they asked for</td></tr>
 <tr><td><code>assets/16_manual_vs_auto.png</code></td><td>§8.2</td><td>Manual vs automated measurement comparison (scatter or table), answering "how accurate is it?"</td></tr>
 </tbody>

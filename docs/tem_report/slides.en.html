@@ -75,7 +75,9 @@ figure img{max-width:100%;height:auto;display:block;margin:0 auto;border-radius:
 figcaption{color:var(--dim);font-size:10.5px;margin-top:6px;line-height:1.42}
 .h300 img{max-height:288px} .h430 img{max-height:412px} .h410 img{max-height:390px}
 .h340 img{max-height:320px} .h230 img{max-height:200px} .h190 img{max-height:170px}
-.h090 img{max-height:82px} .h270 img{max-height:250px}
+.h090 img{max-height:82px} .h270 img{max-height:250px} .h380 img{max-height:345px}
+.h250 img{max-height:215px} .h175 img{max-height:168px}
+.h215 img{max-height:205px} .h130 img{max-height:124px}
 
 table{border-collapse:collapse;width:100%;font-size:11.1px;margin:5px 0;line-height:1.4}
 th,td{border:1px solid var(--line);padding:3.5px 6px;text-align:left;vertical-align:top}
@@ -108,7 +110,7 @@ p{margin:5px 0;font-size:12.2px}
 .kpi .k{color:var(--dim);font-size:10.6px;margin-top:1px}
 
 .badge{font-size:9.6px;padding:1px 6px;border-radius:3px;font-weight:600;white-space:nowrap}
-.b-no{background:#331a17;color:#f08c81}
+.b-no{background:#331a17;color:#f08c81} .b-ok{background:#153228;color:#5fd6ae}
 .swatch{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;margin-right:5px;border:1px solid #0006}
 
 .ph{border:2px dashed #3b4655;border-radius:7px;text-align:center;padding:10px 11px;
@@ -288,12 +290,11 @@ other modes → unsupported</code></pre>
           <tr><td>Class list</td><td><code>SAF_Ru_L/R · MgO_L/R/C · Non_mag · Milling_L/R · Leveling · Block_U/D</code></td></tr>
         </tbody>
       </table>
-      <div class="ph" style="margin-top:9px">
-        <div class="tag">figure needed</div>
-        <div class="title">napari annotator screenshot</div>
-        <div class="desc">Layer list + custom panel (class dropdown / brush / contour / export button) + a half-annotated canvas</div>
-        <div class="file">assets/11_napari_ui.png</div>
-      </div>
+      <figure class="h250" style="margin-top:8px"><img src="assets/11_napari_ui.png" alt="annotator">
+      <figcaption>The added panel on the right: class dropdown / brush / outline only / prev-next / save /
+      <code>write train.txt · val.txt</code>; the title bar tracks <code>[1/24] … | saved 20/24</code>.
+      The key hint at the bottom is <b>"paint over a neighbour to move the shared edge"</b> — push into the
+      adjacent layer instead of erasing first, so no background seam is left between two layers.</figcaption></figure>
     </div>
   </div></div>
 </div></section>
@@ -395,10 +396,11 @@ Precedence: dataset → training → model  (later wins, merged per key)</code><
       <div class="tip"><b>Annotation is the expensive step</b>
       So the pipeline is a closed loop: predict → import back → correct only → new training data.
       Existing masks are kept unless <code>--overwrite</code>; <code>--no-gui</code> imports without opening the UI.</div>
-      <div class="ph">
-        <div class="tag">figures needed</div>
-        <div class="title">Training job page + loss/mIoU curves</div>
-        <div class="file">assets/12_train_job.png · assets/13_train_curve.png</div>
+      <div class="cols c2" style="margin-top:6px">
+        <figure class="h175"><img src="assets/12b_train_job_redacted.png" alt="create job">
+        <figcaption>One dropdown per config; the command is generated server-side and <b>shown before it runs</b></figcaption></figure>
+        <figure class="h175"><img src="assets/13_train_curve.png" alt="loss curve">
+        <figcaption>Loss plotted from rows the stdout parser wrote</figcaption></figure>
       </div>
     </div>
   </div></div>
@@ -479,8 +481,14 @@ python tools/tem_analysis/selftest.py</code></pre>
         </ul>
       </div>
     </div>
-    <figure class="h090" style="margin-top:5px"><img src="assets/09_leveling_zoom.png" alt="leveling">
-    <figcaption>The Leveling layer (green band at the bottom). White = Guo–Hall skeleton; bright green dashed = the line re-fitted <b>after</b> rectification — a free self-check on the whole rotate/inverse-transform path.</figcaption></figure>
+    <div class="cols c2" style="margin-top:5px">
+      <figure class="h090"><img src="assets/30_leveling_raw.png" alt="raw"><figcaption>Raw TEM, same crop (contrast-stretched)</figcaption></figure>
+      <figure class="h090"><img src="assets/30_leveling_ovl.png" alt="leveling"><figcaption>White = skeleton, bright green dashed = line re-fitted after rectification</figcaption></figure>
+    </div>
+    <p class="mini" style="margin:5px 0 0;font-size:11.2px;color:var(--dim)">The <code>Leveling</code> band has
+    <b>very low contrast</b> in the raw image and cannot be thresholded out — hence segmentation. What makes it a
+    good datum is that it spans the whole frame (1029 px of skeleton), the <b>longest</b> line available, so its
+    angle carries a standard error of only 0.012°.</p>
   </div>
 </div></section>
 
@@ -566,8 +574,10 @@ python tools/tem_analysis/selftest.py</code></pre>
         <br>Measured: dx agrees to 0.001 nm (medians <b>5.332 / 5.333 nm</b>), but <code>b3</code> has smaller dy scatter.</div>
       </div>
     </div>
-    <figure class="h230" style="margin-top:4px"><img src="assets/06_interfaces_zoom.png" alt="mgo_c">
-    <figcaption>Cyan dashed = the MgO_C fitted segment, ending at <b>b3/b4</b>; <b>b1/b2</b> are the skeleton tips — nearly coincident here.</figcaption></figure>
+    <div class="cols c2" style="margin-top:4px">
+      <figure class="h130"><img src="assets/33_interfaces_raw.png" alt="raw"><figcaption>Raw TEM, same crop (contrast-stretched)</figcaption></figure>
+      <figure class="h130"><img src="assets/33_interfaces_ovl.png" alt="mgo_c"><figcaption>Cyan dashed = the MgO_C fitted segment ending at <b>b3/b4</b>; <b>b1/b2</b> are the skeleton tips — nearly coincident</figcaption></figure>
+    </div>
   </div>
 </div></section>
 
@@ -576,11 +586,15 @@ python tools/tem_analysis/selftest.py</code></pre>
   <div class="kicker">04 · Measurement M3</div>
   <h2><code>interfaces</code> — interface endpoint offsets (the core metric)</h2>
   <div class="body">
-    <figure class="h190"><img src="assets/06_interfaces_zoom.png" alt="interfaces">
-    <figcaption><span style="color:#f66">a1/a2</span> = SAF_Ru inner tips ·
-    <span style="color:#0ff">b1/b2</span> = MgO_C skeleton tips ·
-    <span style="color:#3bf">b3/b4</span> = fitted-segment endpoints ·
-    <span style="color:#f4f">magenta</span> = M4's 5 nm window</figcaption></figure>
+    <div class="cols c2">
+      <figure class="h130"><img src="assets/33_interfaces_raw.png" alt="raw">
+      <figcaption>Raw: the 5.3 nm between a1 and b1 is a <b>gradual transition with no crisp boundary</b> — the root cause of manual measurements not being reproducible</figcaption></figure>
+      <figure class="h130"><img src="assets/33_interfaces_ovl.png" alt="interfaces">
+      <figcaption><span style="color:#f66">a1/a2</span> = SAF_Ru inner tips ·
+      <span style="color:#0ff">b1/b2</span> = MgO_C skeleton tips ·
+      <span style="color:#3bf">b3/b4</span> = fitted-segment endpoints ·
+      <span style="color:#f4f">magenta</span> = M4's 5 nm window</figcaption></figure>
+    </div>
     <div class="cols c2" style="margin-top:7px">
       <div class="pane"><table class="sm">
         <tbody>
@@ -607,29 +621,31 @@ python tools/tem_analysis/selftest.py</code></pre>
   <div class="kicker">04 · Measurement M4</div>
   <h2><code>*_dip</code> — max downward excursion within 5 nm of the tip</h2>
   <p class="lead">Walking 5 nm back along the skeleton from a1 (or a2), how far down does the layer dip? It characterises tip sagging.</p>
-  <div class="body"><div class="cols c2">
+  <div class="body"><div class="cols c2w">
     <div class="pane">
-      <table class="sm">
+      <div class="cols c2">
+        <figure class="h215"><img src="assets/31_dip_raw.png" alt="raw"><figcaption>Raw (contrast-stretched)</figcaption></figure>
+        <figure class="h215"><img src="assets/31_dip_ovl.png" alt="dip"><figcaption>Measurement overlay</figcaption></figure>
+      </div>
+      <p class="mini" style="margin:5px 0 0;font-size:11.2px;color:var(--dim)">Around the left endpoint a1.
+      The raw image does show the bright layer <b>bending downward towards the tip</b>, but only by
+      <b>0.522 nm ≈ 7 px</b> — visible to the eye, hard to measure by hand.</p>
+    </div>
+    <div class="pane">
+      <table class="sm" style="margin-top:0">
         <tbody>
           <tr><th style="width:20%">Baseline</th><td>The endpoint itself: <code>dev = y − y(endpoint)</code>, positive = lower</td></tr>
-          <tr><th>Window</th><td>Measured along <b>arclength</b>, <b>not</b> along x</td></tr>
-          <tr><th>Output</th><td><code>window</code> · <code>window_polyline</code> · <code>max_downward_deviation</code> · <code>max_downward_point</code> · <code>max_downward_arclength</code> · <code>max_abs_deviation</code> · <code>deviation_profile</code></td></tr>
+          <tr><th>Window</th><td>Along <b>arclength</b>, <b>not</b> along x. The layer bends near the tip, so an x-window would cover a <b>different amount of actual layer</b> on different images</td></tr>
           <tr><th>Measured</th><td>Left 0.597 nm (0…1.417), right 0.709 nm (0.224…1.268)</td></tr>
         </tbody>
       </table>
-      <div class="note"><b>Why arclength and not x</b>
-      The layer bends near the tip. An x-window would cover a <b>different amount of actual layer</b>
-      on different images, making the numbers incomparable.</div>
-    </div>
-    <div class="pane">
-      <div class="note" style="margin-top:0"><b>Why the whole <code>deviation_profile</code> is stored</b>
-      To try a different window length, or to check whether the maximum is an isolated burr,
-      <b>you do not re-run the batch</b> — you check the JSON.
-      <br>M5's <code>curvature_profile</code> and M2's <code>residual_profile</code> follow the same rule;
-      it is a principle running through the whole tool.</div>
       <div class="tip"><b>How it is drawn (magenta)</b>
-      Thickened skeleton span = the searched range · end ticks = window bounds · dashed line = the endpoint baseline ·
-      arrow to the maximum with its value. <b>The number is readable without opening the JSON.</b></div>
+      Thickened span = the searched range · end ticks = window bounds · dashed = endpoint baseline ·
+      arrow to the maximum with its value. <b>Readable without opening the JSON.</b></div>
+      <div class="note"><b>The whole <code>deviation_profile</code> is stored</b>
+      To try a different window length, or to check whether the maximum is an isolated burr,
+      <b>you do not re-run the batch</b>. M5's <code>curvature_profile</code> and M2's
+      <code>residual_profile</code> follow the same rule.</div>
     </div>
   </div></div>
 </div></section>
@@ -641,9 +657,14 @@ python tools/tem_analysis/selftest.py</code></pre>
   <p class="lead">A Milling band has two flanks: one against the stack, one facing vacuum. We want the one <b>the ion mill actually produced</b>.</p>
   <div class="body"><div class="cols c2w">
     <div class="pane">
-      <figure class="h340"><img src="assets/07_milling_zoom.png" alt="milling">
-      <figcaption><span style="color:#fa0">Orange</span> = the selected milled flank · <b>m1</b> = curvature maximum ·
-      <span style="color:#3cf">blue dotted circle</span> = osculating circle</figcaption></figure>
+      <div class="cols c2">
+        <figure class="h215"><img src="assets/34_milling_raw.png" alt="raw"><figcaption>Raw (contrast-stretched)</figcaption></figure>
+        <figure class="h215"><img src="assets/34_milling_ovl.png" alt="milling"><figcaption>Measurement overlay</figcaption></figure>
+      </div>
+      <p class="mini" style="margin:5px 0 0;font-size:11.2px;color:var(--dim)">
+      <span style="color:#fa0">Orange</span> = the selected milled flank · <b>m1</b> = curvature maximum ·
+      <span style="color:#3cf">blue dotted circle</span> = osculating circle.
+      The raw image confirms <b>the flank picked is the one facing vacuum</b>: uniform background outside, device layers inside.</p>
     </div>
     <div class="pane">
       <div class="tip" style="margin-top:0"><b>Adopted: adjacency criterion</b>
@@ -704,9 +725,14 @@ i= 651 p=(431,443) +n→Block_U       -n→_background_</code></pre>
   <div class="body">
     <div class="cols c2w">
       <div class="pane">
-        <figure class="h270"><img src="assets/08_nonmag_zoom.png" alt="non_mag">
-        <figcaption>Thin <span style="color:#ff0">yellow</span> = raw per-column edge ·
-        yellow dashed = sigma-clipped fit · endpoints <b>Non_mag1/2</b></figcaption></figure>
+        <div class="cols c2">
+          <figure class="h175"><img src="assets/35_nonmag_raw.png" alt="raw"><figcaption>Raw (contrast-stretched)</figcaption></figure>
+          <figure class="h175"><img src="assets/35_nonmag_ovl.png" alt="non_mag"><figcaption>Measurement overlay</figcaption></figure>
+        </div>
+        <p class="mini" style="margin:5px 0 0;font-size:11.2px;color:var(--dim)">Thin
+        <span style="color:#ff0">yellow</span> = raw per-column edge · dashed = sigma-clipped fit ·
+        endpoints <b>Non_mag1/2</b>. In the raw image the block's <b>two lower corners are visibly rounded</b> —
+        those are the columns that get clipped.</p>
       </div>
       <div class="pane">
         <table class="sm" style="margin-top:0">
@@ -735,8 +761,19 @@ i= 651 p=(431,443) +n→Block_U       -n→_background_</code></pre>
   <div class="kicker">04 · Measurement M7</div>
   <h2><code>corner_offsets</code> — Non_mag endpoints ↔ Milling bends</h2>
   <p class="lead">dx/dy and straight-line distance for <code>Non_mag1→m1</code> and <code>Non_mag2→m2</code>.</p>
-  <div class="body"><div class="cols c2">
-    <div class="pane"><table class="sm">
+  <div class="body"><div class="cols c2w">
+    <div class="pane">
+      <div class="cols c2">
+        <figure class="h215"><img src="assets/32_corner_raw.png" alt="raw"><figcaption>Raw (contrast-stretched)</figcaption></figure>
+        <figure class="h215"><img src="assets/32_corner_ovl.png" alt="corner"><figcaption>Spring-green L: horizontal leg = dx, vertical = dy</figcaption></figure>
+      </div>
+      <p class="mini" style="margin:5px 0 0;font-size:11.2px;color:var(--dim)">The left corner:
+      <span style="color:#ff0">Non_mag1</span> (block's lower-left) → <span style="color:#fa0">m1</span>
+      (milled flank's curvature maximum); here d = (−1.94, +2.32) nm. The two points belong to
+      <b>different classes and are found by different algorithms</b>, yet their relative position is what the
+      process cares about.</p>
+    </div>
+    <div class="pane"><table class="sm" style="margin-top:0">
       <tbody>
         <tr><th style="width:22%">What is special</th><td>The <b>only module that combines other measurements</b>. It does not recompute; it reads M5 and M6 back out of <code>ctx.results</code></td></tr>
         <tr><th>Ordering</th><td>So it <b>must</b> sit after <code>non_mag</code> / <code>milling_*</code> in the registry</td></tr>
@@ -744,15 +781,12 @@ i= 651 p=(431,443) +n→Block_U       -n→_background_</code></pre>
         <tr><th>Overlay</th><td>A spring-green dotted L — horizontal leg is dx, vertical leg is dy</td></tr>
         <tr><th>Measured</th><td><code>Nm1→m1.dx</code> median <b>−1.251</b> nm, <code>Nm2→m2.dx</code> <b>+1.288</b> nm (opposite signs, symmetric)</td></tr>
       </tbody>
-    </table></div>
-    <div class="pane">
-      <div class="tip" style="margin-top:0"><b>This module demonstrates the architecture's composability</b>
-      Adding a "combining" measurement requires re-implementing no geometry at all — just place it after its
-      dependencies in the registry and read the points back with <code>ctx.measured_point()</code>.
-      Degradation is per side, so a mask that lost one Milling band still yields the other offset.</div>
-      <pre><code>a = ctx.measured_point("non_mag", "Non_mag1")
-b = ctx.measured_point("milling_l",
-                       "max_curvature_point")
+    </table>
+    <div class="tip"><b>Demonstrates the architecture's composability</b>
+    A "combining" measurement re-implements no geometry — place it after its dependencies and read the points
+    back with <code>ctx.measured_point()</code>.</div>
+    <pre style="margin-bottom:0"><code>a = ctx.measured_point("non_mag", "Non_mag1")
+b = ctx.measured_point("milling_l", "max_curvature_point")
 if a is None or b is None:
     ctx.warn(...); return {...: None}
 return {..., **ctx.offset(a, b)}</code></pre>
@@ -900,14 +934,42 @@ return {..., **ctx.offset(a, b)}</code></pre>
       <div class="note"><b>Before vs after the anchoring fix</b>
       Non_mag length once read <b>33.98 nm</b> on one image (it measured an artefact band at the bottom of the frame);
       after the fix it reads <b>9.14 nm</b>, back in range.</div>
-      <div class="ph" style="margin-top:7px">
-        <div class="tag">figure — can follow later</div>
-        <div class="title">Batch distribution / trend plots</div>
-        <div class="desc">Only CSV today; plotting is external. I can add a <code>plot_summary.py</code> if wanted</div>
-        <div class="file">assets/14_batch_stats.png</div>
-      </div>
+      <div class="tip" style="margin-top:7px"><b>This table is not typed by hand</b>
+      <code>plot_summary.py</code> reads <code>summary.csv</code> and emits four figures plus a
+      <code>summary_stats.csv</code>. Next slide.</div>
     </div>
   </div></div>
+</div></section>
+
+<!-- ============ 23b plot_summary ============ -->
+<section class="slide" data-t="Batch plots: plot_summary"><div class="fit">
+  <div class="kicker">06 · Measured</div>
+  <h2>Batch visualisation: <code>plot_summary.py</code></h2>
+  <p class="lead">Reads one (or several) <code>summary.csv</code> files and emits four figures plus a statistics CSV. Comparing batches is just extra <code>--csv</code> arguments.</p>
+  <div class="body">
+    <figure class="h380" style="margin-bottom:7px"><img src="assets/14d_batch_slide.png" alt="batch distributions">
+    <figcaption>Box plots with per-image points, grouped by unit. Numbers on the right are median (sd) n; red rings are outliers — just one in this batch: image #3's Leveling tilt of −2.26°.</figcaption></figure>
+    <div class="cols c3">
+      <div class="pane"><table class="sm" style="margin-top:0">
+        <thead><tr><th style="width:50%">Output</th><th>Answers</th></tr></thead>
+        <tbody>
+          <tr><td><code>_distributions.png</code></td><td>Spread? Which are outliers?</td></tr>
+          <tr><td><code>_trend.png</code></td><td>Drift along acquisition order?</td></tr>
+          <tr><td><code>_symmetry.png</code></td><td>Left/right symmetric?</td></tr>
+          <tr><td><code>_quality.png</code></td><td>Which overlays to open</td></tr>
+          <tr><td><code>_stats.csv</code></td><td>median/sd/MAD/extremes/outliers</td></tr>
+        </tbody>
+      </table></div>
+      <div class="pane"><div class="note" style="margin-top:0"><b>Outliers use median/MAD, not mean/σ</b>
+      With 26 rows, one bad prediction pulls the mean toward itself and inflates σ just enough to
+      <b>hide itself</b>. The modified z-score <code>0.6745·(x−median)/MAD</code> with <code>|z|&gt;3.5</code>
+      is used instead. A zero MAD (a constant metric) disables the test rather than flagging every row.</div></div>
+      <div class="pane"><div class="tip" style="margin-top:0"><b>Right-hand metrics are auto-flipped</b>
+      <code>a2_b2.dx</code> is about −5.3 nm while <code>a1_b1.dx</code> is +5.3 nm. Unflipped they sit at
+      opposite ends and the panel is wasted on the gap between them; flipped, they share an axis and
+      <b>left/right consistency is visible at a glance</b>.</div></div>
+    </div>
+  </div>
 </div></section>
 
 <!-- ============ 24 selftest ============ -->
@@ -1008,7 +1070,7 @@ return {..., **ctx.offset(a, b)}</code></pre>
         <tr><td><b>Per-class shape stats</b><br>area / perimeter / skeleton length</td><td><span class="badge b-no">missing</span></td><td>Only a few modules incidentally report their own skeleton length</td><td>Low<br>CSV grows to ~100 cols</td></tr>
         <tr><td><b>MgO_L/R · Block_U</b></td><td><span class="badge b-no">missing</span></td><td>Annotated and segmented, but <b>no measurement uses them</b> (only as "neighbours" in Milling side selection)</td><td>Depends on the spec</td></tr>
         <tr><td><b>Layer thickness</b></td><td><span class="badge b-no">missing</span></td><td>Everything today is an endpoint, an edge or an angle — no thickness</td><td>Medium<br>needs a normal defined</td></tr>
-        <tr><td><b>Batch statistics and plots</b></td><td><span class="badge b-no">missing</span></td><td>CSV only</td><td>Low</td></tr>
+        <tr><td><b>Batch statistics and plots</b></td><td><span class="badge b-ok">added</span></td><td><code>plot_summary.py</code>: distributions / trend / symmetry / run quality + <code>summary_stats.csv</code>, multi-batch capable</td><td>—</td></tr>
         <tr><td><b>Write back to DB / show in UI</b></td><td><span class="badge b-no">missing</span></td><td>The metrology tool is a <b>fully standalone CLI</b> with no coupling to the platform</td><td>Medium</td></tr>
         <tr><td><b>Validation vs manual measurement</b></td><td><span class="badge b-no">missing</span></td><td>The self-test proves "implementation matches definition", <b>not "definition matches requirement"</b></td><td>Needs a reference set</td></tr>
       </tbody>
@@ -1056,7 +1118,6 @@ return {..., **ctx.offset(a, b)}</code></pre>
         <tr><td><code>11_napari_ui.png</code></td><td>Training ①</td><td>Full-window napari annotator screenshot</td></tr>
         <tr><td><code>12_train_job.png</code></td><td>Training ④</td><td>Training job page: status, progress, generated command</td></tr>
         <tr><td><code>13_train_curve.png</code></td><td>Training ④</td><td>Loss and mIoU against iteration</td></tr>
-        <tr><td><code>14_batch_stats.png</code></td><td>Measured</td><td>Batch distribution plots (I can script these from summary.csv)</td></tr>
         <tr><td><code>15_definition.png</code></td><td>Measurements</td><td><b>Highest priority</b> — the customer's original measurement-definition diagram</td></tr>
         <tr><td><code>16_manual_vs_auto.png</code></td><td>Limits</td><td>Manual vs automated comparison, answering "how accurate is it?"</td></tr>
       </tbody>
