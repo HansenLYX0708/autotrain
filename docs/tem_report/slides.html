@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TEM 分割 + 几何量测 · 汇报（分页版）</title>
+<style>
+:root{
+  --bg:#0f1216; --panel:#171b21; --panel2:#1d222a; --line:#2a313b;
+  --fg:#e6e9ee; --dim:#9aa4b2; --accent:#4ea1ff; --ok:#4ec9a5; --warn:#e0b24c; --bad:#e4695e;
+  --mono:"Cascadia Mono","Consolas","SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden}
+body{background:#080a0d;color:var(--fg);
+  font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;line-height:1.62}
+code{font-family:var(--mono);font-size:.88em;background:#232a33;padding:0 4px;border-radius:3px;color:#d8e2ee}
+pre{background:#11151a;border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:5px;padding:8px 11px;overflow:hidden;font-family:var(--mono);
+  font-size:10.6px;line-height:1.5;margin:7px 0}
+pre code{background:none;padding:0;font-size:inherit}
+b{color:#fff}
+
+/* ---------- fixed design canvas, scaled to the viewport ---------- */
+#stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#080a0d}
+#canvas{width:1280px;height:720px;position:relative;flex:0 0 auto;
+  transform-origin:center center;background:var(--bg);
+  box-shadow:0 0 0 1px #222a33, 0 18px 60px #0009;border-radius:4px;overflow:hidden}
+.slide{position:absolute;inset:0;display:none;overflow:hidden}
+.slide.on{display:block;animation:fade .2s ease}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+/* .fit is scaled down further when a slide's content would overflow 720px */
+.fit{position:absolute;top:0;left:0;width:1280px;transform-origin:top left;
+  padding:32px 46px 38px;display:flex;flex-direction:column}
+
+.kicker{font-family:var(--mono);font-size:10.5px;letter-spacing:.17em;color:var(--accent);
+  text-transform:uppercase;margin-bottom:3px}
+.fit > h2{margin:0 0 3px;font-size:26px;letter-spacing:.3px;line-height:1.25}
+.fit > .lead{color:var(--dim);font-size:13px;margin:0 0 12px;line-height:1.5}
+.body{display:flex;flex-direction:column}
+
+/* ---------- chrome (outside the canvas, never scaled) ---------- */
+#bar{position:fixed;left:0;top:0;height:3px;background:var(--accent);width:0;z-index:60;transition:width .18s}
+#hud{position:fixed;right:18px;bottom:14px;z-index:60;display:flex;align-items:center;gap:9px;
+  font-family:var(--mono);font-size:12px;color:var(--dim)}
+#hud button{background:#1d222a;color:var(--fg);border:1px solid var(--line);border-radius:5px;
+  width:28px;height:25px;cursor:pointer;font-size:13px;line-height:1}
+#hud button:hover{background:#28313d}
+#hud .num{min-width:54px;text-align:center}
+#tag{position:fixed;left:18px;bottom:14px;z-index:60;font-size:12px;color:#525b67}
+#tag a{color:#525b67}
+#help{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:60;font-size:11.5px;color:#454d58}
+
+#ov{position:fixed;inset:0;background:#080a0deb;z-index:80;display:none;overflow:auto;padding:30px}
+#ov.on{display:block}
+#ov h3{margin:0 0 16px;font-size:15px;color:var(--dim);font-weight:600}
+#ov .g{display:grid;grid-template-columns:repeat(auto-fill,minmax(205px,1fr));gap:10px}
+#ov .c{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:10px 12px;cursor:pointer}
+#ov .c:hover{border-color:var(--accent);background:var(--panel2)}
+#ov .c .i{font-family:var(--mono);font-size:11px;color:var(--accent)}
+#ov .c .t{font-size:13px;margin-top:2px}
+
+/* ---------- content primitives ---------- */
+.cols{display:grid;gap:16px}
+.c2{grid-template-columns:1fr 1fr}
+.c2u{grid-template-columns:1.18fr .82fr}
+.c2w{grid-template-columns:.82fr 1.18fr}
+.c3{grid-template-columns:repeat(3,1fr)}
+.c4{grid-template-columns:repeat(4,1fr)}
+.pane{min-width:0}
+.pane > :first-child{margin-top:0}
+.pane > :last-child{margin-bottom:0}
+
+figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px;text-align:center}
+figure img{max-width:100%;height:auto;display:block;margin:0 auto;border-radius:4px;background:#000}
+figcaption{color:var(--dim);font-size:10.8px;margin-top:6px;line-height:1.45}
+.h300 img{max-height:300px} .h430 img{max-height:430px} .h410 img{max-height:410px}
+.h340 img{max-height:340px} .h300w img{max-height:300px} .h230 img{max-height:230px}
+.h190 img{max-height:190px} .h090 img{max-height:90px} .h270 img{max-height:270px}
+
+table{border-collapse:collapse;width:100%;font-size:11.4px;margin:5px 0;line-height:1.45}
+th,td{border:1px solid var(--line);padding:4px 7px;text-align:left;vertical-align:top}
+th{background:var(--panel2);color:#cfd8e3;font-weight:600}
+tbody tr:nth-child(even){background:#14181e}
+table.sm{font-size:10.6px} table.sm th,table.sm td{padding:3px 6px}
+
+ul,ol{margin:6px 0;padding-left:17px}
+li{margin:3.5px 0;font-size:12.3px;line-height:1.5}
+p{margin:6px 0;font-size:12.6px}
+
+.note,.warn,.tip{border-radius:6px;padding:8px 11px;margin:7px 0;font-size:11.8px;border:1px solid;line-height:1.5}
+.note{background:#141c26;border-color:#254058}
+.warn{background:#241d10;border-color:#5a4718}
+.tip{background:#122019;border-color:#1f4a3a}
+.note b,.warn b,.tip b{display:block;margin-bottom:2px}
+.warn b{color:var(--warn)} .tip b{color:var(--ok)} .note b{color:var(--accent)}
+.note li,.warn li,.tip li{font-size:11.6px;margin:2px 0}
+
+.pipe{display:flex;align-items:stretch;margin:2px 0 12px}
+.pipe .step{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:7px 5px;text-align:center;font-size:11px}
+.pipe .step b{display:block;font-size:11.6px;margin-bottom:1px}
+.pipe .step span{color:var(--dim);font-size:9.6px;font-family:var(--mono)}
+.pipe .arw{display:flex;align-items:center;color:var(--accent);padding:0 5px;font-size:13px}
+
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0}
+.kpi div{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:10px 12px}
+.kpi .v{font-size:21px;font-weight:700;font-family:var(--mono);line-height:1.2}
+.kpi .k{color:var(--dim);font-size:11px;margin-top:1px}
+
+.badge{font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600;white-space:nowrap}
+.b-no{background:#331a17;color:#f08c81}
+.swatch{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;margin-right:5px;border:1px solid #0006}
+
+.ph{border:2px dashed #3b4655;border-radius:7px;text-align:center;padding:11px 12px;
+  background:repeating-linear-gradient(45deg,#161b22,#161b22 10px,#1a2029 10px,#1a2029 20px)}
+.ph .tag{display:inline-block;background:var(--warn);color:#241c05;font-weight:700;font-size:9.5px;
+  letter-spacing:.08em;padding:1px 8px;border-radius:3px;margin-bottom:5px}
+.ph .title{font-size:12.6px;font-weight:600;margin-bottom:3px}
+.ph .desc{color:var(--dim);font-size:11.2px;line-height:1.5}
+.ph .file{font-family:var(--mono);font-size:10.2px;color:#7f8b9a;margin-top:4px}
+
+.dim{color:var(--dim)}
+.mini{font-size:11.4px;color:var(--dim)}
+.hero-t{font-size:40px;font-weight:700;letter-spacing:.5px;margin:0 0 10px;line-height:1.18}
+.hero-s{font-size:15.5px;color:var(--dim);max-width:760px;margin:0 0 22px;line-height:1.6}
+.meta{display:flex;flex-wrap:wrap;gap:8px}
+.meta span{background:#232c37;border:1px solid var(--line);border-radius:18px;padding:2px 12px;font-size:11.5px;color:var(--dim)}
+.fit.mid{justify-content:center;height:720px;padding-top:0;padding-bottom:0}
+
+/* ---------- print: one slide per page ---------- */
+@media print{
+  @page{size:297mm 167mm;margin:0}
+  html,body{height:auto;overflow:visible;background:#fff;color:#111}
+  #bar,#hud,#tag,#help,#ov{display:none!important}
+  #stage{position:static;display:block}
+  #canvas{width:auto;height:auto;transform:none!important;box-shadow:none;background:#fff;overflow:visible}
+  .slide{position:static;display:block!important;page-break-after:always;break-after:page;
+    width:1280px;height:720px;overflow:hidden;animation:none;background:#fff}
+  .slide:last-child{page-break-after:auto}
+  .fit{position:static;transform:none!important;width:1280px!important;height:720px!important}
+  .fit > h2{color:#000} .fit > .lead{color:#444} .kicker{color:#1668c8}
+  .hero-t{color:#000} .hero-s{color:#444}
+  figure{background:#fff;border-color:#bbb} figcaption,.dim,.mini,td,li,p{color:#333}
+  th{background:#eee;color:#000} td,th{border-color:#bbb}
+  tbody tr:nth-child(even){background:#f6f6f6}
+  pre{background:#f5f6f8;color:#111;border-color:#ccc} code{background:#eef1f4;color:#111}
+  b{color:#000}
+  .note{background:#eef4fb;border-color:#b9d3ee} .warn{background:#fdf6e6;border-color:#e6d199}
+  .tip{background:#eef8f3;border-color:#a9dcc8}
+  .kpi div,.pipe .step{background:#fff;border-color:#bbb}
+  .kpi .v{color:#000}
+  .meta span{background:#f0f2f5;color:#444;border-color:#ccc}
+  .ph{background:#fafafa;border-color:#bbb}
+}
+</style>
+</head>
+<body>
+
+<div id="bar"></div>
+<div id="stage"><div id="canvas">
+
+<!-- ============ 01 cover ============ -->
+<section class="slide"><div class="fit mid">
+  <div class="kicker">Segmentation-driven metrology</div>
+  <h1 class="hero-t">TEM 断面：分割 + 几何量测</h1>
+  <p class="hero-s">用语义分割把 TEM 断面拆成 11 个结构层，再在标签图上做亚纳米级几何量测。
+  逐图输出 JSON 与叠加图，批量输出固定列 CSV。</p>
+  <div class="meta">
+    <span>标注工具 + 量测工具</span>
+    <span>量测工具 v1.0.0</span>
+    <span>7 个量测模块</span>
+    <span>73 列汇总 CSV</span>
+    <span>实测 26 张 / 0 失败</span>
+  </div>
+  <p class="dim" style="margin-top:28px;font-size:11.5px">← → 翻页 &nbsp;·&nbsp; Esc 目录 &nbsp;·&nbsp; F 全屏 &nbsp;·&nbsp; Ctrl+P 导出 PDF</p>
+</div></section>
+
+<!-- ============ 02 problem ============ -->
+<section class="slide" data-t="问题与思路"><div class="fit">
+  <div class="kicker">00 · 问题</div>
+  <h2>为什么要做这件事</h2>
+  <p class="lead">TEM 断面照片的结构尺寸，以前靠人在图上手动拉线量。</p>
+  <div class="body">
+    <div class="cols c2">
+      <div class="pane"><table>
+        <thead><tr><th style="width:36%">以前</th><th>问题</th></tr></thead>
+        <tbody>
+          <tr><td>人工拉线量</td><td>一张图几分钟，一个批次一天</td></tr>
+          <tr><td>凭经验找端点</td><td>换个人结果就变，<b>不可复现</b></td></tr>
+          <tr><td>结果记在表格里</td><td>批次之间口径不一致，<b>没法比</b></td></tr>
+          <tr><td>只有最终数字</td><td>出了异常，查不到是哪一步的问题</td></tr>
+        </tbody></table></div>
+      <div class="pane"><table>
+        <thead><tr><th style="width:36%">现在</th><th>怎么解决</th></tr></thead>
+        <tbody>
+          <tr><td>分割模型认层</td><td>批量自动，26 张一次跑完</td></tr>
+          <tr><td>确定性几何算法</td><td>同一张图永远同一个数</td></tr>
+          <tr><td>机器可读字段</td><td>JSON + 固定列 CSV，口径写进数据本身</td></tr>
+          <tr><td>叠加图 + warnings</td><td>每个数都能追到图上位置和算法参数</td></tr>
+        </tbody></table></div>
+    </div>
+    <div class="kpi">
+      <div><div class="v">11</div><div class="k">分割类别（不含背景）</div></div>
+      <div><div class="v">7</div><div class="k">量测模块</div></div>
+      <div><div class="v">0.0746</div><div class="k">nm/px（FOV 76.37 / 1024）</div></div>
+      <div><div class="v">≈0.1 nm</div><div class="k">典型拟合 rmse</div></div>
+    </div>
+    <div class="tip"><b>一句话</b>先分割，再分析。分割负责"哪里是什么"，分析负责"它有多大、偏了多少"。</div>
+  </div>
+</div></section>
+
+<!-- ============ 03 pipeline ============ -->
+<section class="slide" data-t="整体链路"><div class="fit">
+  <div class="kicker">01 · 链路</div>
+  <h2>整体链路</h2>
+  <p class="lead">两个阶段之间唯一的接口，就是分割模型输出的伪彩标签图。</p>
+  <div class="body">
+    <div class="pipe">
+      <div class="step"><b>① 采图</b><span>*.tif + FOV</span></div><div class="arw">▶</div>
+      <div class="step"><b>② 标注</b><span>annotate.py</span></div><div class="arw">▶</div>
+      <div class="step"><b>③ 数据集</b><span>train/val.txt</span></div><div class="arw">▶</div>
+      <div class="step"><b>④ 训练</b><span>seg task</span></div><div class="arw">▶</div>
+      <div class="step"><b>⑤ 预测</b><span>label map</span></div><div class="arw">▶</div>
+      <div class="step"><b>⑥ 分析</b><span>analyze.py</span></div><div class="arw">▶</div>
+      <div class="step"><b>⑦ 报告</b><span>JSON/CSV/图</span></div>
+    </div>
+    <div class="cols c4">
+      <figure class="h300"><img src="assets/01_raw.png" alt="raw"><figcaption>① 原始 TEM 灰度图<br>1024×1024 · FOV 77.35 nm</figcaption></figure>
+      <figure class="h300"><img src="assets/02_mask.png" alt="mask"><figcaption>⑤ 伪彩标签图<br><code>pseudo_color_prediction/</code></figcaption></figure>
+      <figure class="h300"><img src="assets/03_added.png" alt="added"><figcaption>混合预览 <code>added_prediction/</code><br><b>不能</b>喂给量测工具</figcaption></figure>
+      <figure class="h300"><img src="assets/04_overlay_raw.png" alt="overlay"><figcaption>⑦ 量测叠加图<br><code>*_overlay.png</code></figcaption></figure>
+    </div>
+  </div>
+</div></section>
+
+<!-- ============ 04 contract ============ -->
+<section class="slide" data-t="接口约定"><div class="fit">
+  <div class="kicker">01 · 接口</div>
+  <h2>接口约定：只吃标签图，不吃混合预览</h2>
+  <p class="lead">这是整条链路唯一的耦合点，所以工具主动做了防呆。</p>
+  <div class="body"><div class="cols c2w">
+    <div class="pane">
+      <figure class="h410"><img src="assets/03_added.png" alt="added">
+      <figcaption><code>added_prediction/</code> — 原图与掩膜的混合预览</figcaption></figure>
+    </div>
+    <div class="pane">
+      <div class="warn"><b>为什么必须拒绝混合预览</b>
+      它的颜色被灰度图污染了，<b>不是标签图</b>。如果硬算，每个类别的边界都会错，
+      而且错得很"合理"——不会崩，只会安静地给出一整页错数字。</div>
+      <p>工具的做法：把 RGB 往标准调色板上吸附，统计离色像素比例，<b>超过 5% 就直接报错</b>。</p>
+      <pre><code>P / L 模式  → 索引即类别 id，直接读
+RGB 模式    → 吸附到调色板，离色 &gt;5% 报错
+其它模式    → 不支持</code></pre>
+      <div class="note"><b>调色板为什么能反查</b>
+      <code>build_palette()</code> = PASCAL VOC colormap 去掉首个黑色项，所以 <b>类别 id == 调色板索引</b>。
+      标注工具和量测工具<b>共用同一个函数</b>，两边不可能走偏。</div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 05 annotate ============ -->
+<section class="slide" data-t="训练①标注与数据集"><div class="fit">
+  <div class="kicker">02 · 分割训练</div>
+  <h2>① 标注与数据集</h2>
+  <p class="lead"><code>tools/napari_seg/annotate.py</code> — 输出目录直接就是可训练的分割数据集。</p>
+  <div class="body"><div class="cols c2">
+    <div class="pane">
+      <pre><code>&lt;out&gt;/
+  JPEGImages/       原图（文件名已 ASCII 安全化）
+  Annotations/      8-bit 调色板 PNG，像素值 == 类别 id
+  train.txt         "JPEGImages/x.jpg Annotations/x.png"
+  val.txt
+  class_names.txt   首行永远是 _background_</code></pre>
+      <div class="warn"><b>文件名必须安全化</b>
+      列表文件按<b>空白字符</b>切分每一行，所以中文、空格、括号一律换成 <code>_</code>，
+      重名加 <code>_2</code>/<code>_3</code>。<code>--print-names --no-gui</code> 可先预览改名结果。</div>
+    </div>
+    <div class="pane">
+      <table class="sm">
+        <thead><tr><th style="width:28%">要点</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>类别顺序即 id</td><td>本项目 11 类 + 背景 = 12。顺序一变，所有历史标签全错位，所以固化在 <code>class_names.txt</code> 里随数据集走</td></tr>
+          <tr><td>断点续标</td><td>不带 <code>--classes</code> 再开同一个 <code>--out</code>，类别自动读回</td></tr>
+          <tr><td>类别清单</td><td><code>SAF_Ru_L/R · MgO_L/R/C · Non_mag · Milling_L/R · Leveling · Block_U/D</code></td></tr>
+        </tbody>
+      </table>
+      <div class="ph" style="margin-top:9px">
+        <div class="tag">缺图 · 请提供</div>
+        <div class="title">napari 标注界面截图</div>
+        <div class="desc">图层列表 + 自定义面板（类别下拉 / 笔刷 / contour / 导出按钮）+ 标了一半的画布</div>
+        <div class="file">assets/11_napari_ui.png</div>
+      </div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 06 yaml merge ============ -->
+<section class="slide" data-t="训练②三份YAML合并"><div class="fit">
+  <div class="kicker">02 · 分割训练</div>
+  <h2>② 一个训练任务 = 三份 YAML 深合并</h2>
+  <p class="lead">网页端不让人写整份配置，而是拆成三份独立维护、启动时合并。</p>
+  <div class="body">
+    <pre><code>数据集配置 ─┐
+训练配置   ─┼─►  深合并 YAML  ─►  训练入口脚本  ─►  stdout 解析进 TrainingLog 表
+模型配置   ─┘
+
+优先级：dataset → training → model（后者覆盖前者，逐 key 合并）</code></pre>
+    <div class="cols c2">
+      <div class="pane"><table class="sm">
+        <thead><tr><th style="width:22%">配置</th><th style="width:24%">负责</th><th>典型内容</th></tr></thead>
+        <tbody>
+          <tr><td>数据集</td><td>数据从哪来</td><td><code>train_dataset</code> / <code>val_dataset</code> / <code>dataset_root</code> / <code>num_classes</code> / <code>transforms</code></td></tr>
+          <tr><td>训练</td><td>怎么练</td><td><code>batch_size</code> / <code>iters</code> / <code>optimizer</code> / <code>lr_scheduler</code></td></tr>
+          <tr><td>模型</td><td>练什么</td><td><code>model</code>（架构 + backbone）/ <b><code>loss</code></b></td></tr>
+        </tbody>
+      </table></div>
+      <div class="pane">
+        <div class="note"><b>为什么必须"深合并"而不是拼文本</b>
+        拼接会产生重复的顶层 key。解析器容忍（后者赢），但文档本身是非法 YAML，
+        再用 <code>yaml.parse()</code> 读就抛 <code>Map keys must be unique</code>。
+        <br>而且合并是<b>逐 key</b> 的：训练配置可以只改 <code>train_dataset.transforms</code> 里的一项，
+        不用把整个数据集块重抄一遍。</div>
+        <div class="tip"><b>好处</b>任意训练预设 × 任意模型预设 × 任意数据集，都能自由组合，
+        不需要为每种组合维护一份完整配置。</div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- ============ 07 constraints ============ -->
+<section class="slide" data-t="训练③三个硬约束"><div class="fit">
+  <div class="kicker">02 · 分割训练</div>
+  <h2>③ 分割训练的三个硬约束</h2>
+  <p class="lead">全部是踩过的坑，每一条都会让训练直接失败，或让配置<b>静默不生效</b>。</p>
+  <div class="body">
+    <div class="warn"><b>1 · 按 iteration 训练，不是 epoch</b>
+    <code>iters</code> 才是总步数，<code>warmup_iters</code>、<code>save_interval</code> 同理。
+    数据库里那几个 epoch 命名的列，对分割项目存的其实是<b>迭代数</b>。</div>
+    <div class="warn"><b>2 · <code>len(loss.types)</code> 必须等于模型输出的 logits 数</b>
+    主头 + 辅助头。不匹配就是 <code>RuntimeError: The length of logits_list should equal to the types of loss config</code>。
+    <br>所以 <code>loss:</code> <b>永远写在模型配置里</b>，绝不写在训练配置里 —— 这样任意训练预设都能和任意模型预设自由组合而不会配错。</div>
+    <div class="cols c2">
+      <div class="pane"><table class="sm">
+        <thead><tr><th>架构</th><th style="width:22%">logits</th><th>架构</th><th style="width:22%">logits</th></tr></thead>
+        <tbody>
+          <tr><td>UNet</td><td>1</td><td>PP-LiteSeg (STDC1/2)</td><td>3</td></tr>
+          <tr><td>DeepLabV3+</td><td>1</td><td>BiSeNetV2</td><td>5</td></tr>
+          <tr><td>OCRNet</td><td>2</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table></div>
+      <div class="pane">
+        <div class="warn" style="margin-top:0"><b>3 · <code>save_dir</code> / <code>save_interval</code> / <code>log_iters</code> 是命令行参数，不是 YAML 键</b>
+        写进 YAML <b>不会报错，但不生效</b> —— 这是最容易被忽略的一条。</div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- ============ 08 launch + loop ============ -->
+<section class="slide" data-t="训练④启动与伪标签闭环"><div class="fit">
+  <div class="kicker">02 · 分割训练</div>
+  <h2>④ 训练启动 · 日志 · 伪标签闭环</h2>
+  <div class="body"><div class="cols c2">
+    <div class="pane">
+      <p style="margin-top:0"><b>平台服务端生成并执行的训练命令</b></p>
+      <pre><code>&lt;python&gt; -m &lt;distributed-launcher&gt; --gpus 0 `
+  tools/train.py `
+  --config   "&lt;merged&gt;.yml" `
+  --do_eval `
+  --save_dir "&lt;output&gt;/jobs/&lt;job_name&gt;"</code></pre>
+      <ul>
+        <li>工作目录由 <code>frameworks.ts::getWorkDir()</code> 按 <code>project.framework</code> 解析</li>
+        <li>命令<b>只在服务端生成</b>，从不接受请求体里的 <code>command</code>（<code>shell:true</code> 执行）；<code>--gpus</code> 严格白名单</li>
+        <li>stdout 按行喂给分割日志解析器：iter / loss / lr / ETA。<code>EVAL</code> 是多行块，解析器<b>有状态</b>，累积完整块才产出 mIoU / Acc / Kappa / Dice</li>
+        <li>基线预设 80k iters @ 512×512，SGD + PolynomialDecay(0.9)，bs 4；先用 20k quick 跑通全链路</li>
+      </ul>
+    </div>
+    <div class="pane">
+      <p style="margin-top:0"><b>伪标签闭环：数据集滚雪球</b></p>
+      <pre><code># 预测
+&lt;python&gt; tools/predict.py --config &lt;merged&gt;.yml `
+  --model_path &lt;output&gt;/best_model/&lt;weights&gt; `
+  --image_path &lt;new_batch&gt; --save_dir &lt;pred&gt;
+
+# 导回标注器，人工只做修正
+&lt;python&gt; tools/napari_seg/annotate.py `
+  --images &lt;new_batch&gt; --out &lt;dataset&gt; `
+  --import-masks &lt;pred&gt;/pseudo_color_prediction</code></pre>
+      <div class="tip"><b>标注是最贵的一步</b>
+      所以链路是闭环的：模型预测 → 导回标注器 → 人工只修正 → 变成新训练样本。
+      已有掩膜默认不覆盖（<code>--overwrite</code> 才覆盖），<code>--no-gui</code> 可只导入不开界面。</div>
+      <div class="ph">
+        <div class="tag">缺图 · 请提供</div>
+        <div class="title">训练任务页 + loss/mIoU 曲线</div>
+        <div class="file">assets/12_train_job.png · assets/13_train_curve.png</div>
+      </div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 09 tool overview ============ -->
+<section class="slide" data-t="量测工具总览"><div class="fit">
+  <div class="kicker">03 · 量测工具</div>
+  <h2>量测工具总览</h2>
+  <p class="lead">独立 CLI，依赖 numpy / Pillow / scipy / matplotlib（+ 可选 opencv-contrib）。</p>
+  <div class="body"><div class="cols c2u">
+    <div class="pane">
+      <pre><code># 批量 + 汇总 CSV + 叠加画在原始 TEM 图上
+python tools/tem_analysis/analyze.py `
+  --mask-dir   ...\pseudo_color_prediction `
+  --out        ...\analysis `
+  --overlay-on ...\normal_test `
+  --csv        summary.csv
+
+# 自检（合成几何 + 已知真值，不需真实数据）
+python tools/tem_analysis/selftest.py</code></pre>
+      <table class="sm">
+        <thead><tr><th style="width:28%">文件</th><th>职责</th></tr></thead>
+        <tbody>
+          <tr><td><code>analyze.py</code></td><td>CLI、标尺、按注册表跑量测、失败隔离、落盘</td></tr>
+          <tr><td><code>labelmap.py</code></td><td>伪彩 PNG → id 数组；连通域清理；FOV 解析</td></tr>
+          <tr><td><code>rectify.py</code></td><td>校平仿射 + 逆变换</td></tr>
+          <tr><td><code>skeleton.py</code></td><td>Guo–Hall 细化、最长路径、<code>Polyline</code></td></tr>
+          <tr><td><code>contour.py</code></td><td>有序外轮廓、环形最长连续段</td></tr>
+          <tr><td><code>geometry.py</code></td><td>TLS/OLS、σ 剔除、圆拟合、B 样条曲率</td></tr>
+          <tr><td><code>context.py</code></td><td>缓存、单位换算、双坐标、warnings</td></tr>
+          <tr><td><code>measures/*.py</code></td><td>7 个 <code>measure(ctx) -&gt; dict</code></td></tr>
+          <tr><td><code>report.py</code></td><td>JSON / 固定列 CSV / 叠加图</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pane">
+      <div class="tip" style="margin-top:0"><b>设计上最关键的一点：单项失败不拖垮整批</b>
+      每个量测被单独 try 住。某张预测里丢了 <code>Milling_L</code>，只会让 <code>results.milling_l</code>
+      变成 <code>null</code> 并写一条 warning，其余 6 项照常输出，批处理继续往下跑。</div>
+      <div class="note"><b>Guo–Hall 双实现</b>
+      有 <code>opencv-contrib</code> 就用 <code>cv2.ximgproc.thinning</code>，没有就退回
+      <code>skeleton.py</code> 的 NumPy 版。自检验证两者<b>逐像素一致</b>，只是慢一点 ——
+      部署环境缺 cv2 不影响结果。</div>
+      <div class="note"><b>参数化程度</b>
+      共 23 个 CLI 参数，全部会被原样记进 JSON 的 <code>params</code> 字段。
+      任何一个数字都能回答"是用什么设置算出来的"。</div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 10 scale + rectify ============ -->
+<section class="slide" data-t="两个前提：标尺与校平"><div class="fit">
+  <div class="kicker">03 · 量测工具</div>
+  <h2>所有数字的两个前提：标尺 &amp; 校平</h2>
+  <div class="body">
+    <div class="cols c2">
+      <div class="pane">
+        <p style="margin-top:0"><b>标尺（nm/px）</b>　默认从文件名正则取视场：
+        <code>..._FOV_76.37nm.png</code> → 76.37 nm，再除以<b>图像实际宽度</b>。
+        样本批次 26 张全部解析成功：<code>76.37 / 1024 = 0.074580 nm/px</code>。</p>
+        <ul>
+          <li>除以<b>实际宽度</b>而非写死 1024 —— 掩膜以别的尺寸导出时仍然正确，宽度≠1024 会 warning</li>
+          <li><code>fov_nm</code> / <code>image_width_px</code> / <code>scale_nm_per_px</code> / <code>scale_source</code> 全部记进 JSON 和 CSV</li>
+          <li><b>解析不到且没给 <code>--scale-nm</code> 时直接报错</b>，不会静默用错标尺</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <p style="margin-top:0"><b>校平（rectification）</b>　<code>Leveling</code> 层拟合直线得倾角，整图旋转到水平后再量。
+        <b>"dy 是向下偏了多少"这句话，只有校平之后才有物理意义。</b></p>
+        <ul>
+          <li>插值必须<b>最近邻</b>：数组装的是类别 id，任何平均都会造出没预测过的类</li>
+          <li>填充值用 <code>255</code>(ignore) 而非 0(背景) —— "画幅之外"与"预测为背景"因此可区分，M5 排除切边全靠它</li>
+          <li>每个点<b>同时给</b>校平坐标和原图坐标，可直接叠回原始 TEM 图</li>
+          <li>代价：重采样噪声 1–2 px。自检残余角 0.007°，但 dy 误差可达 ~5 px；<code>--no-rotate</code> 可完全避开</li>
+        </ul>
+      </div>
+    </div>
+    <figure class="h090" style="margin-top:6px"><img src="assets/09_leveling_zoom.png" alt="leveling">
+    <figcaption>Leveling 层（图像最下方绿带）。白线 = Guo–Hall 骨架，亮绿虚线 = <b>校平后</b>重新拟合的直线 —— 这是对整条旋转/逆变换链路的免费自检。</figcaption></figure>
+  </div>
+</div></section>
+
+<!-- ============ 11 measure overview ============ -->
+<section class="slide" data-t="量测总览"><div class="fit">
+  <div class="kicker">04 · 量测</div>
+  <h2>7 个量测模块</h2>
+  <p class="lead">按注册表顺序执行，后面的可以读前面的结果。</p>
+  <div class="body"><div class="cols c2w">
+    <div class="pane">
+      <pre style="margin-top:0"><code>leveling → mgo_c → interfaces → milling_l
+        → milling_r → non_mag → corner_offsets</code></pre>
+      <table class="sm">
+        <thead><tr><th style="width:30%">模块</th><th>量什么</th></tr></thead>
+        <tbody>
+          <tr><td><b>M1</b> <code>leveling</code></td><td>样品倾角 + Leveling 层平直度 → 定义整图校平</td></tr>
+          <tr><td><b>M2</b> <code>mgo_c</code></td><td>MgO_C 拟合直线：倾角、平直度、端点 b3/b4</td></tr>
+          <tr><td><b>M3</b> <code>interfaces</code></td><td>a1/a2 ↔ b1..b4 的 dx/dy —— <b>核心指标</b></td></tr>
+          <tr><td><b>M4</b> <code>*_dip</code></td><td>端点 5 nm 弧长内的最大下沉量</td></tr>
+          <tr><td><b>M5</b> <code>milling_l/r</code></td><td>研磨面曲率最大点 m1/m2 与半径</td></tr>
+          <tr><td><b>M6</b> <code>non_mag</code></td><td>背离 Block_D 的横向边缘与端点 Non_mag1/2</td></tr>
+          <tr><td><b>M7</b> <code>corner_offsets</code></td><td>Non_mag1↔m1 / Non_mag2↔m2 的偏移</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pane">
+      <figure class="h430"><img src="assets/05_overlay_mask.png" alt="overlay">
+      <figcaption>一张图上的全部量测结果。后面每一节的放大图都截自这张。</figcaption></figure>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 12 M1 ============ -->
+<section class="slide" data-t="M1 leveling"><div class="fit">
+  <div class="kicker">04 · 量测 M1</div>
+  <h2><code>leveling</code> — 整图校平基准</h2>
+  <p class="lead">唯一一个"结果会反过来影响其它所有量测"的模块。</p>
+  <div class="body"><div class="cols c2">
+    <div class="pane"><table class="sm">
+      <tbody>
+        <tr><th style="width:22%">定义</th><td>Leveling 类 → 最大连通域 → Guo–Hall 骨架 → 直线拟合 → 倾角</td></tr>
+        <tr><th>角度</th><td>用 <b>TLS</b>（总体最小二乘）。OLS 在残差与 x 跨度可比时会系统性压平斜率，TLS 对方向无偏</td></tr>
+        <tr><th>R²/rmse</th><td>用 OLS <code>y~x</code>，因为"fit R²"通常就是这个意思。两者都输出，差异摆在明面上</td></tr>
+        <tr><th>可靠性</th><td><code>angle_stderr_deg</code>（斜率标准误），<b>不看 R²</b></td></tr>
+        <tr><th>自检</th><td>校平后重新拟合，残余角 &gt; 0.05° 告警</td></tr>
+        <tr><th>实测</th><td>26 张倾角中位数 0.259°，范围 −2.263°～+1.002°（上样倾斜在 ±2° 内）</td></tr>
+      </tbody>
+    </table></div>
+    <div class="pane">
+      <div class="warn" style="margin-top:0"><b>R² 对近水平的层没有意义</b>
+      <code>R² = 1 − SS_res/SS_tot</code>，而水平层的 <code>SS_tot</code>（y 的方差）本身极小 ——
+      一条 <b>1029 px 长、rmse 仅 1.9 px</b> 的优秀直线，也只能得到 <b>R² ≈ 0.02</b>。
+      <br>Leveling / MgO_C / Non_mag 都是这种情况。结果里带 <code>fit_r2_degenerate: true</code>
+      和 <code>fit_r2_note</code> 说明。
+      <br><b>判断平直度请看 <code>rmse</code> 与 <code>max_residual</code>。</b></div>
+      <div class="tip"><b>校平后的重新拟合是免费的自检</b>
+      如果旋转矩阵、逆变换、坐标映射任何一环写错，残余角就不会接近 0。
+      这条检查每张图都会跑，成本几乎为零。</div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 13 M2 ============ -->
+<section class="slide" data-t="M2 mgo_c"><div class="fit">
+  <div class="kicker">04 · 量测 M2</div>
+  <h2><code>mgo_c</code> — MgO_C 平直度与倾角</h2>
+  <div class="body">
+    <div class="cols c2">
+      <div class="pane"><table class="sm">
+        <tbody>
+          <tr><th style="width:22%">定义</th><td>MgO_C 骨架 → TLS 直线</td></tr>
+          <tr><th>b3 / b4</th><td>把骨架 x 最小/最大的极值点<b>投影到拟合直线上</b>得到的线段端点</td></tr>
+          <tr><th>输出</th><td>角度、<code>fit_r2</code>(+退化标记)、<code>fit_slope/intercept</code>、<code>rmse</code>、<code>max_residual</code>、<code>perp_rmse</code>、<code>b3/b4</code>、<code>fit_length</code>、<code>residual_profile</code></td></tr>
+          <tr><th>实测</th><td>rmse ≈ 0.045 nm (0.6 px)，max_residual ≈ 0.126 nm；倾角批次内 −3.5°～+3.5°</td></tr>
+        </tbody>
+      </table></div>
+      <div class="pane">
+        <div class="note" style="margin-top:0"><b>为什么要 b3/b4，而不是只用 b1/b2</b>
+        <code>b1</code>/<code>b2</code> 是骨架的<b>真实端点</b>，<code>b3</code>/<code>b4</code> 是<b>直线模型</b>上的端点。
+        两者之差 = 该处层的<b>局部起伏</b>。
+        <br>所以 <code>a1→b1</code> 和 <code>a1→b3</code> 同时给出：前者对准真实端点，后者对准模型、对局部毛刺不敏感。
+        <br>实测两者 dx 几乎一致（中位数 <b>5.332 / 5.333 nm</b>，差 0.001 nm），但 <code>b3</code> 的 dy 离散度更小。</div>
+      </div>
+    </div>
+    <figure class="h230" style="margin-top:4px"><img src="assets/06_interfaces_zoom.png" alt="mgo_c">
+    <figcaption>青色虚线 = MgO_C 拟合线段，两端 <b>b3/b4</b>；<b>b1/b2</b> 为骨架端点，两者几乎重合。</figcaption></figure>
+  </div>
+</div></section>
+
+<!-- ============ 14 M3 ============ -->
+<section class="slide" data-t="M3 interfaces"><div class="fit">
+  <div class="kicker">04 · 量测 M3</div>
+  <h2><code>interfaces</code> — 层间端点偏差（核心指标）</h2>
+  <div class="body">
+    <figure class="h190"><img src="assets/06_interfaces_zoom.png" alt="interfaces">
+    <figcaption><span style="color:#f66">a1/a2</span> = SAF_Ru 内端点 ·
+    <span style="color:#0ff">b1/b2</span> = MgO_C 骨架端点 ·
+    <span style="color:#3bf">b3/b4</span> = 拟合线段端点 ·
+    <span style="color:#f4f">洋红</span> = M4 的 5 nm 窗口</figcaption></figure>
+    <div class="cols c2" style="margin-top:8px">
+      <div class="pane"><table class="sm">
+        <tbody>
+          <tr><th style="width:24%">端点定义</th><td><code>a1</code> = SAF_Ru_L 骨架 x <b>最大</b>端 · <code>a2</code> = SAF_Ru_R 骨架 x <b>最小</b>端<br><code>b1/b2</code> = MgO_C 骨架 x 最小/最大端 · <code>b3/b4</code> = MgO_C 拟合线段端点</td></tr>
+          <tr><th>四组偏移</th><td><code>a1_b1</code> · <code>a1_b3</code> · <code>a2_b2</code> · <code>a2_b4</code>，各含 dx/dy/distance（px + nm）</td></tr>
+          <tr><th>符号约定</th><td><b>dx&gt;0 = b 在 a 右侧；dy&gt;0 = b 比 a 更低</b>。这句话原样写在每个 offset 的 <code>convention</code> 字段里</td></tr>
+          <tr><th>实测</th><td><code>a1_b1.dx</code> 中位数 <b>+5.332</b> nm (σ 0.61)，<code>a2_b2.dx</code> <b>−5.332</b> nm (σ 0.50) —— 左右严格对称</td></tr>
+        </tbody>
+      </table></div>
+      <div class="pane">
+        <div class="warn" style="margin-top:0"><b>骨架端点会内缩</b>
+        Guo–Hall（任何形态学细化都一样）会从区域尖端回缩约<b>半个带宽</b>。合成算例：13 px 厚的层正好内缩 6 px。
+        <br><code>--endpoint-extend region</code> 可沿切线外推补偿（该模式下自检 a1 误差为 0），默认关闭以忠实于 Guo–Hall。
+        <br><b>好消息</b>：dx/dy 是两端点<b>之差</b>，两侧内缩量相近时大部分抵消。</div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- ============ 15 M4 ============ -->
+<section class="slide" data-t="M4 5nm 下沉量"><div class="fit">
+  <div class="kicker">04 · 量测 M4</div>
+  <h2><code>*_dip</code> — 端点 5 nm 内的最大下沉量</h2>
+  <p class="lead">从 a1（或 a2）沿骨架回走 5 nm，这段里层最多往下掉了多少。表征端点附近的塌陷。</p>
+  <div class="body"><div class="cols c2">
+    <div class="pane">
+      <table class="sm">
+        <tbody>
+          <tr><th style="width:22%">基准</th><td>端点自身：<code>dev = y − y(端点)</code>，正值 = 更低</td></tr>
+          <tr><th>窗口</th><td>沿<b>弧长</b>回走，<b>不是</b>沿 x</td></tr>
+          <tr><th>输出</th><td><code>window</code> · <code>window_polyline</code> · <code>max_downward_deviation</code> · <code>max_downward_point</code> · <code>max_downward_arclength</code> · <code>max_abs_deviation</code> · <code>deviation_profile</code></td></tr>
+          <tr><th>实测</th><td>左 0.597 nm（0～1.417），右 0.709 nm（0.224～1.268）</td></tr>
+        </tbody>
+      </table>
+      <div class="note"><b>为什么按弧长而不按 x</b>
+      端点附近层是弯的。按 x 取窗口，会在不同图上覆盖到<b>不同长度的实际层</b>，量出来的数就不可比了。</div>
+    </div>
+    <div class="pane">
+      <div class="note" style="margin-top:0"><b>为什么把整条 <code>deviation_profile</code> 也写进 JSON</b>
+      想换个窗口长度、或想确认"最大值是不是一个孤立毛刺"，<b>不必重跑整批</b>，直接在 JSON 上复核。
+      <br>M5 的 <code>curvature_profile</code>、M2 的 <code>residual_profile</code> 同理 ——
+      这是贯穿整个工具的一条设计原则。</div>
+      <div class="tip"><b>叠加图画法（洋红色）</b>
+      加粗骨架段 = 被搜索范围 · 两端竖线 = 窗口边界 · 虚线 = 端点基准线 ·
+      箭头指向最大偏差点并标出数值。<b>不必开 JSON 就能读出这个数。</b></div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 16 M5 a ============ -->
+<section class="slide" data-t="M5 milling（取哪一侧）"><div class="fit">
+  <div class="kicker">04 · 量测 M5 (1/2)</div>
+  <h2><code>milling_l/r</code> — 取哪一侧？</h2>
+  <p class="lead">一条 Milling 带有两个侧面：一侧贴器件，一侧朝真空。要量的是<b>离子研磨真正加工出来的</b>那面。</p>
+  <div class="body"><div class="cols c2w">
+    <div class="pane">
+      <figure class="h340"><img src="assets/07_milling_zoom.png" alt="milling">
+      <figcaption><span style="color:#fa0">橙色</span>曲线 = 选中的研磨面 · <b>m1</b> = 曲率最大点 ·
+      <span style="color:#3cf">蓝色点圆</span> = 密切圆</figcaption></figure>
+    </div>
+    <div class="pane">
+      <div class="tip" style="margin-top:0"><b>采用：邻接判据</b>
+      默认 <code>outer</code> = 保留"<b>不与任何其它类相邻</b>"的边界像素，再取轮廓顺序上最长连续段。与骨架法向彻底无关。</div>
+      <div class="warn"><b>否决：骨架法向分侧</b>
+      原始需求设想"用骨架分割边界、保留法向正侧"。样本图上逐点实测：
+      <pre style="margin:4px 0;font-size:9.8px"><code>i= 411 p=(420,682) +n→_background_  -n→MgO_L
+i= 651 p=(431,443) +n→Block_U       -n→_background_</code></pre>
+      器件在低处位于法向<b>负</b>侧、高处位于<b>正</b>侧 —— <b>没有哪个符号能沿整条带选中同一侧</b>，会中途翻面。</div>
+      <div class="warn"><b>画幅切边会伪造出最尖的拐角</b>
+      Milling 带跑出视场边界，外侧边缘因此包含裁剪产生的直边和两个 90° 拐角 ——
+      那是整条边上曲率最大的地方。<b>加这条判据之前 m2 就落在图像右边界上。</b>
+      <br>现在丢弃距画幅边界或旋转填充 4 px 以内的像素。（旋转填充用 255=ignore 正是为此：
+      校平后切边变成图内一条斜线，唯一还能证明它是"裁剪"的信息，就是它外侧属于原画幅之外。）</div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 17 M5 b ============ -->
+<section class="slide" data-t="M5 milling（幅值）"><div class="fit">
+  <div class="kicker">04 · 量测 M5 (2/2)</div>
+  <h2><code>milling_l/r</code> — 定位靠样条，量值靠密切圆</h2>
+  <p class="lead">整条边用三次 B 样条平滑后取<b>解析曲率</b> κ(s)。直段 κ≈0 抢不到最大值，所以不需要真的去拟合"直—弯—直"分段模型。</p>
+  <div class="body">
+    <div class="warn"><b>曲率幅值是尺度相关的，样条值系统性偏小</b>
+    平滑样条会把节点数削减到残差与 <code>s</code> 匹配，而少数几段三次曲线撑不住恒定曲率。
+    在真值半径 <b>200 px</b> 的合成弧上：样条报 <b>168 px（−16%）</b>，密切圆报 <b>190 px（−5%）</b>。</div>
+    <table class="sm">
+      <thead><tr><th style="width:26%">字段</th><th style="width:20%">用途</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>radius</code> / <code>kappa_*</code></td><td><b>定位</b> m1/m2</td><td>来自样条解析导数，位置可靠，幅值偏小 ~15%</td></tr>
+        <tr><td><code>local_circle.radius</code></td><td><b>看幅值</b></td><td>在同一点对原始边缘点拟合的圆，精度约 5%</td></tr>
+        <tr><td><code>local_circle.rms</code></td><td>可信度</td><td>真实拐弯不是圆弧，1–2 px 正常；&gt;3.5 px 才置 <code>reliable=false</code> 并告警</td></tr>
+        <tr><td><code>tail_left/right</code></td><td>模型校验</td><td>两端各 25% 弧长的直线拟合，验证"直—弯—直"；也可当研磨侧壁角</td></tr>
+      </tbody>
+    </table>
+    <div class="cols c2">
+      <div class="pane"><div class="note" style="margin-top:0"><b>"中间曲线"没有客观定义</b>
+      实测拐点在弧长的约 <b>73%</b>（不是中点），所以 <code>--milling-middle-frac</code> 默认 1.0（不限制中段）——
+      直段本来就抢不到最大值。最大值若落在搜索带边界上会告警。</div></div>
+      <div class="pane"><div class="tip" style="margin-top:0"><b>这段说明原样写进了 JSON</b>
+      <code>magnitude_note</code> 字段直接告诉读数据的人"该用哪个半径"，不依赖有没有人读过文档。
+      <br>实测 26 张：m1 圆半径中位数 <b>4.835 nm</b>，m2 <b>5.329 nm</b>。</div></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- ============ 18 M6 ============ -->
+<section class="slide" data-t="M6 non_mag"><div class="fit">
+  <div class="kicker">04 · 量测 M6</div>
+  <h2><code>non_mag</code> — 横向边缘与端点</h2>
+  <div class="body">
+    <div class="cols c2w">
+      <div class="pane">
+        <figure class="h270"><img src="assets/08_nonmag_zoom.png" alt="non_mag">
+        <figcaption><span style="color:#ff0">黄色</span>细线 = 逐列提取的原始边缘 ·
+        黄色虚线 = σ 剔除后的拟合直线 · 两端 <b>Non_mag1/2</b></figcaption></figure>
+      </div>
+      <div class="pane">
+        <table class="sm" style="margin-top:0">
+          <tbody>
+            <tr><th style="width:22%">取哪条边</th><td>默认 <code>auto</code>：统计上下两条边与 <b>Block_D</b> 接触的列数，取接触少的那条。样本图 <code>top:172 / bottom:0</code> → 取下边缘。<b>不写死 "bottom"，是为了样品倒装或类别重标时不会悄悄量错界面</b></td></tr>
+            <tr><td colspan="2" style="border-top:none"><b>边缘提取</b>　逐列取最极端的前景像素。Non_mag 上下缘都是 x 的单值函数，所以这<b>就是</b>边缘，无需分侧启发式</td></tr>
+            <tr><td colspan="2"><b>拟合</b>　σ 剔除（默认 2σ）的 TLS。左右两角是圆倒角，不剔会把直线拽歪</td></tr>
+            <tr><td colspan="2"><b>端点</b>　把拟合直线<b>向外延伸到区域 x 最小/最大列</b>，而不是停在参与拟合的列上</td></tr>
+          </tbody>
+        </table>
+        <div class="note"><b>为什么端点要延伸到区域边界</b>
+        被 σ 剔除的恰恰是两端<b>圆角掉的列</b>。停在那里，端点就会随剔除阈值内缩；
+        延伸到区域边界后，端点是<b>区域的属性</b>而不是阈值的属性。y 取直线的值（不取原始像素），所以圆角本身不污染纵坐标。</div>
+      </div>
+    </div>
+    <div class="warn" style="margin-top:6px"><b>"最大连通域"不等于"对的那个"</b>
+    26 张里有一张的预测在画幅底部长出一条 Non_mag 带，面积（11128 px）<b>比真正的方块还大</b>，
+    按面积选就量到了伪迹上 —— 边缘长度报 <b>33.98 nm</b>，正常值约 10 nm。
+    现在 Non_mag 的连通域<b>锚定在 Block_D 上</b>：先只在"与 Block_D 相邻"的连通域里挑，挑不到再退回按面积。修复后该图 <b>9.14 nm</b>。</div>
+  </div>
+</div></section>
+
+<!-- ============ 19 M7 ============ -->
+<section class="slide" data-t="M7 corner_offsets"><div class="fit">
+  <div class="kicker">04 · 量测 M7</div>
+  <h2><code>corner_offsets</code> — Non_mag 端点 ↔ Milling 拐点</h2>
+  <p class="lead">量 <code>Non_mag1→m1</code> 与 <code>Non_mag2→m2</code> 的 dx/dy 和直线距离。</p>
+  <div class="body"><div class="cols c2">
+    <div class="pane"><table class="sm">
+      <tbody>
+        <tr><th style="width:24%">特殊之处</th><td><b>唯一一个组合其它量测结果</b>的模块。不重算，而是从 <code>ctx.results</code> 里把 M5、M6 的结果读回来</td></tr>
+        <tr><th>顺序约束</th><td>因此在注册表里<b>必须</b>排在 <code>non_mag</code> / <code>milling_*</code> 之后</td></tr>
+        <tr><th>降级</th><td>任一侧依赖的量测失败时，<b>该侧单独变成 null</b>，另一侧照常输出；两侧都拿不到才整个模块失败</td></tr>
+        <tr><th>叠加图</th><td>青绿色点划折线，横竖两段分别对应 dx 和 dy</td></tr>
+        <tr><th>实测</th><td><code>Nm1→m1.dx</code> 中位数 <b>−1.251</b> nm，<code>Nm2→m2.dx</code> <b>+1.288</b> nm（左右反号，对称）</td></tr>
+      </tbody>
+    </table></div>
+    <div class="pane">
+      <div class="tip" style="margin-top:0"><b>这个模块示范了架构的可组合性</b>
+      新增一个"组合型"量测，不需要重新实现任何几何算法 —— 只要在注册表里排在依赖之后，
+      用 <code>ctx.measured_point()</code> 把点读回来即可。失败降级也是逐侧的，
+      所以一张丢了单侧 Milling 的掩膜，另一侧的偏移依然有效。</div>
+      <pre><code>a = ctx.measured_point("non_mag", "Non_mag1")
+b = ctx.measured_point("milling_l",
+                       "max_curvature_point")
+if a is None or b is None:
+    ctx.warn(...); return {...: None}
+return {..., **ctx.offset(a, b)}</code></pre>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 20 outputs ============ -->
+<section class="slide" data-t="输出：三种文件"><div class="fit">
+  <div class="kicker">05 · 输出</div>
+  <h2>输出：三种文件</h2>
+  <div class="body">
+    <table>
+      <thead><tr><th style="width:22%">文件</th><th style="width:44%">内容</th><th>用途</th></tr></thead>
+      <tbody>
+        <tr><td><code>&lt;stem&gt;.json</code></td><td>全部指标 + 全部输入参数 + 曲线序列</td><td>唯一完整记录，可复核、可重现</td></tr>
+        <tr><td><code>&lt;stem&gt;_overlay.png</code></td><td>骨架、拟合线、密切圆、标注点与数值图例</td><td>人眼复核："量对地方了吗"</td></tr>
+        <tr><td><code>summary.csv</code></td><td>一行一图，<b>固定 73 列</b></td><td>批次统计，拉进 Excel / pandas</td></tr>
+      </tbody>
+    </table>
+    <div class="cols c2" style="margin-top:6px">
+      <div class="pane"><div class="note" style="margin-top:0"><b>为什么 CSV 的列是写死的</b>
+      一份"列 = 这批恰好产出了哪些 key"的 CSV <b>没法跨批次比较</b> ——
+      某张图缺了 <code>Milling_L</code>，整列就消失，两个 CSV 对不上。
+      <br>所以列表显式声明在 <code>report.py::CSV_COLUMNS</code>，缺的值填空，<b>列数永远一致</b>。
+      列名就是 JSON 里的<b>点分路径</b>，两者零翻译成本。</div></div>
+      <div class="pane"><div class="tip" style="margin-top:0"><b>推荐的批次筛查动作</b>
+      <ol style="margin:3px 0 0 15px">
+        <li>按 <code>n_warnings &gt; 0</code> 排序，逐一看这些图的 <code>_overlay.png</code></li>
+        <li>看 <code>local_circle.reliable == false</code> 的行</li>
+        <li>核心列画箱线图找离群点</li>
+      </ol>
+      CSV 里保留坐标列，就是为了让你能立刻定位"这个离群值在图的哪个位置"。</div></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- ============ 21 json ============ -->
+<section class="slide" data-t="输出：JSON 三个结构"><div class="fit">
+  <div class="kicker">05 · 输出</div>
+  <h2>JSON：看懂三个结构就够了</h2>
+  <p class="lead">这三个复合结构覆盖了 JSON 里 90% 的字段。</p>
+  <div class="body"><div class="cols c2">
+    <div class="pane">
+      <pre style="margin-top:0"><code>// ① 距离 — 永远同时给 px 和 nm
+"rmse": { "px": 1.9419, "nm": 0.14483 }
+
+// ② 点 — 同时给校平后坐标和原图坐标
+"a1": {
+  "x_px": 401.0,       "y_px": 532.0,
+  "x_orig_px": 400.52, "y_orig_px": 531.61
+}
+
+// ③ 偏移 — 符号约定随数据一起走
+"a1_b1": {
+  "dx": { "px": 70.0, "nm": 5.2206 },
+  "dy": { "px": -4.0, "nm": -0.2983 },
+  "distance": { "px": 70.11, "nm": 5.2291 },
+  "convention": "dx>0: b is right of a;
+                 dy>0: b is lower than a"
+}</code></pre>
+    </div>
+    <div class="pane">
+      <table class="sm" style="margin-top:0">
+        <thead><tr><th style="width:34%">字段族</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><code>angle_deg_image</code></td><td>图像坐标（y 向下，顺时针为正）。看叠加图时用</td></tr>
+          <tr><td><code>angle_deg_math</code></td><td>数学坐标（逆时针为正）= −image。写公式时用</td></tr>
+          <tr><td><code>fit_r2</code> + <code>_degenerate</code></td><td>近水平层恒退化，<b>改看 rmse</b></td></tr>
+          <tr><td><code>rmse</code> / <code>max_residual</code></td><td><b>判断平直度就看这两个</b></td></tr>
+          <tr><td><code>angle_stderr_deg</code></td><td>角度不确定度的<b>下界</b>（假设残差独立）</td></tr>
+          <tr><td><code>*_profile</code> / <code>*_polyline</code></td><td>整条曲线，<b>改参数不用重跑</b></td></tr>
+          <tr><td><code>*_note</code> / <code>*_rule</code> / <code>convention</code></td><td>把"按什么规则算的"写进数据本身</td></tr>
+          <tr><td><code>params</code></td><td>本次运行的全部 CLI 参数</td></tr>
+        </tbody>
+      </table>
+      <div class="tip"><b>设计原则</b>让数据自解释。半年后看报表的人，不用翻代码就知道每个数是怎么来的。</div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 22 overlay key ============ -->
+<section class="slide" data-t="输出：叠加图配色"><div class="fit">
+  <div class="kicker">05 · 输出</div>
+  <h2>叠加图配色对照</h2>
+  <div class="body"><div class="cols c2u">
+    <div class="pane">
+      <table class="sm" style="margin-top:0">
+        <thead><tr><th style="width:46%">颜色 / 元素</th><th>对应</th></tr></thead>
+        <tbody>
+          <tr><td><span class="swatch" style="background:#fff"></span>白色细线 — 骨架</td><td>所有基于骨架的量测</td></tr>
+          <tr><td><span class="swatch" style="background:#0ff"></span>青色虚线 + <b>b1 b2</b></td><td>M2 / M3</td></tr>
+          <tr><td><span class="swatch" style="background:#3bf"></span>深天蓝 <b>b3 b4</b></td><td>M2</td></tr>
+          <tr><td><span class="swatch" style="background:#f44"></span>红色 <b>a1 a2</b></td><td>M3</td></tr>
+          <tr><td><span class="swatch" style="background:#f0f"></span>洋红 — 5 nm 窗口全套</td><td>M4</td></tr>
+          <tr><td><span class="swatch" style="background:#fa0"></span>橙色曲线 + <b>m1 m2</b></td><td>M5</td></tr>
+          <tr><td><span class="swatch" style="background:#3cf"></span>天蓝点圆 — 密切圆</td><td>M5</td></tr>
+          <tr><td><span class="swatch" style="background:#ff0"></span>黄色线 + <b>Non_mag1 2</b></td><td>M6</td></tr>
+          <tr><td><span class="swatch" style="background:#00fa9a"></span>青绿点划 L 形</td><td>M7</td></tr>
+          <tr><td><span class="swatch" style="background:#0f0"></span>亮绿虚线</td><td>M1 自检</td></tr>
+        </tbody>
+      </table>
+      <div class="tip"><b><code>--overlay-on</code> 值得一直开着</b>
+      画在<b>原始 TEM 灰度图</b>上，可同时看出两类错误：几何算错了，和<b>分割本身就错了</b>。
+      只看伪彩图的话，一个把边界画偏 3 px 的分割结果，叠加图上看起来会<b>完美无缺</b>。</div>
+    </div>
+    <div class="pane">
+      <figure class="h410"><img src="assets/10_legend.png" alt="legend">
+      <figcaption>叠加图右下角的文字图例 —— 关键标量直接印在图上，不开 JSON 也能读</figcaption></figure>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 23 stats ============ -->
+<section class="slide" data-t="实测批次统计"><div class="fit">
+  <div class="kicker">06 · 实测</div>
+  <h2>实测批次统计（26 张，1300kgroup1）</h2>
+  <p class="lead">默认参数，全部校平。<b>26 张全部成功，0 失败，累计 9 条 warning</b>（全部是"丢弃小连通域"类，无一影响结果）。</p>
+  <div class="body"><div class="cols c2u">
+    <div class="pane"><table class="sm" style="margin-top:0">
+      <thead><tr><th style="width:26%">指标</th><th>中位数</th><th>σ</th><th>最小</th><th>最大</th></tr></thead>
+      <tbody>
+        <tr><td><code>a1_b1.dx</code> (nm)</td><td>5.332</td><td>0.610</td><td>4.251</td><td>6.488</td></tr>
+        <tr><td><code>a1_b3.dx</code> (nm)</td><td>5.333</td><td>0.610</td><td>4.254</td><td>6.495</td></tr>
+        <tr><td><code>a2_b2.dx</code> (nm)</td><td>−5.332</td><td>0.496</td><td>−5.966</td><td>−4.475</td></tr>
+        <tr><td><code>a1_b1.dy</code> (nm)</td><td>0.261</td><td>0.628</td><td>−0.895</td><td>1.417</td></tr>
+        <tr><td>左端 5 nm 下沉</td><td>0.597</td><td>0.385</td><td>0.000</td><td>1.417</td></tr>
+        <tr><td>右端 5 nm 下沉</td><td>0.709</td><td>0.274</td><td>0.224</td><td>1.268</td></tr>
+        <tr><td>m1 圆半径 (nm)</td><td>4.835</td><td>0.837</td><td>3.731</td><td>6.653</td></tr>
+        <tr><td>m2 圆半径 (nm)</td><td>5.329</td><td>0.795</td><td>3.982</td><td>6.769</td></tr>
+        <tr><td>Non_mag 长度 (nm)</td><td>12.048</td><td>1.543</td><td>9.297</td><td>14.692</td></tr>
+        <tr><td>Nm1→m1 dx (nm)</td><td>−1.251</td><td>0.532</td><td>−3.334</td><td>−0.693</td></tr>
+        <tr><td>Nm2→m2 dx (nm)</td><td>1.288</td><td>0.278</td><td>0.734</td><td>2.000</td></tr>
+        <tr><td>Leveling 倾角 (°)</td><td>0.259</td><td>0.629</td><td>−2.263</td><td>1.002</td></tr>
+        <tr><td>MgO_C 倾角 (°)</td><td>−0.341</td><td>1.601</td><td>−3.541</td><td>3.540</td></tr>
+      </tbody>
+    </table></div>
+    <div class="pane">
+      <div class="tip" style="margin-top:0"><b>三个可读出来的结论</b>
+      <ul style="margin:3px 0 0 15px">
+        <li><code>a1_b1</code> 与 <code>a1_b3</code> 差 <b>0.001 nm</b> —— 验证 b3 与真实端点等价</li>
+        <li>左右 dx <b>严格反号且等值</b>（±5.332）—— 符合物理对称性</li>
+        <li>MgO_C 倾角离散度（σ 1.60）<b>明显大于</b> Leveling（σ 0.63）</li>
+      </ul></div>
+      <div class="note"><b>连通域锚定修复前后</b>
+      Non_mag 长度曾有一张报 <b>33.98 nm</b>（量到了画幅底部的伪迹带），修复后 <b>9.14 nm</b>，回到正常区间。</div>
+      <div class="ph" style="margin-top:8px">
+        <div class="tag">缺图 · 可后补</div>
+        <div class="title">批次分布图 / 趋势图</div>
+        <div class="desc">目前只出 CSV，画图靠外部脚本。需要的话我可以补一个 <code>plot_summary.py</code></div>
+        <div class="file">assets/14_batch_stats.png</div>
+      </div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 24 selftest ============ -->
+<section class="slide" data-t="可靠性：自检覆盖"><div class="fit">
+  <div class="kicker">06 · 可靠性</div>
+  <h2>selftest.py 覆盖了什么</h2>
+  <p class="lead">全部为<b>合成几何 + 已知真值</b>，不依赖真实数据 —— 所以可以随时跑、跑得快、结论无争议。</p>
+  <div class="body">
+    <div class="cols c2">
+      <div class="pane"><ul style="margin-top:0">
+        <li><b>Guo–Hall</b>：两套实现对直带/折弯带/随机团<b>逐像素一致</b></li>
+        <li><b>旋转</b>：正反变换往返误差 &lt; 1e-9 px；按拟合角旋转后恰好水平</li>
+        <li><b>直线</b>：精确直线 TLS 角度误差 &lt; 1e-6°；R² 退化标记按预期触发</li>
+        <li><b>圆</b>：精确圆解析曲率半径误差 &lt; 1%（50 / 200 / 600 px）</li>
+        <li><b>轮廓</b>：矩形环长度精确，环绕连续段选取正确</li>
+        <li><b>端到端（未倾斜）</b>：a1/a2/b1/b2、dx/dy、角度、rmse <b>误差为 0</b></li>
+      </ul></div>
+      <div class="pane"><ul style="margin-top:0">
+        <li><b>Non_mag 自动选边</b>：合成图与真实图同构，必须选中下边缘</li>
+        <li><b>corner_offsets</b>：报出的 dx/dy 必须精确等于所命名两点之差（1e-9 px）</li>
+        <li><b>干扰连通域</b>：塞一条比真 Non_mag 大 6 倍（57000 vs 9150 px）且远离 Block_D 的假带，必须仍落在真方块上 —— <b>复现真实批次里那张坏预测</b></li>
+        <li><b>标尺</b>：端到端跑一张，nm/px 必须精确等于 FOV/宽度</li>
+        <li><b>Milling 分侧</b>：内外半径已知（200/215 px），outer/inner 各须落在对应半径</li>
+        <li><b>倾斜 3° 再校平</b>：恢复倾角误差 &lt; 0.05°，密切圆半径误差 &lt; 10%</li>
+      </ul></div>
+    </div>
+    <div class="warn"><b>自检证明的是"实现符合定义"，不是"定义符合需求"</b>
+    这是两件事。后者需要一批人工量过的图作为标定集 —— 见倒数第二页。</div>
+  </div>
+</div></section>
+
+<!-- ============ 25 extend ============ -->
+<section class="slide" data-t="扩展：新增一项量测"><div class="fit">
+  <div class="kicker">07 · 扩展</div>
+  <h2>新增一项量测：写一个文件 + 注册一行</h2>
+  <p class="lead">架构就是为"加量测"设计的，不需要改任何已有模块。</p>
+  <div class="body"><div class="cols c2u">
+    <div class="pane">
+      <pre style="margin-top:0;font-size:10px"><code>def measure(ctx: AnalysisContext) -&gt; Dict[str, Any]:
+    # 1. 掩膜：prefer_near 让连通域选择依赖邻接而非面积
+    mask = ctx.mask(CLASS, prefer_near=AWAY_FROM)
+
+    # 2. 几何：骨架带缓存
+    line = ctx.centerline(CLASS, extend=("xmin","xmax"))
+    tls  = fit_line_tls(line.pts)   # 角度用 TLS
+    ols  = fit_line_ols(line.pts)   # R²/rmse 用 OLS
+    p1, p2 = tls.endpoints_spanning(line.pts)
+
+    # 3. 不确定就 warn，不要静默
+    if ols["axis"] != "y~x":
+        ctx.warn("...")
+
+    # 4. 距离用 ctx.dist，点用 ctx.point，偏移用 ctx.offset
+    return {
+        "skeleton_length": ctx.dist(line.length),
+        "angle_deg_image": tls.angle_deg_image,
+        "rmse": ctx.dist(ols["rmse_px"]),
+        "blockD1": ctx.point(p1),
+        "blockD2": ctx.point(p2),
+        "endpoint_rule": "...",   # 规则写进数据
+    }</code></pre>
+    </div>
+    <div class="pane">
+      <table class="sm" style="margin-top:0">
+        <thead><tr><th style="width:10%">#</th><th>做什么</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>新建 <code>measures/&lt;name&gt;.py</code>，实现 <code>measure(ctx)</code></td></tr>
+          <tr><td>2</td><td><code>MEASURES</code> 加一行；<b>读别的模块结果就必须排在它之后</b></td></tr>
+          <tr><td>3</td><td>标量加进 <code>CSV_COLUMNS</code>（点分路径）</td></tr>
+          <tr><td>4</td><td>新参数加进 <code>build_parser()</code>，<b>不要写死常数</b></td></tr>
+          <tr><td>5</td><td>要画图就改 <code>render_overlay()</code> + <code>_legend_text()</code></td></tr>
+          <tr><td>6</td><td><code>selftest.py</code> 加一个合成几何用例</td></tr>
+          <tr><td>7</td><td>更新 <code>readme.md</code> 的量测项表格</td></tr>
+        </tbody>
+      </table>
+      <div class="tip"><b>五条约定</b>
+      <ol style="margin:3px 0 0 15px">
+        <li>缺类抛 <code>MissingClass</code>，不要 return None</li>
+        <li>长度走 <code>ctx.dist()</code>，点走 <code>ctx.point()</code></li>
+        <li>魔数变成 CLI 参数（自动进 <code>params</code>，可追溯）</li>
+        <li>把"规则"写进输出，让数据自解释</li>
+        <li><b>先写自检再写实现</b>；"看起来对"不算数</li>
+      </ol></div>
+    </div>
+  </div></div>
+</div></section>
+
+<!-- ============ 26 gaps ============ -->
+<section class="slide" data-t="缺口与后续"><div class="fit">
+  <div class="kicker">08 · 缺口</div>
+  <h2>缺失的能力与后续</h2>
+  <div class="body">
+    <table class="sm">
+      <thead><tr><th style="width:22%">能力</th><th style="width:8%">状态</th><th style="width:48%">现状</th><th>成本</th></tr></thead>
+      <tbody>
+        <tr><td><b>Block_D 下边缘</b><br>blockD1 / blockD2</td><td><span class="badge b-no">缺失</span></td><td>readme 和 <code>report.py</code> 注释里还留着痕迹，但 <code>MEASURES</code> 里<b>没有</b>，CSV 也没列。早期需求 7 被 <code>corner_offsets</code> 取代了</td><td>小<br>套用 non_mag</td></tr>
+        <tr><td><b>逐类形状统计</b><br>面积 / 周长 / 骨架长</td><td><span class="badge b-no">缺失</span></td><td>只有个别模块顺带输出了自己那条骨架的长度</td><td>小<br>CSV 涨到 ~100 列</td></tr>
+        <tr><td><b>MgO_L/R · Block_U</b></td><td><span class="badge b-no">缺失</span></td><td>三类被标注了、也被分割了，但<b>没有任何量测用到</b>（只在 Milling 分侧时当"邻居"）</td><td>取决于需求定义</td></tr>
+        <tr><td><b>层厚度</b></td><td><span class="badge b-no">缺失</span></td><td>目前全是端点 / 边缘 / 角度，没有"厚度"</td><td>中<br>需定义法向</td></tr>
+        <tr><td><b>批次统计与画图</b></td><td><span class="badge b-no">缺失</span></td><td>只出 CSV</td><td>小</td></tr>
+        <tr><td><b>结果回写 DB / 网页展示</b></td><td><span class="badge b-no">缺失</span></td><td>量测工具是<b>完全独立的 CLI</b>，与平台无代码耦合</td><td>中</td></tr>
+        <tr><td><b>与人工量测对比验证</b></td><td><span class="badge b-no">缺失</span></td><td>自检验证"实现符合定义"，<b>没验证"定义符合需求"</b></td><td>需标定集</td></tr>
+      </tbody>
+    </table>
+    <div class="note"><b>一个需要澄清的现象</b>
+    <code>G:\...\1300kgroup2\normal_test_temfull\</code> 下有一批更晚（8/10）产出的结果，CSV <b>559 列</b>，
+    含 <code>class_shapes.*</code>、<code>block_d_left/right.*</code> 等本仓库<b>不存在</b>的字段，命名风格也不同。
+    说明曾经存在（或正在别处存在）一个功能更全的变体，<b>但它不在本仓库里</b>。
+    上表的"缺失"是相对<b>当前仓库代码</b>而言 —— 若那份变体还找得到，很多项可直接移植。</div>
+  </div>
+</div></section>
+
+<!-- ============ 27 limits ============ -->
+<section class="slide" data-t="方法论局限"><div class="fit">
+  <div class="kicker">08 · 局限</div>
+  <h2>已知的方法论局限</h2>
+  <p class="lead">这几条不是 bug，是方法本身的边界。写在这里是为了不让人误用数字。</p>
+  <div class="body">
+    <div class="warn"><b>1 · 骨架端点内缩</b>
+    默认偏内侧约半个带宽，靠端点<b>差分</b>抵消。需要绝对端点时用 <code>--endpoint-extend region</code>。</div>
+    <div class="warn"><b>2 · 校平引入 1–2 px 重采样噪声</b>
+    自检里残余角 0.007°，但 <b>dy 误差可达约 5 px</b>。对 dy 敏感的指标可考虑 <code>--no-rotate</code> 并自行处理倾斜。</div>
+    <div class="warn"><b>3 · 曲率是尺度相关量</b>
+    1 px 量化的边缘上没有唯一"真"曲率。当前给两个数（样条 + 密切圆）并说明各自偏差，
+    但<b>用户必须知道自己在用哪个</b>。</div>
+    <div class="warn"><b>4 · 分割误差没有被量化 —— 整条链路最大的未量化误差源</b>
+    量测工具<b>假设标签图是对的</b>。分割把边界画偏 2 px，所有下游数字就偏 0.15 nm，
+    而且<b>没有任何 warning</b>。
+    <br>目前唯一的缓解手段是 <code>--overlay-on</code>：把标注画在原始 TEM 灰度图上，靠人眼发现分割错位。</div>
+  </div>
+</div></section>
+
+<!-- ============ 28 asks ============ -->
+<section class="slide" data-t="需要的配图"><div class="fit">
+  <div class="kicker">09 · 下一步</div>
+  <h2>需要你提供的配图</h2>
+  <p class="lead">文件名对上，放进 <code>assets/</code> 即自动显示，中英两版同时生效。</p>
+  <div class="body">
+    <table class="sm">
+      <thead><tr><th style="width:24%">文件名</th><th style="width:13%">位置</th><th>希望看到什么</th></tr></thead>
+      <tbody>
+        <tr><td><code>11_napari_ui.png</code></td><td>训练①</td><td>napari 标注界面全窗口截图</td></tr>
+        <tr><td><code>12_train_job.png</code></td><td>训练④</td><td>网页端训练任务页：状态、进度、生成的命令</td></tr>
+        <tr><td><code>13_train_curve.png</code></td><td>训练④</td><td>loss 与 mIoU 随 iter 的曲线</td></tr>
+        <tr><td><code>14_batch_stats.png</code></td><td>实测</td><td>批次分布图（可由我写脚本从 summary.csv 生成）</td></tr>
+        <tr><td><code>15_definition.png</code></td><td>量测总览</td><td><b>优先级最高</b> — 客户原始量测定义示意图</td></tr>
+        <tr><td><code>16_manual_vs_auto.png</code></td><td>局限</td><td>人工 vs 自动量测对比，回答"准不准"</td></tr>
+      </tbody>
+    </table>
+    <div class="ph" style="margin-top:8px;padding:16px">
+      <div class="tag">优先级最高</div>
+      <div class="title">客户原始量测定义示意图</div>
+      <div class="desc">这份汇报能证明<b>"算法自洽、可复现、误差可控"</b>，但<b>不能证明"定义正确"</b>。<br>
+      <code>G:\datasets\TEM\TEM metrology\</code> 下有三份 PPT（ABS TEM measurement definition /
+      HR FTEM measurement parameters v2 / MetrologyForDFLjunctions）。<br>
+      从里面截出定义 a1/b1/m1/Non_mag 的示意图，与我们的叠加图<b>并排</b> —— 这份汇报的说服力会完全不同。</div>
+      <div class="file">assets/15_definition.png</div>
+    </div>
+  </div>
+</div></section>
+
+<!-- ============ 29 end ============ -->
+<section class="slide" data-t="小结"><div class="fit mid">
+  <div class="kicker">小结</div>
+  <h1 class="hero-t" style="font-size:32px;margin-bottom:16px">从"人工拉线"到"可复现的字段"</h1>
+  <div class="cols c3">
+    <div class="pane"><div class="tip" style="margin:0"><b>已经能做的</b>
+    标注 → 训练 → 预测 → 量测全链路打通；7 项量测、73 列 CSV；
+    26 张实测 0 失败；全流程合成真值自检。</div></div>
+    <div class="pane"><div class="warn" style="margin:0"><b>要注意的</b>
+    R² 对近水平层无意义，看 rmse；曲率幅值用 <code>local_circle</code>；
+    分割误差未被量化，<code>--overlay-on</code> 一直开着。</div></div>
+    <div class="pane"><div class="note" style="margin:0"><b>下一步</b>
+    补客户定义示意图做口径对齐；建人工标定集验证准确度；
+    补 Block_D / 逐类形状统计；结果回写平台。</div></div>
+  </div>
+  <p class="dim" style="margin-top:22px;font-size:11.5px">
+    完整版报告：<code>docs/tem_report/index.html</code>（中文）· <code>index.en.html</code>（English）　|　
+    代码：<code>tools/napari_seg/</code> · <code>tools/tem_analysis/</code> (v1.0.0)　|　
+    数据：<code>1300kgroup1\analysis_batch\summary.csv</code>（26 张）
+  </p>
+</div></section>
+
+</div></div><!-- /canvas /stage -->
+
+<div id="ov"><h3>目录 — 点击跳转（Esc 关闭）</h3><div class="g"></div></div>
+<div id="tag">TEM 分割 + 几何量测 · 分页版&nbsp;·&nbsp;<a href="index.html">完整版 ↗</a>&nbsp;·&nbsp;<a href="slides.en.html">EN ↗</a></div>
+<div id="help">← → 翻页 · Esc 目录 · F 全屏 · Ctrl+P 导出 PDF</div>
+<div id="hud">
+  <button id="prev" title="上一页">‹</button>
+  <span class="num"><b id="cur">1</b> / <span id="tot">1</span></span>
+  <button id="next" title="下一页">›</button>
+</div>
+
+<script>
+(function(){
+  var W = 1280, H = 720;
+  var canvas = document.getElementById('canvas');
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var i = 0, n = slides.length, fitted = [];
+  var bar = document.getElementById('bar'), cur = document.getElementById('cur');
+  var ovEl = document.getElementById('ov'), grid = ovEl.querySelector('.g');
+  document.getElementById('tot').textContent = n;
+
+  /* Scale the whole 1280x720 canvas to the viewport. */
+  function scaleCanvas(){
+    var s = Math.min(window.innerWidth / (W + 40), window.innerHeight / (H + 40));
+    canvas.style.transform = 'scale(' + s + ')';
+  }
+
+  /* Safety net: if a slide's content is taller than the canvas (different font
+     metrics, a longer translation, an image that loaded at another size), shrink
+     that slide's content until it fits. Widening before scaling keeps the layout
+     filling the full 1280 px after the scale is applied. */
+  function fitSlide(s){
+    var f = s.querySelector('.fit');
+    if (!f) return;
+    f.style.transform = 'none';
+    f.style.width = W + 'px';
+    f.style.height = f.classList.contains('mid') ? H + 'px' : 'auto';
+    var h = f.scrollHeight, z = 1;
+    if (h > H){
+      z = H / h;
+      f.style.width = (W / z) + 'px';
+      h = f.scrollHeight;                 // reflow wider -> usually shorter
+      z = Math.min(1, H / h);
+      f.style.width = (W / z) + 'px';
+      f.style.height = (H / z) + 'px';
+      f.style.transform = 'scale(' + z + ')';
+    } else {
+      f.style.height = H + 'px';
+    }
+  }
+
+  function ensureFitted(k){
+    if (fitted[k]) return;
+    fitted[k] = true;
+    fitSlide(slides[k]);
+  }
+  function refitAll(){ fitted = []; slides.forEach(function(s, k){ if (s.classList.contains('on')) ensureFitted(k); }); }
+
+  slides.forEach(function(s, k){
+    var t = s.dataset.t || (s.querySelector('h2, .hero-t') || {}).textContent || ('第 ' + (k + 1) + ' 页');
+    var c = document.createElement('div');
+    c.className = 'c';
+    c.innerHTML = '<div class="i">' + String(k + 1).padStart(2, '0') + '</div><div class="t"></div>';
+    c.querySelector('.t').textContent = t;
+    c.onclick = function(){ go(k); closeOv(); };
+    grid.appendChild(c);
+  });
+
+  function go(k){
+    i = Math.max(0, Math.min(n - 1, k));
+    slides.forEach(function(s, j){ s.classList.toggle('on', j === i); });
+    ensureFitted(i);
+    cur.textContent = i + 1;
+    bar.style.width = (i / (n - 1) * 100) + '%';
+    if (location.hash !== '#' + (i + 1)) history.replaceState(null, '', '#' + (i + 1));
+  }
+  function openOv(){ ovEl.classList.add('on'); }
+  function closeOv(){ ovEl.classList.remove('on'); }
+
+  document.getElementById('prev').onclick = function(){ go(i - 1); };
+  document.getElementById('next').onclick = function(){ go(i + 1); };
+
+  document.addEventListener('keydown', function(e){
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var k = e.key;
+    if (k === 'Escape'){ ovEl.classList.contains('on') ? closeOv() : openOv(); e.preventDefault(); return; }
+    if (ovEl.classList.contains('on')) return;
+    if (k === 'ArrowRight' || k === 'PageDown' || k === ' ' || k === 'Enter'){ go(i + 1); e.preventDefault(); }
+    else if (k === 'ArrowLeft' || k === 'PageUp' || k === 'Backspace'){ go(i - 1); e.preventDefault(); }
+    else if (k === 'Home'){ go(0); e.preventDefault(); }
+    else if (k === 'End'){ go(n - 1); e.preventDefault(); }
+    else if (k === 'f' || k === 'F'){
+      document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+      e.preventDefault();
+    }
+  });
+  ovEl.addEventListener('click', function(e){ if (e.target === ovEl) closeOv(); });
+
+  var x0 = null;
+  document.addEventListener('touchstart', function(e){ x0 = e.touches[0].clientX; }, {passive:true});
+  document.addEventListener('touchend', function(e){
+    if (x0 === null) return;
+    var dx = e.changedTouches[0].clientX - x0;
+    if (Math.abs(dx) > 60) go(dx < 0 ? i + 1 : i - 1);
+    x0 = null;
+  }, {passive:true});
+
+  window.addEventListener('resize', scaleCanvas);
+  /* Images change the measured height, so re-fit once everything has loaded. */
+  window.addEventListener('load', function(){ refitAll(); scaleCanvas(); });
+
+  /* Printing needs every slide laid out and fitted. */
+  window.addEventListener('beforeprint', function(){
+    slides.forEach(function(s, k){ s.classList.add('on'); ensureFitted(k); });
+  });
+  window.addEventListener('afterprint', function(){ go(i); });
+
+  scaleCanvas();
+  var h = parseInt((location.hash || '').slice(1), 10);
+  go(isFinite(h) && h >= 1 ? h - 1 : 0);
+})();
+</script>
+</body>
+</html>

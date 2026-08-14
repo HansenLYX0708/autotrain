@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TEM 分割 + 几何量测 系统汇报</title>
+<style>
+:root{
+  --bg:#0f1216; --panel:#171b21; --panel2:#1d222a; --line:#2a313b;
+  --fg:#e6e9ee; --dim:#9aa4b2; --accent:#4ea1ff; --ok:#4ec9a5; --warn:#e0b24c; --bad:#e4695e;
+  --mono:"Cascadia Mono","Consolas","SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  font-size:15px;line-height:1.75;}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.88em;background:#232a33;padding:1px 5px;border-radius:4px;color:#d8e2ee}
+pre{background:#11151a;border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:6px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:13px;line-height:1.6}
+pre code{background:none;padding:0}
+
+.layout{display:flex;align-items:flex-start}
+nav{position:sticky;top:0;height:100vh;overflow:auto;width:260px;flex:0 0 260px;
+  background:var(--panel);border-right:1px solid var(--line);padding:22px 16px}
+nav h2{font-size:12px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase;margin:0 0 12px}
+nav ol{list-style:none;margin:0;padding:0;counter-reset:s}
+nav ol li{margin:2px 0}
+nav ol > li > a{display:block;padding:5px 8px;border-radius:5px;color:var(--fg);font-size:13.5px}
+nav ol > li > a:hover{background:var(--panel2);text-decoration:none}
+nav ol ol a{font-size:12.5px;color:var(--dim);padding-left:20px}
+.langbar{margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.langbar a{margin-right:10px}
+.langbar .cur{color:var(--fg);font-weight:600;margin-right:10px}
+main{flex:1;min-width:0;max-width:1080px;margin:0 auto;padding:40px 46px 120px}
+
+header.hero{border:1px solid var(--line);border-radius:12px;padding:30px 34px;margin-bottom:34px;
+  background:linear-gradient(140deg,#1b2430 0%,#141920 100%)}
+header.hero h1{margin:0 0 6px;font-size:29px;letter-spacing:.5px}
+header.hero .sub{color:var(--dim);font-size:15px}
+.meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.meta span{background:#232c37;border:1px solid var(--line);border-radius:20px;padding:3px 13px;font-size:12.5px;color:var(--dim)}
+
+h2.sec{font-size:22px;margin:52px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h2.sec .n{color:var(--accent);font-family:var(--mono);font-size:17px;margin-right:10px}
+h3{font-size:17.5px;margin:32px 0 8px}
+h4{font-size:15px;margin:20px 0 6px;color:#cfd8e3}
+p{margin:10px 0}
+
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--panel2);color:#cfd8e3;font-weight:600}
+tbody tr:nth-child(even){background:#14181e}
+td code{white-space:nowrap}
+
+figure{margin:20px 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+figure img{width:100%;display:block;border-radius:6px;background:#000}
+figcaption{color:var(--dim);font-size:13px;margin-top:10px;text-align:center}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid2 figure{margin:0}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.grid4 figure{margin:0;padding:10px}
+.grid4 figcaption{font-size:12px}
+
+.ph{border:2px dashed #3b4655;border-radius:10px;background:repeating-linear-gradient(45deg,#161b22,#161b22 12px,#1a2029 12px,#1a2029 24px);
+  padding:30px 22px;margin:20px 0;text-align:center}
+.ph .tag{display:inline-block;background:var(--warn);color:#241c05;font-weight:700;font-size:11.5px;
+  letter-spacing:.1em;padding:2px 10px;border-radius:4px;margin-bottom:10px}
+.ph .title{font-size:15.5px;font-weight:600;margin-bottom:6px}
+.ph .desc{color:var(--dim);font-size:13.5px;max-width:640px;margin:0 auto}
+.ph .file{font-family:var(--mono);font-size:12.5px;color:#7f8b9a;margin-top:10px}
+
+.note,.warn,.tip{border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px;border:1px solid}
+.note{background:#141c26;border-color:#254058}
+.warn{background:#241d10;border-color:#5a4718}
+.tip{background:#122019;border-color:#1f4a3a}
+.note b,.warn b,.tip b{display:block;margin-bottom:4px}
+.warn b{color:var(--warn)} .tip b{color:var(--ok)} .note b{color:var(--accent)}
+
+.pipe{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:22px 0}
+.pipe .step{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:12px 10px;text-align:center;font-size:13px}
+.pipe .step b{display:block;font-size:13.5px;margin-bottom:3px}
+.pipe .step span{color:var(--dim);font-size:11.8px;font-family:var(--mono)}
+.pipe .arw{display:flex;align-items:center;color:var(--accent);padding:0 8px;font-size:18px}
+
+.swatch{display:inline-block;width:13px;height:13px;border-radius:3px;vertical-align:-2px;margin-right:7px;border:1px solid #0006}
+
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}
+.kpi div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
+.kpi .v{font-size:22px;font-weight:700;font-family:var(--mono)}
+.kpi .k{color:var(--dim);font-size:12.5px;margin-top:2px}
+
+.badge{font-size:11.5px;padding:1px 8px;border-radius:4px;font-weight:600}
+.b-ok{background:#153228;color:#5fd6ae} .b-no{background:#331a17;color:#f08c81} .b-mid{background:#332a12;color:#e6bd5c}
+details{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 16px;margin:14px 0}
+summary{cursor:pointer;font-weight:600;color:#cfd8e3}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+footer{color:var(--dim);font-size:13px;margin-top:60px;padding-top:20px;border-top:1px solid var(--line)}
+@media print{nav{display:none} main{max-width:none;padding:0} body{background:#fff;color:#000}}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="langbar"><span class="cur">中文</span><a href="index.en.html">English</a><a href="slides.html">分页版 ▸</a></div>
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s0">0. 一页速览</a></li>
+    <li><a href="#s1">1. 整体链路</a></li>
+    <li><a href="#s2">2. 分割训练逻辑</a>
+      <ol>
+        <li><a href="#s2-1">2.1 标注与数据集</a></li>
+        <li><a href="#s2-2">2.2 三份 YAML 合并</a></li>
+        <li><a href="#s2-3">2.3 训练与日志</a></li>
+        <li><a href="#s2-4">2.4 预测产出</a></li>
+        <li><a href="#s2-5">2.5 伪标签迭代</a></li>
+      </ol>
+    </li>
+    <li><a href="#s3">3. 分析工具总览</a>
+      <ol>
+        <li><a href="#s3-1">3.1 运行方式</a></li>
+        <li><a href="#s3-2">3.2 代码结构</a></li>
+        <li><a href="#s3-3">3.3 标尺与校平</a></li>
+      </ol>
+    </li>
+    <li><a href="#s4">4. 逐项量测说明</a>
+      <ol>
+        <li><a href="#m1">M1 leveling 校平</a></li>
+        <li><a href="#m2">M2 mgo_c 平直度</a></li>
+        <li><a href="#m3">M3 interfaces 层间偏差</a></li>
+        <li><a href="#m4">M4 5 nm 下沉量</a></li>
+        <li><a href="#m5">M5 milling 曲率</a></li>
+        <li><a href="#m6">M6 non_mag 边缘</a></li>
+        <li><a href="#m7">M7 corner_offsets</a></li>
+      </ol>
+    </li>
+    <li><a href="#s5">5. 输出文件解析</a>
+      <ol>
+        <li><a href="#s5-1">5.1 JSON 逐字段</a></li>
+        <li><a href="#s5-2">5.2 summary.csv</a></li>
+        <li><a href="#s5-3">5.3 叠加图配色</a></li>
+        <li><a href="#s5-4">5.4 warnings 解读</a></li>
+      </ol>
+    </li>
+    <li><a href="#s6">6. 实测批次统计</a></li>
+    <li><a href="#s7">7. 新增量测模板</a></li>
+    <li><a href="#s8">8. 缺口与后续</a></li>
+    <li><a href="#s9">9. 配图清单</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header class="hero">
+  <h1>TEM 断面：分割 + 几何量测 系统汇报</h1>
+  <div class="sub">用语义分割把 TEM 断面拆成 11 个结构层，再在标签图上做亚纳米级几何量测，逐图输出 JSON / 叠加图，批量输出 CSV。</div>
+  <div class="meta">
+    <span>代码：<code>tools/napari_seg</code> + <code>tools/tem_analysis</code></span>
+    <span>分析工具版本 v1.0.0</span>
+    <span>7 个量测模块</span>
+    <span>73 列汇总 CSV</span>
+    <span>实测批次 26 张 / 0 失败</span>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s0"><span class="n">00</span>一页速览</h2>
+
+<p>这套东西解决的问题是：<b>TEM 断面照片的结构尺寸，以前靠人在图上手动拉线量，慢、不可复现、批次之间没法比。</b>
+现在的做法是先用分割模型把每一层"认"出来，再用一套确定性的几何算法在标签图上量，结果全部落成机器可读的字段。</p>
+
+<div class="kpi">
+  <div><div class="v">11</div><div class="k">分割类别（不含背景）</div></div>
+  <div><div class="v">7</div><div class="k">量测模块</div></div>
+  <div><div class="v">0.0746</div><div class="k">nm/px（FOV 76.37 / 1024）</div></div>
+  <div><div class="v">≈0.1 nm</div><div class="k">典型拟合 rmse</div></div>
+</div>
+
+<table>
+<thead><tr><th>能力</th><th>状态</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>napari 人工标注 + 数据集导出</td><td><span class="badge b-ok">已实现</span></td><td>直接产出 PaddleSeg 的 <code>train.txt</code>/<code>val.txt</code></td></tr>
+<tr><td>PaddleSeg 训练（网页端驱动）</td><td><span class="badge b-ok">已实现</span></td><td>数据集/训练/模型三份 YAML 深合并后启动子进程</td></tr>
+<tr><td>模型预测 → 伪彩标签图</td><td><span class="badge b-ok">已实现</span></td><td><code>pseudo_color_prediction/</code></td></tr>
+<tr><td>预测结果回灌标注（伪标签）</td><td><span class="badge b-ok">已实现</span></td><td><code>--import-masks</code></td></tr>
+<tr><td>Leveling 自动校平</td><td><span class="badge b-ok">已实现</span></td><td>M1</td></tr>
+<tr><td>层间端点偏差 a1/a2 ↔ b1..b4</td><td><span class="badge b-ok">已实现</span></td><td>M3</td></tr>
+<tr><td>端点 5 nm 内最大下沉</td><td><span class="badge b-ok">已实现</span></td><td>M4</td></tr>
+<tr><td>MgO_C 平直度 / 倾角</td><td><span class="badge b-ok">已实现</span></td><td>M2</td></tr>
+<tr><td>Milling 研磨面曲率半径 m1/m2</td><td><span class="badge b-ok">已实现</span></td><td>M5</td></tr>
+<tr><td>Non_mag 边缘直线与端点</td><td><span class="badge b-ok">已实现</span></td><td>M6</td></tr>
+<tr><td>Non_mag ↔ Milling 拐角偏移</td><td><span class="badge b-ok">已实现</span></td><td>M7</td></tr>
+<tr><td>Block_D 下边缘（blockD1/blockD2）</td><td><span class="badge b-no">缺失</span></td><td>早期需求，当前仓库版本已被 M7 取代，见 <a href="#s8">§8</a></td></tr>
+<tr><td>逐类形状统计（面积/周长）</td><td><span class="badge b-no">缺失</span></td><td>见 <a href="#s8">§8</a></td></tr>
+<tr><td>批次趋势图 / 分布图</td><td><span class="badge b-no">缺失</span></td><td>目前只有 CSV，画图靠外部</td></tr>
+<tr><td>量测结果回写数据库 / 网页展示</td><td><span class="badge b-no">缺失</span></td><td>分析工具目前是独立 CLI</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s1"><span class="n">01</span>整体链路</h2>
+
+<p>一句话概括：<b>先分割，再分析。</b>分割负责"哪里是什么"，分析负责"它有多大、偏了多少"。
+两步之间唯一的接口就是 PaddleSeg 输出的伪彩标签图。</p>
+
+<div class="pipe">
+  <div class="step"><b>① 采图</b><span>*.tif + FOV</span></div><div class="arw">▶</div>
+  <div class="step"><b>② napari 标注</b><span>annotate.py</span></div><div class="arw">▶</div>
+  <div class="step"><b>③ 数据集</b><span>train/val.txt</span></div><div class="arw">▶</div>
+  <div class="step"><b>④ PaddleSeg 训练</b><span>tools/train.py</span></div><div class="arw">▶</div>
+  <div class="step"><b>⑤ 预测</b><span>pseudo_color</span></div><div class="arw">▶</div>
+  <div class="step"><b>⑥ 几何分析</b><span>analyze.py</span></div><div class="arw">▶</div>
+  <div class="step"><b>⑦ JSON/CSV/叠加图</b><span>报告</span></div>
+</div>
+
+<div class="grid4">
+  <figure><img src="assets/01_raw.png" alt="原始 TEM"><figcaption>① 原始 TEM 灰度图<br>1024×1024，FOV 77.35 nm</figcaption></figure>
+  <figure><img src="assets/02_mask.png" alt="伪彩标签"><figcaption>⑤ 伪彩标签图<br><code>pseudo_color_prediction/</code></figcaption></figure>
+  <figure><img src="assets/03_added.png" alt="混合预览"><figcaption>混合预览 <code>added_prediction/</code><br><b>不能</b>喂给分析工具</figcaption></figure>
+  <figure><img src="assets/04_overlay_raw.png" alt="量测叠加"><figcaption>⑦ 量测叠加图<br><code>*_overlay.png</code></figcaption></figure>
+</div>
+
+<div class="warn"><b>接口约定：只吃 pseudo_color_prediction/</b>
+<code>added_prediction/</code> 是原图与掩膜的<b>混合预览</b>，颜色被灰度污染了，不是标签图。分析工具会主动拒绝：
+把 RGB 往调色板上吸附时，如果离色像素超过 5%，直接报错而不是硬算出一堆错数字。</div>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s2"><span class="n">02</span>分割训练逻辑</h2>
+
+<h3 id="s2-1">2.1 标注与数据集（tools/napari_seg/annotate.py）</h3>
+
+<p>标注器是基于 napari 的一个薄封装，输出目录直接就是 PaddleSeg 的数据集格式：</p>
+
+<pre><code>&lt;out&gt;/
+  JPEGImages/       原图（文件名已做 ASCII 安全化）
+  Annotations/      8-bit 调色板 PNG，像素值 == 类别 id
+  train.txt         每行 "JPEGImages/xxx.jpg Annotations/xxx.png"
+  val.txt
+  class_names.txt   第一行永远是 _background_</code></pre>
+
+<table>
+<thead><tr><th>要点</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>文件名安全化</td><td>PaddleSeg 按<b>空白字符</b>切分 <code>train.txt</code> 的行，所以 <code>[A-Za-z0-9._-]</code> 之外的字符（中文、空格、括号）一律替换成 <code>_</code>，重名加 <code>_2</code>、<code>_3</code> 后缀。<code>--print-names --no-gui</code> 可以先预览改名结果。</td></tr>
+<tr><td>调色板</td><td><code>build_palette()</code> = PASCAL VOC colormap 去掉首个黑色项，因此 <b>类别 id == 调色板索引</b>，类别 0 是 (128,0,0) 暗红而不是黑色。这也是分析工具能直接把 RGB 反查回 id 的原因——两边共用同一个函数，不会走偏。</td></tr>
+<tr><td>类别顺序即 id</td><td>本项目 11 类：<code>SAF_Ru_L, SAF_Ru_R, MgO_L, MgO_R, MgO_C, Non_mag, Milling_L, Milling_R, Leveling, Block_U, Block_D</code>，加背景共 12。顺序一旦变了，所有历史标签就全错位，所以固化在 <code>class_names.txt</code> 里随数据集走。</td></tr>
+<tr><td>断点续标</td><td>不带 <code>--classes</code> 再次打开同一个 <code>--out</code>，类别会从 <code>class_names.txt</code> 读回来。</td></tr>
+</tbody>
+</table>
+
+<pre><code># 首次标注
+.\.venv-napari\Scripts\python tools\napari_seg\annotate.py `
+    --images G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm `
+    --out    G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm_out `
+    --classes SAF_Ru_L,SAF_Ru_R,MgO_L,MgO_R,MgO_C,Non_mag,Milling_L,Milling_R,Leveling,Block_U,Block_D</code></pre>
+
+<div class="ph">
+  <div class="tag">缺图 · 请提供</div>
+  <div class="title">napari 标注界面截图</div>
+  <div class="desc">希望能看到：左侧图层列表（image + label）、右侧自定义面板（类别下拉、笔刷大小、contour 开关、"write train.txt / val.txt" 按钮），画布上是一张标了一半的 TEM 图。截个全窗口图即可。</div>
+  <div class="file">放到 assets/11_napari_ui.png</div>
+</div>
+
+<h3 id="s2-2">2.2 一个训练任务 = 三份 YAML 深合并</h3>
+
+<p>网页端不是让人写一整份 PaddleSeg 配置，而是把配置拆成三份独立维护、启动任务时再合并：</p>
+
+<pre><code>数据集配置 ─┐
+训练配置   ─┼─► 深合并 YAML ─► tools/train.py ─► stdout 解析进 TrainingLog 表
+模型配置   ─┘
+
+优先级：dataset → training → model（后者覆盖前者，逐 key 合并）</code></pre>
+
+<table>
+<thead><tr><th>配置</th><th>负责</th><th>典型内容</th></tr></thead>
+<tbody>
+<tr><td>数据集配置</td><td>数据从哪来</td><td><code>train_dataset</code> / <code>val_dataset</code>、<code>dataset_root</code>、<code>num_classes</code>、<code>transforms</code></td></tr>
+<tr><td>训练配置</td><td>怎么练</td><td><code>batch_size</code>、<code>iters</code>、<code>optimizer</code>、<code>lr_scheduler</code></td></tr>
+<tr><td>模型配置</td><td>练什么</td><td><code>model</code>（架构 + backbone）、<b><code>loss</code></b></td></tr>
+</tbody>
+</table>
+
+<div class="warn"><b>PaddleSeg 的三个硬约束（踩过的坑）</b>
+<ul style="margin:6px 0 0 18px">
+<li><b>按 iteration 训练，不是 epoch。</b><code>iters</code> 才是总步数，<code>warmup_iters</code>、<code>save_interval</code> 同理。数据库里 <code>epoch</code> 那几列对 Seg 项目存的其实是迭代数。</li>
+<li><b><code>len(loss.types)</code> 必须等于模型输出的 logits 数</b>（主头 + 辅助头），否则直接
+<code>RuntimeError: The length of logits_list should equal to the types of loss config</code>。
+所以 <code>loss:</code> 永远写在<b>模型配置</b>里，绝不写在训练配置里——这样任意训练预设都能和任意模型预设自由组合而不会配错。
+UNet=1、OCRNet=2、PP-LiteSeg=3、BiSeNetV2=5。</li>
+<li><b><code>save_dir</code> / <code>save_interval</code> / <code>log_iters</code> 是命令行参数，不是 YAML 键。</b></li>
+</ul></div>
+
+<div class="note"><b>为什么必须"深合并"而不是把三段文本拼起来</b>
+拼接会产生重复的顶层 key。PyYAML 容忍（后者赢），但文档本身是非法 YAML，用 <code>yaml.parse()</code> 读就抛
+<code>Map keys must be unique</code>。而且合并是逐 key 的，训练配置可以只改 <code>train_dataset.transforms</code>
+里的一项而不用把整个数据集块重抄一遍。</div>
+
+<h3 id="s2-3">2.3 训练启动与日志</h3>
+
+<pre><code># 网页端实际生成并执行的命令（PaddleSeg 分支）
+python -m paddle.distributed.launch --gpus 0 tools/train.py `
+    --config   "&lt;merged&gt;.yml" `
+    --do_eval `
+    --save_dir "&lt;output&gt;/jobs/&lt;job_name&gt;"</code></pre>
+
+<ul>
+<li>工作目录由 <code>src/lib/frameworks.ts::getWorkDir()</code> 按 <code>project.framework</code> 解析到 PaddleSeg 仓库根。</li>
+<li>命令<b>只在服务端生成</b>，从不接受请求体里的 <code>command</code>（它是 <code>shell:true</code> 执行的）；<code>--gpus</code> 也做了严格白名单校验。</li>
+<li>子进程 stdout 按行喂给 PaddleSeg 专用日志解析器，抽出 iter / loss / lr / ETA；<code>EVAL</code> 是多行块，解析器是有状态的，累积完整块后才产出一条 <code>mIoU / Acc / Kappa / Dice</code>。</li>
+<li>典型基线预设：80k iters @ 512×512，SGD + PolynomialDecay(power 0.9)，<code>batch_size 4</code>；先用 20k 的 quick 预设跑通全链路再上正式训练。</li>
+</ul>
+
+<div class="ph">
+  <div class="tag">缺图 · 请提供</div>
+  <div class="title">网页端训练任务页 + 训练曲线截图</div>
+  <div class="desc">两张：(a) 任务列表/详情页，能看到状态、进度、生成的命令；(b) loss 与 mIoU 随 iter 的曲线。这两张能直观说明"训练是被平台托管的"，比文字有说服力。</div>
+  <div class="file">放到 assets/12_train_job.png、assets/13_train_curve.png</div>
+</div>
+
+<h3 id="s2-4">2.4 预测产出</h3>
+
+<pre><code>cd &lt;PaddleSeg&gt;
+python tools\predict.py `
+    --config     &lt;merged&gt;.yml `
+    --model_path output\best_model\model.pdparams `
+    --image_path G:\datasets\TEM\new_batch `
+    --save_dir   G:\datasets\TEM\new_batch_pred</code></pre>
+
+<p>产出两个目录：<code>pseudo_color_prediction/</code>（标签图，<b>分析工具用这个</b>）和 <code>added_prediction/</code>（混合预览，只给人看）。</p>
+
+<h3 id="s2-5">2.5 伪标签迭代（数据集滚雪球）</h3>
+
+<p>标注是最贵的一步，所以链路是闭环的：模型预测 → 导回标注器 → 人工只做修正 → 变成新的训练样本。</p>
+
+<pre><code>.\.venv-napari\Scripts\python tools\napari_seg\annotate.py `
+    --images G:\datasets\TEM\new_batch `
+    --out    G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm_out `
+    --import-masks G:\datasets\TEM\new_batch_pred\pseudo_color_prediction</code></pre>
+
+<p>已有掩膜默认不覆盖（<code>--overwrite</code> 才覆盖）；加 <code>--no-gui</code> 可以只导入不开界面。</p>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s3"><span class="n">03</span>分析工具总览</h2>
+
+<h3 id="s3-1">3.1 运行方式</h3>
+
+<pre><code># 单图
+python tools\tem_analysis\analyze.py --mask &lt;mask.png&gt; --out &lt;dir&gt;
+
+# 批量 + 汇总 CSV + 叠加画在原始 TEM 灰度图上
+python tools\tem_analysis\analyze.py `
+    --mask-dir   G:\datasets\TEM\1300kgroup2\normal_test_predict\pseudo_color_prediction `
+    --out        G:\datasets\TEM\1300kgroup2\normal_test_analysis `
+    --overlay-on G:\datasets\TEM\1300kgroup2\normal_test `
+    --csv        summary.csv
+
+# 自检（全部合成几何 + 已知真值，不需要真实数据）
+python tools\tem_analysis\selftest.py</code></pre>
+
+<p>依赖：<code>numpy / Pillow / scipy / matplotlib</code>，可选 <code>opencv-contrib-python</code>（只用于 <code>cv2.ximgproc.thinning</code>；
+没有它就退回 <code>skeleton.py</code> 里的 NumPy 版 Guo–Hall，自检验证两者<b>逐像素一致</b>，只是慢一点）。</p>
+
+<h4>主要参数</h4>
+<table>
+<thead><tr><th>参数</th><th>默认</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>--scale-nm</code></td><td><code>auto</code></td><td>auto = 从文件名读 FOV ÷ 图像宽度；也可直接给 nm/px</td></tr>
+<tr><td><code>--fov-nm</code></td><td>—</td><td>直接指定视场(nm)，仍然除以图像宽度</td></tr>
+<tr><td><code>--no-rotate</code></td><td>off</td><td>不做 Leveling 校平，在原图上量</td></tr>
+<tr><td><code>--endpoint-extend</code></td><td><code>none</code></td><td><code>region</code> 把 a1/a2/b1/b2 沿切线外推回区域尖端，补偿骨架内缩</td></tr>
+<tr><td><code>--window-nm</code></td><td><code>5.0</code></td><td>下沉量的弧长窗口</td></tr>
+<tr><td><code>--min-area</code></td><td><code>30</code></td><td>连通域最小面积(px)</td></tr>
+<tr><td><code>--keep-all-components</code></td><td>off</td><td>关闭"每类只留最大连通域"</td></tr>
+<tr><td><code>--thinning-backend</code></td><td><code>auto</code></td><td><code>cv2</code> / <code>numpy</code></td></tr>
+<tr><td><code>--milling-edge-method</code></td><td><code>outer</code></td><td><code>outer</code>(朝真空/研磨面) / <code>inner</code>(贴器件) / <code>skeleton</code>(仅对比)</td></tr>
+<tr><td><code>--milling-frame-margin-px</code></td><td><code>4</code></td><td>丢弃距画幅边界或旋转填充这么近的边界像素</td></tr>
+<tr><td><code>--milling-smooth</code></td><td><code>1.0</code></td><td>假定边缘噪声(px)，决定样条平滑量</td></tr>
+<tr><td><code>--milling-middle-frac</code></td><td><code>1.0</code></td><td>曲率搜索的中段占比，默认不限制</td></tr>
+<tr><td><code>--milling-edge-margin-nm</code></td><td><code>2.0</code></td><td>边缘两端排除的弧长（样条端点伪迹）</td></tr>
+<tr><td><code>--milling-circle-window-frac</code></td><td><code>0.8</code></td><td>密切圆拟合半窗 = 该系数 × 样条半径（下限 12 px）</td></tr>
+<tr><td><code>--milling-tail-frac</code></td><td><code>0.25</code></td><td>两端各取多少弧长拟合直线（线-曲线-线校验）</td></tr>
+<tr><td><code>--nonmag-edge</code></td><td><code>auto</code></td><td>取不与 Block_D 相邻的那条；可强制 <code>top</code>/<code>bottom</code></td></tr>
+<tr><td><code>--nonmag-sigma</code> / <code>--no-nonmag-trim</code></td><td><code>2.0</code> / on</td><td>Non_mag 拟合的 σ 剔除</td></tr>
+<tr><td><code>--classes</code></td><td>内置 12 类</td><td>逗号分隔覆盖类别顺序</td></tr>
+<tr><td><code>--overlay-on</code> / <code>--no-overlay</code></td><td>—</td><td>叠加图画在原图上 / 不出叠加图</td></tr>
+</tbody>
+</table>
+
+<h3 id="s3-2">3.2 代码结构</h3>
+
+<table>
+<thead><tr><th>文件</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>analyze.py</code></td><td>CLI、标尺解析、按注册表顺序跑量测、单项失败隔离、落盘</td></tr>
+<tr><td><code>labelmap.py</code></td><td>读伪彩 PNG → 类别 id 数组；类别名解析；连通域清理（<code>class_mask</code>）；从文件名解析 FOV</td></tr>
+<tr><td><code>rectify.py</code></td><td>校平仿射变换 + 逆变换（最近邻，填充值 255=ignore）</td></tr>
+<tr><td><code>skeleton.py</code></td><td>Guo–Hall 细化（cv2 / NumPy 双实现）、骨架图最长路径、<code>Polyline</code>（弧长、端点、切线、窗口）</td></tr>
+<tr><td><code>contour.py</code></td><td>有序外轮廓追踪、环形最长连续段</td></tr>
+<tr><td><code>geometry.py</code></td><td>TLS/OLS 直线拟合、σ 剔除拟合、圆拟合、三次 B 样条与解析曲率</td></tr>
+<tr><td><code>context.py</code></td><td><code>AnalysisContext</code>：掩膜/骨架缓存、px↔nm、点的双坐标输出、偏移量、warnings</td></tr>
+<tr><td><code>measures/*.py</code></td><td>7 个量测模块，每个都是 <code>measure(ctx) -> dict</code></td></tr>
+<tr><td><code>report.py</code></td><td>JSON 序列化、固定列 CSV、matplotlib 叠加图</td></tr>
+<tr><td><code>selftest.py</code></td><td>合成几何 + 已知真值的端到端自检</td></tr>
+</tbody>
+</table>
+
+<div class="tip"><b>设计上最关键的一点：单项失败不拖垮整批</b>
+每个量测被单独 try 住。某张预测里丢了 <code>Milling_L</code>，只会让 <code>results.milling_l</code> 变成 <code>null</code> 并往
+<code>warnings</code> 里写一条，其余 6 项照常输出，批处理继续往下跑。</div>
+
+<h3 id="s3-3">3.3 标尺与校平：所有数字的两个前提</h3>
+
+<h4>标尺（nm/px）</h4>
+<p>默认从文件名正则取视场：<code>..._FOV_76.37nm.png</code> → 76.37 nm，再除以<b>图像实际宽度</b>。
+样本批次 26 张全部解析成功，得到 <code>76.37 / 1024 = 0.074580 nm/px</code>。</p>
+<ul>
+<li>除以实际宽度而不是写死 1024，是为了掩膜万一以别的尺寸导出时仍然正确；宽度≠1024 时会 warning。</li>
+<li>JSON/CSV 里都记了 <code>fov_nm</code> / <code>image_width_px</code> / <code>scale_nm_per_px</code> / <code>scale_source</code>，事后可复核换算。</li>
+<li><b>解析不到视场且没给 <code>--scale-nm</code> 时直接报错</b>，不会静默用错标尺。</li>
+</ul>
+
+<h4>校平（rectification）</h4>
+<p><code>Leveling</code> 层拟合成直线得到倾角，整图按这个角度旋转到水平，之后所有量测都在校平后的图上做。
+"dy 是向下偏了多少"这句话只有在校平之后才有物理意义。</p>
+<ul>
+<li>插值必须是<b>最近邻</b>（<code>order=0</code>）：数组里装的是类别 id，任何平均都会凭空造出没预测过的类。</li>
+<li>填充值用 <code>255</code>(ignore) 而不是 0(背景)，这样"画幅之外"和"预测为背景"仍然可区分——M5 排除切边就靠这个信息。</li>
+<li>每个点在 JSON 里<b>同时给校平后坐标和原图坐标</b>（<code>x_px/y_px</code> 与 <code>x_orig_px/y_orig_px</code>），可以直接叠回原始 TEM 图。</li>
+<li>代价：旋转带来重采样噪声，层骨架会毛糙 1–2 px。自检里校平后残余角 0.007°，但 dy 误差可达约 5 px。<code>--no-rotate</code> 可完全避开。</li>
+</ul>
+
+<figure><img src="assets/09_leveling_zoom.png" alt="Leveling 层">
+<figcaption>Leveling 层（图像最下方那条绿带）。白线 = Guo–Hall 骨架，亮绿虚线 = 校平后重新拟合的直线，用来自检旋转是否真的把它放平了。</figcaption></figure>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s4"><span class="n">04</span>逐项量测说明</h2>
+
+<p>7 个模块按注册表顺序执行，后面的可以读前面的结果：
+<code>leveling → mgo_c → interfaces → milling_l → milling_r → non_mag → corner_offsets</code>。
+下面每一项都按 <b>量什么 / 怎么定义 / 算法 / 输出字段 / 坑</b> 说明。</p>
+
+<figure><img src="assets/05_overlay_mask.png" alt="全量测叠加图">
+<figcaption>一张图上的全部量测结果（画在伪彩标签图上）。下面各节的放大图都截自这张。</figcaption></figure>
+
+<!-- ---------------- M1 ---------------- -->
+<h3 id="m1">M1 · <code>leveling</code> — 整图校平基准</h3>
+<p><b>量什么：</b>样品在图像里的倾斜角，以及 Leveling 层本身有多平。它是唯一一个"结果会反过来影响其它所有量测"的模块。</p>
+<table>
+<tbody>
+<tr><th style="width:130px">定义</th><td>Leveling 类 → 最大连通域 → Guo–Hall 骨架 → 直线拟合 → 倾角</td></tr>
+<tr><th>算法</th><td>角度用 <b>TLS（总体最小二乘）</b>——OLS 在残差与 x 跨度可比时会系统性压平斜率，TLS 对方向无偏；R²/rmse 用 OLS <code>y~x</code>，因为"fit R²"通常就是这个意思。两者都输出，差异摆在明面上。</td></tr>
+<tr><th>可靠性</th><td>用 <code>angle_stderr_deg</code>（斜率标准误 = σ/√Σ(x−x̄)²）判断，<b>不要用 R²</b>。校平后会重新拟合一次，残余角 &gt; 0.05° 就告警——这是对整条旋转/逆变换链路的免费自检。</td></tr>
+<tr><th>输出</th><td><code>angle_deg_image</code>、<code>angle_deg_math</code>、<code>angle_stderr_deg</code>、<code>rmse</code>、<code>max_residual</code>、<code>skeleton_length</code>、<code>residual_angle_deg_after_rotation</code>、<code>rectified{...}</code></td></tr>
+</tbody>
+</table>
+<div class="warn"><b>R² 对近水平的层没有意义</b>
+<code>R² = 1 − SS_res/SS_tot</code>，而水平层的 <code>SS_tot</code>（y 的方差）本身极小，所以一条 1029 px 长、rmse 只有 1.9 px 的优秀直线也只能得到 R² ≈ 0.02。
+Leveling / MgO_C / Non_mag 都是这种情况。结果里带 <code>fit_r2_degenerate: true</code> 标记和 <code>fit_r2_note</code> 说明。
+<b>判断平直度请看 <code>rmse</code> 和 <code>max_residual</code>。</b></div>
+
+<!-- ---------------- M2 ---------------- -->
+<h3 id="m2">M2 · <code>mgo_c</code> — MgO_C 层的平直度与倾角</h3>
+<p><b>量什么：</b>中间那条 MgO 势垒层拟合成直线后的角度、拟合优度，以及这条拟合线段的两个端点 <code>b3</code>/<code>b4</code>。</p>
+<table>
+<tbody>
+<tr><th style="width:130px">定义</th><td>MgO_C 骨架 → TLS 直线；<code>b3</code>/<code>b4</code> = 把骨架 x 最小/最大的两个极值点<b>投影到拟合直线上</b>得到的线段端点</td></tr>
+<tr><th>为什么要 b3/b4</th><td><code>b1</code>/<code>b2</code>（M3）是骨架的真实端点，<code>b3</code>/<code>b4</code> 是直线模型上的端点。两者之差就是该处层的局部起伏。所以 <code>a1→b1</code> 和 <code>a1→b3</code> 同时给：前者对准真实端点，后者对准模型、对局部毛刺不敏感。实测两者 dx 几乎一致（中位数 5.332 / 5.333 nm），但 <code>b3</code> 的 dy 离散度更小。</td></tr>
+<tr><th>输出</th><td><code>angle_deg_image/math</code>、<code>fit_r2</code>(+degenerate 标记)、<code>fit_slope/intercept</code>、<code>rmse</code>、<code>max_residual</code>、<code>perp_rmse</code>（垂直距离 rmse）、<code>b3</code>、<code>b4</code>、<code>fit_length</code>、<code>residual_profile</code>（逐点残差曲线）</td></tr>
+<tr><th>实测</th><td>rmse ≈ 0.045 nm（0.6 px），max_residual ≈ 0.126 nm。倾角在批次内 −3.5°～+3.5° 之间波动。</td></tr>
+</tbody>
+</table>
+
+<!-- ---------------- M3 ---------------- -->
+<h3 id="m3">M3 · <code>interfaces</code> — 层间端点偏差 a↔b</h3>
+<p><b>量什么：</b>左右两侧 SAF_Ru 层的内端点，相对 MgO_C 层端点的横纵偏移。这是这套系统最核心的一组数。</p>
+
+<figure><img src="assets/06_interfaces_zoom.png" alt="a1 b1 b3 端点">
+<figcaption>中央区域放大。<span style="color:#f66">a1/a2</span> = SAF_Ru 内端点；<span style="color:#0ff">b1/b2</span> = MgO_C 骨架端点；<span style="color:#3bf">b3/b4</span> = MgO_C 拟合线段端点（青色虚线即拟合线）；<span style="color:#f4f">洋红</span>部分是 M4 的 5 nm 窗口。</figcaption></figure>
+
+<table>
+<tbody>
+<tr><th style="width:130px">端点定义</th><td>
+<code>a1</code> = SAF_Ru_L 骨架 x <b>最大</b>端（朝向器件那头）<br>
+<code>a2</code> = SAF_Ru_R 骨架 x <b>最小</b>端<br>
+<code>b1</code>/<code>b2</code> = MgO_C <b>骨架</b>的 x 最小/最大端<br>
+<code>b3</code>/<code>b4</code> = MgO_C <b>拟合线段</b>的两个端点（来自 M2）</td></tr>
+<tr><th>输出的四组偏移</th><td><code>a1_b1</code>、<code>a1_b3</code>、<code>a2_b2</code>、<code>a2_b4</code>，每组含 <code>dx</code>/<code>dy</code>/<code>distance</code>，各自都有 px 和 nm</td></tr>
+<tr><th>符号约定</th><td><b><code>dx&gt;0</code>：b 在 a 的右侧；<code>dy&gt;0</code>：b 在图像中比 a 更低。</b>这句话原样写在每个 offset 的 <code>convention</code> 字段里，避免看报表的人猜。</td></tr>
+<tr><th>实测</th><td>26 张：<code>a1_b1.dx</code> 中位数 +5.332 nm（σ 0.61），<code>a2_b2.dx</code> 中位数 −5.332 nm（σ 0.50）——左右对称，符合物理预期。</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><b>骨架端点会内缩</b>
+Guo–Hall（任何形态学细化都一样）会从区域尖端回缩约<b>半个带宽</b>，所以 a1/b1 默认偏内侧；合成算例里 13 px 厚的层正好内缩 6 px。
+<code>--endpoint-extend region</code> 可沿端点切线外推回区域尖端补偿（自检里该模式下 a1 误差为 0），默认关闭以保持"忠实于 Guo–Hall"。
+好消息是 dx/dy 是两个端点<b>之差</b>，两侧内缩量相近时会大部分抵消。</div>
+
+<!-- ---------------- M4 ---------------- -->
+<h3 id="m4">M4 · <code>*_dip</code> — 端点 5 nm 内的最大下沉量</h3>
+<p><b>量什么：</b>从 a1（或 a2）沿 SAF_Ru 骨架往回走 5 nm，这段里层最多往下掉了多少。表征端点附近的塌陷/弯曲。</p>
+<table>
+<tbody>
+<tr><th style="width:130px">基准</th><td>端点自身：<code>dev = y − y(端点)</code>，正值 = 更低</td></tr>
+<tr><th>窗口</th><td>沿<b>弧长</b>回走 5 nm，不是沿 x。端点附近层是弯的，按 x 取窗口会覆盖到不同长度的实际层。</td></tr>
+<tr><th>输出</th><td><code>window</code>(请求值/实际 px+nm)、<code>window_points</code>、<code>window_start/end</code>、<code>window_polyline</code>（被搜索的骨架段原样输出）、<code>max_downward_deviation</code>、<code>max_downward_point</code>、<code>max_downward_arclength</code>（在窗口内多远处取到的）、<code>max_abs_deviation</code>/<code>max_abs_point</code>（绝对值最大，可能是向上）、<code>deviation_profile</code>（整条 s–dev 曲线）</td></tr>
+<tr><th>叠加图画法</th><td>洋红色：加粗骨架段 = 被搜索范围，两端竖线 = 窗口边界，虚线 = 端点基准线，箭头指向最大偏差点并标数值。</td></tr>
+<tr><th>实测</th><td>左侧中位数 0.597 nm（0～1.417），右侧 0.709 nm（0.224～1.268）。</td></tr>
+</tbody>
+</table>
+<div class="note"><b>为什么把整条 <code>deviation_profile</code> 也写进 JSON</b>
+这样想换个窗口长度、或者想看"最大值是不是一个孤立毛刺"，不必重跑整批，直接在 JSON 上复核。M5 的 <code>curvature_profile</code>、M2 的 <code>residual_profile</code> 同理。</div>
+
+<!-- ---------------- M5 ---------------- -->
+<h3 id="m5">M5 · <code>milling_l</code> / <code>milling_r</code> — 研磨面曲率与 m1/m2</h3>
+<p><b>量什么：</b>离子研磨加工出来的那个侧面，它的形状是"直—弯—直"，要找到弯得最厉害的那个点（m1 左 / m2 右）以及那里的曲率半径。</p>
+
+<figure><img src="assets/07_milling_zoom.png" alt="Milling 曲率">
+<figcaption>左侧 Milling 带放大。<span style="color:#fa0">橙色</span>曲线 = 选中的研磨面（样条采样），<span style="color:#fa0">m1</span> = 曲率最大点，<span style="color:#3cf">蓝色点圆</span> = 在该点对原始边缘点拟合的密切圆——半径估得准不准，一眼就能看出来。</figcaption></figure>
+
+<h4>(a) 取哪一侧：邻接判据，不是骨架法向</h4>
+<p>一条 Milling 带有两个侧面，一侧贴器件（MgO_L/MgO_R/Block_*），一侧朝真空。默认 <code>outer</code> = 朝真空那侧，
+做法是保留"<b>不与任何其它类相邻</b>"的边界像素，再取轮廓顺序上最长的连续段。</p>
+<div class="warn"><b>为什么放弃了"骨架法向分侧"</b>
+原始需求设想用骨架把边界一分为二、保留法向正侧。在样本图上逐点实测两侧的邻居类别：
+<pre style="margin:8px 0"><code>i= 411 p=(420,682)  +n -&gt; _background_   -n -&gt; MgO_L
+i= 651 p=(431,443)  +n -&gt; Block_U        -n -&gt; _background_</code></pre>
+器件在低处位于法向<b>负</b>侧、在高处位于法向<b>正</b>侧——<b>没有哪个符号能沿整条带选中同一侧</b>，会中途翻面。
+改用邻接判据后与骨架法向彻底无关。<code>--milling-edge-method skeleton</code> 保留原方法仅供对比。</div>
+
+<h4>(b) 排除画幅切边</h4>
+<div class="warn"><b>画幅切边会伪造出最尖的拐角</b>
+Milling 带跑出视场左右边界，外侧边缘于是包含一段由裁剪产生的直边和两个 90° 拐角——那是整条边上曲率最大的地方。
+加这条判据之前 <code>m2</code> 就落在图像右边界上。现在会丢弃距画幅边界或旋转填充 4 px 以内的边界像素。
+（<b>旋转填充用 255=ignore 而不是背景，正是为了这个</b>：校平后那条切边变成图像内部的一条斜线，唯一还能证明它是"裁剪"而非真实表面的信息，就是它外侧属于原画幅之外。）</div>
+
+<h4>(c) 定位靠样条，量值靠密切圆</h4>
+<p>整条边用三次 B 样条平滑后取<b>解析曲率</b> κ(s)，直段 κ≈0 抢不到最大值，所以不需要真的去拟合"直—弯—直"分段模型。</p>
+<div class="warn"><b>曲率幅值是尺度相关的，样条值偏小</b>
+<code>splprep</code> 会把节点数削减到残差与 <code>s</code> 匹配，而少数几段三次曲线撑不住恒定曲率：在真值半径 200 px 的合成弧上，
+样条报 168 px（−16%），密切圆拟合报 190 px（−5%）。所以：
+<ul style="margin:6px 0 0 18px">
+<li><code>radius</code> / <code>kappa_*</code> 来自样条解析导数，<b>定位 m1/m2 可靠</b></li>
+<li><code>local_circle.radius</code> 是在同一点对原始边缘点拟合的圆，<b>看幅值请用它</b></li>
+<li><code>local_circle.rms</code> 是拟合残差；真实拐弯不是圆弧，1–2 px 属正常，超过 3.5 px 才把 <code>reliable</code> 置 false 并告警</li>
+</ul>
+这段说明原样写在 JSON 的 <code>magnitude_note</code> 字段里。</div>
+
+<table>
+<tbody>
+<tr><th style="width:130px">输出</th><td><code>edge_method</code>、<code>boundary_points</code>/<code>selected_points</code>/<code>edge_points</code>、<code>edge_length</code>、<code>spline_rmse</code>、<code>search_band_nm</code>、<code>max_curvature_point</code>(=m1/m2)、<code>max_curvature_arclength</code>、<code>kappa_per_px</code>/<code>kappa_per_nm</code>/<code>kappa_abs_per_nm</code>、<code>radius</code>、<code>local_circle{centre,radius,rms,points,window,reliable}</code>、<code>tail_left</code>/<code>tail_right</code>（两端各 25% 弧长的直线拟合，用于校验"直—弯—直"）、<code>edge_polyline</code>、<code>curvature_profile</code></td></tr>
+<tr><th>符号</th><td><code>kappa&gt;0</code> 表示在图像坐标（y 向下）里顺时针转弯</td></tr>
+<tr><th>实测</th><td>26 张：<code>milling_l.local_circle.radius</code> 中位数 4.835 nm，<code>milling_r</code> 5.329 nm。</td></tr>
+</tbody>
+</table>
+<div class="note"><b>"中间曲线"没有客观定义</b>
+实测拐点在弧长的约 73%（不是中点），所以 <code>--milling-middle-frac</code> 默认 1.0（不限制中段）。若最大值恰好落在搜索带边界上会告警。</div>
+
+<!-- ---------------- M6 ---------------- -->
+<h3 id="m6">M6 · <code>non_mag</code> — Non_mag 横向边缘与 Non_mag1/2</h3>
+<p><b>量什么：</b>Non_mag 方块背离 Block_D 那一侧的横向边缘，拟合成直线，给出角度、长度和两个端点。</p>
+
+<figure><img src="assets/08_nonmag_zoom.png" alt="Non_mag 边缘">
+<figcaption>右侧区域。<span style="color:#ff0">黄色</span>细线 = 逐列提取的原始边缘，黄色虚线 = σ 剔除后的拟合直线，两端 <span style="color:#ff0">Non_mag1/Non_mag2</span> 是把这条线延伸到区域 x 范围端点得到的。</figcaption></figure>
+
+<table>
+<tbody>
+<tr><th style="width:130px">取哪条边</th><td>默认 <code>auto</code>：分别统计上下两条边与 Block_D 接触的列数，取接触少的那条。样本图上 <code>top:172 / bottom:0</code>，于是取下边缘。<b>这样写而不是写死 "bottom"，是为了样品倒装或类别重标时不会悄悄量错界面。</b><code>edge_side</code> 与两个接触计数都写进 JSON/CSV。</td></tr>
+<tr><th>边缘提取</th><td>逐列取该列最极端的前景像素。Non_mag 的上下缘都是 x 的单值函数，所以这<b>就是</b>边缘，不需要任何分侧启发式。</td></tr>
+<tr><th>拟合</th><td>σ 剔除（默认 2σ）的 TLS。左右两个角是圆倒角，不剔会把直线拽歪；一个孤立的错误预测像素也会主导普通最小二乘。</td></tr>
+<tr><th>端点定义</th><td><b>把拟合直线向外延伸到 Non_mag 区域的 x 最小/最大列</b>，而不是停在参与拟合的列上。被剔除的恰恰是两端圆角掉的列，停在那里会让端点随剔除阈值内缩；延伸到区域边界后，端点是<b>区域的属性</b>而不是阈值的属性。y 取直线的值（不取原始像素），所以圆角本身不污染纵坐标。<code>max_extrapolation</code> 记录延伸了多少。</td></tr>
+<tr><th>输出</th><td><code>edge_side</code>、<code>edge_side_rule</code>、<code>block_d_contact_columns{top,bottom}</code>、<code>edge_columns</code>/<code>columns_used</code>/<code>columns_dropped</code>、<code>Non_mag1</code>、<code>Non_mag2</code>、<code>endpoint_rule</code>、<code>region_x_range_px</code>、<code>max_extrapolation</code>、<code>angle_deg_image/math</code>、<code>length</code>、<code>fit_r2</code>、<code>rmse</code>、<code>max_residual</code>、<code>edge_polyline</code></td></tr>
+</tbody>
+</table>
+
+<div class="warn"><b>"最大连通域"不等于"对的那个"</b>
+26 张里有一张的预测在画幅底部长出一条 Non_mag 带，面积（11128 px）比真正的 Non_mag 方块还大，按面积选就量到了那条伪迹上——边缘长度报 33.98 nm 而正常值约 10 nm。
+现在 Non_mag 的连通域<b>锚定在 Block_D 上</b>：先只在"与 Block_D 相邻"的连通域里挑，挑不到再退回按面积。修复后该图为 9.14 nm，回到正常区间。
+其余类别仍按面积选；任何丢弃都会写 warning 并注明是否用了锚定。</div>
+
+<!-- ---------------- M7 ---------------- -->
+<h3 id="m7">M7 · <code>corner_offsets</code> — Non_mag 端点 ↔ Milling 拐点</h3>
+<p><b>量什么：</b><code>Non_mag1 → m1</code> 和 <code>Non_mag2 → m2</code> 的 dx/dy 和直线距离。描述"方块的角"和"研磨面拐弯处"错开了多少。</p>
+<table>
+<tbody>
+<tr><th style="width:130px">特殊之处</th><td>这是<b>唯一一个组合其它量测结果</b>的模块。它不重算，而是从 <code>ctx.results</code> 里把 M5、M6 的结果读回来——所以在注册表里必须排在 <code>non_mag</code> / <code>milling_*</code> 之后。</td></tr>
+<tr><th>降级</th><td>任一侧依赖的量测失败时，<b>该侧单独变成 null</b>，另一侧照常输出。两侧都拿不到才整个模块失败。</td></tr>
+<tr><th>输出</th><td><code>non_mag1_m1</code> / <code>non_mag2_m2</code>，各含 <code>from</code>/<code>to</code>（点名）、<code>from_point</code>/<code>to_point</code>（双坐标）、<code>dx</code>/<code>dy</code>/<code>distance</code>、<code>convention</code></td></tr>
+<tr><th>叠加图</th><td>青绿色点划折线，横竖两段分别对应 dx 和 dy，中间标注数值</td></tr>
+<tr><th>实测</th><td>26 张：<code>non_mag1_m1.dx</code> 中位数 −1.251 nm，<code>non_mag2_m2.dx</code> +1.288 nm。</td></tr>
+</tbody>
+</table>
+
+<!-- ---------------- 自检 ---------------- -->
+<h3>量测可信度：selftest.py 覆盖了什么</h3>
+<p>全部用<b>合成几何 + 已知真值</b>，不依赖真实数据，所以可以随时跑、跑得快、结论无争议。</p>
+<details><summary>展开自检项清单</summary>
+<ul>
+<li>Guo–Hall：OpenCV 与 NumPy 两条实现对直带 / 折弯带 / 随机团<b>逐像素一致</b></li>
+<li>旋转正反变换往返误差 &lt; 1e-9 px；按拟合角旋转后方向恰好水平</li>
+<li>精确直线的 TLS 角度误差 &lt; 1e-6°；R² 退化标记按预期触发</li>
+<li>精确圆的解析曲率半径误差 &lt; 1%（50 / 200 / 600 px 三个尺度）</li>
+<li>轮廓追踪：矩形环长度精确，环绕连续段选取正确</li>
+<li>未倾斜整图端到端：a1/a2/b1/b2、dx/dy、角度、rmse <b>误差为 0</b>；骨架内缩量落在预期区间（13 px 厚的层正好缩 6 px）</li>
+<li>Non_mag 自动选边：合成图与真实图同构（Block_D 紧贴 Non_mag 上方），必须选中下边缘</li>
+<li>corner_offsets：报出的 dx/dy 必须精确等于它所命名的两点之差（1e-9 px），nm 换算同样精确</li>
+<li>干扰连通域：塞一条比真 Non_mag 大 6 倍（57000 vs 9150 px）且远离 Block_D 的假带，量测必须仍落在真方块上（复现真实批次里那张坏预测）</li>
+<li>标尺：文件名解析（含无视场时返回 None）；端到端跑一张 <code>..._FOV_76.37nm.png</code>，nm/px 必须精确等于 76.37/宽度</li>
+<li>b3/b4：合成图的 MgO_C 是完美矩形，拟合端点必须与骨架端点重合</li>
+<li>Milling 分侧：合成图内外两侧半径已知（200 / 215 px），<code>outer</code> 与 <code>inner</code> 各须落在对应半径上；选中的边缘不得包含画幅边界像素</li>
+<li>倾斜 3° 再校平：恢复倾角误差 &lt; 0.05°，残余角 &lt; 0.05°，密切圆半径误差 &lt; 10%</li>
+</ul>
+</details>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s5"><span class="n">05</span>输出文件解析</h2>
+
+<p>每张图固定产出 2 个文件，批量模式再加 1 个汇总：</p>
+
+<table>
+<thead><tr><th>文件</th><th>内容</th><th>用途</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;stem&gt;.json</code></td><td>全部指标 + 全部输入参数 + 曲线序列</td><td>唯一完整记录，可复核、可重现</td></tr>
+<tr><td><code>&lt;stem&gt;_overlay.png</code></td><td>骨架、拟合线、密切圆、标注点与数值图例</td><td>人眼复核，判断"量对地方了吗"</td></tr>
+<tr><td><code>summary.csv</code></td><td>一行一图，<b>固定 73 列</b></td><td>批次统计、拉进 Excel/Pandas</td></tr>
+</tbody>
+</table>
+
+<div class="note"><b>为什么 CSV 的列是写死的</b>
+一份"列 = 这批恰好产出了哪些 key"的 CSV 是没法跨批次比较的——某张图缺了 <code>Milling_L</code>，整列就消失，两个 CSV 对不上。
+所以列表显式声明在 <code>report.py::CSV_COLUMNS</code> 里，缺的值填空，列数永远一致。</div>
+
+<h3 id="s5-1">5.1 JSON 逐字段</h3>
+
+<h4>顶层</h4>
+<table>
+<thead><tr><th>字段</th><th>含义</th><th>示例</th></tr></thead>
+<tbody>
+<tr><td><code>image</code> / <code>image_path</code></td><td>掩膜文件名 / 完整路径</td><td><code>751845_..._FOV_76.37nm.png</code></td></tr>
+<tr><td><code>image_size_px</code></td><td>掩膜原始尺寸 [宽, 高]</td><td><code>[1024, 1024]</code></td></tr>
+<tr><td><code>mask_note</code></td><td>文件是怎么被解读的</td><td><code>P (index == class id)</code> 或 <code>RGB snapped to palette (0.12% off-palette)</code></td></tr>
+<tr><td><code>classes</code></td><td>本次使用的类别顺序（索引 = 类别 id）</td><td><code>["_background_","SAF_Ru_L",...]</code></td></tr>
+<tr><td><code>scale_nm_per_px</code></td><td><b>标尺</b>，所有 nm 值 = px 值 × 它</td><td><code>0.074580078125</code></td></tr>
+<tr><td><code>scale_source</code></td><td>标尺哪来的：<code>filename</code> / <code>--fov-nm</code> / <code>--scale-nm</code></td><td><code>filename</code></td></tr>
+<tr><td><code>fov_nm</code> / <code>image_width_px</code></td><td>视场与用于换算的宽度，便于复核</td><td><code>76.37</code> / <code>1024</code></td></tr>
+<tr><td><code>tool_version</code></td><td>分析工具版本</td><td><code>1.0.0</code></td></tr>
+<tr><td><code>params</code></td><td><b>本次运行的全部 CLI 参数</b>（除输入输出路径）</td><td>用来回答"这个数是用什么设置算出来的"</td></tr>
+<tr><td><code>rotation</code></td><td><code>applied</code>(是否校平)、<code>angle_deg_image</code>(旋转角)、<code>matrix</code>(3×3 齐次前向矩阵)、<code>output_size_px</code></td><td>拿 matrix 可以把任意坐标在两个图之间来回换</td></tr>
+<tr><td><code>results</code></td><td>7 个量测模块的结果，失败的为 <code>null</code></td><td>见下</td></tr>
+<tr><td><code>warnings</code></td><td>字符串数组，去重</td><td>见 <a href="#s5-4">§5.4</a></td></tr>
+</tbody>
+</table>
+
+<h4>三个反复出现的复合结构</h4>
+<p>看懂这三个，JSON 里 90% 的字段就都认识了。</p>
+
+<pre><code>// ① 距离 —— 任何长度都同时给 px 和 nm，永远不用自己乘标尺
+"rmse": { "px": 1.9419, "nm": 0.14483 }
+
+// ② 点 —— 同时给校平后坐标和原图坐标
+"a1": {
+  "x_px": 401.0,   "y_px": 532.0,          // 校平后（量测就在这个坐标系里做）
+  "x_orig_px": 400.52, "y_orig_px": 531.61 // 原始 TEM 图上的位置，可直接叠回去
+}
+
+// ③ 偏移 —— b 相对 a，符号约定随数据一起走
+"a1_b1": {
+  "dx": { "px": 70.0, "nm": 5.2206 },
+  "dy": { "px": -4.0, "nm": -0.2983 },
+  "distance": { "px": 70.114, "nm": 5.2291 },
+  "convention": "dx>0: b is right of a; dy>0: b is lower than a in the image"
+}</code></pre>
+
+<h4>角度、拟合优度、曲线：约定</h4>
+<table>
+<thead><tr><th>字段族</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>angle_deg_image</code></td><td><b>图像坐标</b>下的角度（y 向下，顺时针为正）。看叠加图时用这个。</td></tr>
+<tr><td><code>angle_deg_math</code></td><td><b>数学坐标</b>下的角度（逆时针为正）。= −angle_deg_image。写公式时用这个。</td></tr>
+<tr><td><code>fit_r2</code></td><td>OLS <code>y~x</code> 的 R²。<b>近水平的层看这个没意义</b>。</td></tr>
+<tr><td><code>fit_r2_degenerate</code></td><td><code>true</code> = R² 退化，请改看 rmse。Leveling / MgO_C / Non_mag 基本恒为 true。</td></tr>
+<tr><td><code>fit_r2_note</code></td><td>退化原因的自然语言说明，原样嵌在数据里。</td></tr>
+<tr><td><code>fit_r2_axis</code></td><td>R² 是在 <code>y~x</code> 还是 <code>x~y</code> 上算的（近垂直的线会自动换轴，并告警）。</td></tr>
+<tr><td><code>rmse</code> / <code>max_residual</code></td><td><b>判断平直度就看这两个。</b>rmse = 均方根残差，max_residual = 最大单点残差。</td></tr>
+<tr><td><code>perp_rmse</code></td><td>到 TLS 直线的<b>垂直</b>距离 rmse（M2）。斜线上比 y 向残差更公平。</td></tr>
+<tr><td><code>angle_stderr_deg</code></td><td>拟合角度的标准误。假设残差独立，真实层的起伏是沿 x 相关的，所以把它当作角度不确定度的<b>下界</b>。</td></tr>
+<tr><td><code>*_profile</code> / <code>*_polyline</code></td><td>整条曲线/折线序列（<code>residual_profile</code>、<code>deviation_profile</code>、<code>curvature_profile</code>、<code>edge_polyline</code>、<code>window_polyline</code>）。<b>存在的意义是改参数不用重跑</b>，也可以自己画图。</td></tr>
+<tr><td><code>*_note</code> / <code>*_rule</code> / <code>convention</code></td><td>把"这个数是按什么规则算的"写进数据本身，而不是只写在文档里。半年后看报表的人不用翻代码。</td></tr>
+</tbody>
+</table>
+
+<h4>results 各模块关键字段速查</h4>
+<table>
+<thead><tr><th>路径</th><th>含义</th><th>怎么用</th></tr></thead>
+<tbody>
+<tr><td><code>leveling.angle_deg_image</code></td><td>样品倾角</td><td>批次内异常大 = 制样/上样问题</td></tr>
+<tr><td><code>leveling.rmse.nm</code></td><td>Leveling 层平直度</td><td>校平基准可信度</td></tr>
+<tr><td><code>leveling.residual_angle_deg_after_rotation</code></td><td>校平后残余角</td><td><b>&gt;0.05° 说明校平没做干净</b></td></tr>
+<tr><td><code>mgo_c.angle_deg_image</code> / <code>.rmse.nm</code></td><td>MgO_C 倾角 / 平直度</td><td>势垒层质量</td></tr>
+<tr><td><code>mgo_c.fit_length.nm</code></td><td>拟合线段长度</td><td>≈ 势垒层宽度</td></tr>
+<tr><td><code>interfaces.a1_b1.dx.nm</code></td><td>左侧层间横向偏差（真实端点）</td><td><b>核心指标</b></td></tr>
+<tr><td><code>interfaces.a1_b3.dx.nm</code></td><td>同上但对准拟合线端点</td><td>对局部毛刺不敏感的版本</td></tr>
+<tr><td><code>interfaces.a2_b2.dx.nm</code> / <code>a2_b4</code></td><td>右侧同上</td><td>与左侧对称性检查</td></tr>
+<tr><td><code>interfaces.*.dy.nm</code></td><td>纵向偏差，正 = b 更低</td><td>层间高低差</td></tr>
+<tr><td><code>interfaces.saf_ru_l_dip.max_downward_deviation.nm</code></td><td>左端 5 nm 内最大下沉</td><td>端点塌陷程度</td></tr>
+<tr><td><code>interfaces.saf_ru_l_dip.max_downward_arclength.nm</code></td><td>最大下沉出现在离端点多远处</td><td>贴着端点 vs 在窗口外沿，含义不同</td></tr>
+<tr><td><code>milling_l.max_curvature_point</code></td><td>m1 坐标</td><td>拐点位置</td></tr>
+<tr><td><code>milling_l.local_circle.radius.nm</code></td><td><b>推荐用的曲率半径</b></td><td>研磨圆角大小</td></tr>
+<tr><td><code>milling_l.radius.nm</code></td><td>样条给的半径，系统性偏小 ~15%</td><td>只用于定位/趋势</td></tr>
+<tr><td><code>milling_l.local_circle.reliable</code></td><td>圆拟合 rms ≤ 3.5 px</td><td><b>false 时该半径不要引用</b></td></tr>
+<tr><td><code>milling_l.tail_left/right.angle_deg_image</code></td><td>两端直段角度</td><td>校验"直—弯—直"，也可当研磨侧壁角</td></tr>
+<tr><td><code>non_mag.edge_side</code></td><td>实际选了 top 还是 bottom</td><td><b>批次内应当一致</b>，不一致要查</td></tr>
+<tr><td><code>non_mag.length.nm</code></td><td>Non_mag 边缘长度</td><td>方块宽度</td></tr>
+<tr><td><code>non_mag.angle_deg_image</code> / <code>.rmse.nm</code></td><td>边缘倾角 / 平直度</td><td>—</td></tr>
+<tr><td><code>non_mag.columns_dropped</code></td><td>σ 剔除掉的列数</td><td>&gt;25% 会告警，说明边不直</td></tr>
+<tr><td><code>corner_offsets.non_mag1_m1.dx/dy/distance</code></td><td>左拐角偏移</td><td>—</td></tr>
+<tr><td><code>corner_offsets.non_mag2_m2.*</code></td><td>右拐角偏移</td><td>—</td></tr>
+</tbody>
+</table>
+
+<h3 id="s5-2">5.2 summary.csv</h3>
+<p>73 列，列名就是 JSON 里的<b>点分路径</b>（如 <code>results.interfaces.a1_b1.dx.nm</code>），所以 CSV 和 JSON 之间零翻译成本。
+编码 <code>utf-8-sig</code>，Excel 直接双击不乱码。</p>
+<table>
+<thead><tr><th>列组</th><th>列</th></tr></thead>
+<tbody>
+<tr><td>标识与标尺</td><td><code>image</code>, <code>fov_nm</code>, <code>image_width_px</code>, <code>scale_nm_per_px</code>, <code>scale_source</code></td></tr>
+<tr><td>校平</td><td><code>rotation.applied</code>, <code>rotation.angle_deg_image</code>, <code>results.leveling.*</code>(5 列)</td></tr>
+<tr><td>层间偏差</td><td><code>results.interfaces.*</code>：a1/b1/b3/a2/b2/b4 各自 x,y + 四组 dx,dy（共 20 列）</td></tr>
+<tr><td>下沉量</td><td>左右各 <code>max_downward_deviation.nm</code> + <code>max_downward_arclength.nm</code></td></tr>
+<tr><td>MgO_C</td><td><code>angle_deg_image</code>, <code>fit_r2</code>, <code>rmse.nm</code>, <code>fit_length.nm</code></td></tr>
+<tr><td>Milling 左/右</td><td>各 9 列：曲率点 x,y、<code>kappa_abs_per_nm</code>、样条半径、圆半径、圆 rms、<code>reliable</code>、两端直段角度</td></tr>
+<tr><td>Non_mag</td><td><code>edge_side</code>, Non_mag1/2 的 x,y, <code>angle_deg_image</code>, <code>length.nm</code>, <code>fit_r2</code>, <code>rmse.nm</code></td></tr>
+<tr><td>拐角偏移</td><td>左右各 dx.nm / dy.nm / distance.nm</td></tr>
+<tr><td>质量</td><td><code>n_warnings</code>（条数）, <code>warnings</code>（用 <code> | </code> 连接的全文）</td></tr>
+</tbody>
+</table>
+<div class="tip"><b>推荐的批次筛查动作</b>
+先按 <code>n_warnings &gt; 0</code> 排序，逐一看这些图的 <code>_overlay.png</code>；再看 <code>results.milling_*.local_circle.reliable == false</code> 的行；
+最后看各核心列的箱线图找离群点。CSV 里坐标列的存在就是为了让你能快速定位"这个离群值出现在图的哪个位置"。</div>
+
+<h3 id="s5-3">5.3 叠加图配色对照</h3>
+<figure><img src="assets/10_legend.png" alt="叠加图图例">
+<figcaption>叠加图右下角的文字图例，把关键标量直接印在图上，不用开 JSON 也能读。</figcaption></figure>
+<table>
+<thead><tr><th>颜色</th><th>元素</th><th>对应量测</th></tr></thead>
+<tbody>
+<tr><td><span class="swatch" style="background:#fff"></span>白色细线</td><td>Guo–Hall 骨架（Leveling/SAF_Ru_L/R/MgO_C/Milling_L/R）</td><td>所有基于骨架的量测</td></tr>
+<tr><td><span class="swatch" style="background:#0ff"></span>青色虚线 + <b>b1 b2</b></td><td>MgO_C 拟合线段与骨架端点</td><td>M2 / M3</td></tr>
+<tr><td><span class="swatch" style="background:#3bf"></span>深天蓝 <b>b3 b4</b></td><td>MgO_C 拟合线段端点</td><td>M2</td></tr>
+<tr><td><span class="swatch" style="background:#f44"></span>红色 <b>a1 a2</b></td><td>SAF_Ru 内端点</td><td>M3</td></tr>
+<tr><td><span class="swatch" style="background:#f0f"></span>洋红</td><td>5 nm 窗口：加粗骨架段 + 两端竖线 + 基准虚线 + 箭头与数值</td><td>M4</td></tr>
+<tr><td><span class="swatch" style="background:#fa0"></span>橙色曲线 + <b>m1 m2</b></td><td>选中的研磨面与曲率最大点</td><td>M5</td></tr>
+<tr><td><span class="swatch" style="background:#3cf"></span>天蓝点圆</td><td>密切圆（半径估计的可视化校验）</td><td>M5</td></tr>
+<tr><td><span class="swatch" style="background:#ff0"></span>黄色细线/虚线 + <b>Non_mag1 2</b></td><td>原始边缘折线、拟合直线、两端点</td><td>M6</td></tr>
+<tr><td><span class="swatch" style="background:#00fa9a"></span>青绿点划折线</td><td>Non_mag↔Milling 的 L 形偏移（横段=dx，竖段=dy）</td><td>M7</td></tr>
+<tr><td><span class="swatch" style="background:#0f0"></span>亮绿虚线</td><td>校平后重新拟合的 Leveling 直线</td><td>M1 自检</td></tr>
+</tbody>
+</table>
+<div class="tip"><b><code>--overlay-on</code> 值得一直开着</b>
+把标注画在<b>原始 TEM 灰度图</b>上（而不是伪彩掩膜上），可以同时看出两类错误：几何算错了，和<b>分割本身就错了</b>。
+只看伪彩图的话，一个把边界画偏 3 px 的分割结果，叠加图上看起来会完美无缺。</div>
+
+<h3 id="s5-4">5.4 warnings 怎么读</h3>
+<table>
+<thead><tr><th>warning</th><th>含义</th><th>该怎么办</th></tr></thead>
+<tbody>
+<tr><td><code>X: dropped N component(s), largest M px -- the layer may be split in the prediction</code></td><td>该类有多个连通域，只留了最大的</td><td>M 很小（几十 px）= 噪点，可忽略；M 上千 = <b>分割把层切断了</b>，这张图的端点全部存疑</td></tr>
+<tr><td><code>... ; kept the component touching Block_D</code></td><td>Non_mag 用了锚定规则而非面积规则</td><td>说明面积规则本会选错，锚定救回来了。看一眼叠加图确认</td></tr>
+<tr><td><code>Leveling is still tilted by X deg after rectification</code></td><td>校平后残余角超 0.05°</td><td>Leveling 层可能断成几段或本身不直，校平基准不可靠</td></tr>
+<tr><td><code>Leveling is N px long with M px rmse; ... standard error of X deg</code></td><td>校平角度不确定度偏大</td><td>参考用，通常是层太短或太毛</td></tr>
+<tr><td><code>X: the local circle fit has a Y px rms residual (&gt; 3.5)</code></td><td>密切圆拟合不可靠</td><td><b>不要引用该 <code>local_circle.radius</code></b>；拐弯在这个尺度上不是单一圆弧</td></tr>
+<tr><td><code>X: the outer boundary is fragmented (N of M selected pixels...)</code></td><td>研磨面被别的类打断了</td><td>只量到了其中一段，边缘长度会偏短</td></tr>
+<tr><td><code>X: the curvature maximum sits on the edge of the search band</code></td><td>最大曲率落在搜索区间边界</td><td>调大 <code>--milling-middle-frac</code> 或调小 <code>--milling-edge-margin-nm</code> 重跑</td></tr>
+<tr><td><code>Non_mag: both edges touch Block_D (a top / b bottom columns)</code></td><td>自动选边不确定</td><td>看叠加图确认；必要时用 <code>--nonmag-edge top|bottom</code> 强制</td></tr>
+<tr><td><code>Non_mag: sigma-clipping dropped N/M columns</code></td><td>剔除超过 25%</td><td>边不直，拟合直线的代表性存疑</td></tr>
+<tr><td><code>image is N px wide, not 1024</code></td><td>掩膜尺寸非预期</td><td>标尺仍然正确（按实际宽度算），但要确认导出流程</td></tr>
+<tr><td><code>&lt;module&gt;: class 'X' has no pixels in this mask</code></td><td>该类完全没预测出来</td><td>该模块整个为 null；是<b>分割问题</b>不是分析问题</td></tr>
+<tr><td><code>no matching raw image of the same size for --overlay-on</code></td><td>找不到同尺寸原图</td><td>叠加图退回画在掩膜上；检查原图目录和文件名 stem</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s6"><span class="n">06</span>实测批次统计（26 张，1300kgroup1）</h2>
+
+<p>命令：<code>--mask-dir ...\pseudo_color_prediction --out ...\analysis_batch --csv summary.csv</code>，默认参数，全部校平。
+<b>26 张全部分析成功，0 失败，累计 9 条 warning</b>（全部是"丢弃小连通域"类，无一影响结果）。</p>
+
+<table>
+<thead><tr><th>指标</th><th>中位数</th><th>σ</th><th>最小</th><th>最大</th><th>解读</th></tr></thead>
+<tbody>
+<tr><td><code>a1_b1.dx</code> (nm)</td><td>5.332</td><td>0.610</td><td>4.251</td><td>6.488</td><td rowspan="2">真实端点与拟合端点几乎一致（差 0.001 nm），验证了 b3 的等价性</td></tr>
+<tr><td><code>a1_b3.dx</code> (nm)</td><td>5.333</td><td>0.610</td><td>4.254</td><td>6.495</td></tr>
+<tr><td><code>a2_b2.dx</code> (nm)</td><td>−5.332</td><td>0.496</td><td>−5.966</td><td>−4.475</td><td>与左侧严格对称，符合物理预期</td></tr>
+<tr><td><code>a1_b1.dy</code> (nm)</td><td>0.261</td><td>0.628</td><td>−0.895</td><td>1.417</td><td>纵向偏差围绕 0 分布</td></tr>
+<tr><td>左端 5 nm 下沉 (nm)</td><td>0.597</td><td>0.385</td><td>0.000</td><td>1.417</td><td rowspan="2">左右量级一致</td></tr>
+<tr><td>右端 5 nm 下沉 (nm)</td><td>0.709</td><td>0.274</td><td>0.224</td><td>1.268</td></tr>
+<tr><td>m1 圆半径 (nm)</td><td>4.835</td><td>0.837</td><td>3.731</td><td>6.653</td><td rowspan="2">研磨圆角约 5 nm</td></tr>
+<tr><td>m2 圆半径 (nm)</td><td>5.329</td><td>0.795</td><td>3.982</td><td>6.769</td></tr>
+<tr><td>Non_mag 长度 (nm)</td><td>12.048</td><td>1.543</td><td>9.297</td><td>14.692</td><td>修复连通域锚定前，有一张报到 33.98 nm</td></tr>
+<tr><td>Nm1→m1 dx (nm)</td><td>−1.251</td><td>0.532</td><td>−3.334</td><td>−0.693</td><td rowspan="2">左右反号，对称</td></tr>
+<tr><td>Nm2→m2 dx (nm)</td><td>1.288</td><td>0.278</td><td>0.734</td><td>2.000</td></tr>
+<tr><td>Leveling 倾角 (°)</td><td>0.259</td><td>0.629</td><td>−2.263</td><td>1.002</td><td>上样倾斜在 ±2° 内</td></tr>
+<tr><td>MgO_C 倾角 (°)</td><td>−0.341</td><td>1.601</td><td>−3.541</td><td>3.540</td><td>离散度明显大于 Leveling</td></tr>
+</tbody>
+</table>
+
+<div class="ph">
+  <div class="tag">缺图 · 可后补</div>
+  <div class="title">批次分布图 / 趋势图</div>
+  <div class="desc">用 summary.csv 画几张箱线图或散点图（如 a1_b1.dx 按 wafer 位置分布、m1/m2 半径分布）会让这一节直观很多。目前工具只出 CSV，画图需要外部脚本 —— 如果需要，我可以补一个 <code>plot_summary.py</code>。</div>
+  <div class="file">放到 assets/14_batch_stats.png</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s7"><span class="n">07</span>新增一项量测的模板</h2>
+
+<p>架构就是为"加量测"设计的：<b>新增一项 = 写一个文件 + 注册一行 + 加 CSV 列 + 加自检</b>，不需要改任何已有模块。</p>
+
+<h3>步骤清单</h3>
+<table>
+<thead><tr><th>#</th><th>做什么</th><th>在哪</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>新建 <code>measures/&lt;name&gt;.py</code>，实现 <code>measure(ctx) -> dict</code></td><td><code>tools/tem_analysis/measures/</code></td></tr>
+<tr><td>2</td><td>在 <code>MEASURES</code> 有序字典里加一行；<b>若要读别的模块结果，必须排在它之后</b></td><td><code>measures/__init__.py</code></td></tr>
+<tr><td>3</td><td>把要进 CSV 的标量加进 <code>CSV_COLUMNS</code>（点分路径）</td><td><code>report.py</code></td></tr>
+<tr><td>4</td><td>需要新参数就在 <code>build_parser()</code> 里加；<b>不要在模块里写死常数</b>（会自动进 JSON 的 <code>params</code>）</td><td><code>analyze.py</code></td></tr>
+<tr><td>5</td><td>要画进叠加图就在 <code>render_overlay()</code> 加几行，并在 <code>_legend_text()</code> 里加一行图例</td><td><code>report.py</code></td></tr>
+<tr><td>6</td><td>在 <code>selftest.py</code> 里加一个合成几何 + 已知真值的用例</td><td><code>selftest.py</code></td></tr>
+<tr><td>7</td><td>更新 <code>readme.md</code> 的量测项表格</td><td><code>readme.md</code></td></tr>
+</tbody>
+</table>
+
+<h3>可以直接抄的骨架</h3>
+<pre><code class="language-python">"""Requirement N: &lt;一句话说清量什么&gt;.
+
+&lt;为什么这么定义。如果有被否掉的替代方案，写清楚为什么否掉——
+ 半年后的人（包括你自己）一定会想"为什么不用更简单的 XXX"。&gt;
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict
+
+import numpy as np
+
+from context import AnalysisContext, MissingClass
+from geometry import fit_line_ols, fit_line_tls
+
+CLASS = "Block_D"          # 主类
+AWAY_FROM = "Non_mag"      # 用于消歧的邻居类（如果需要）
+
+
+def measure(ctx: AnalysisContext) -> Dict[str, Any]:
+    # --- 1. 拿掩膜。prefer_near 让"选哪个连通域"依赖邻接而不是面积 ---
+    mask = ctx.mask(CLASS, prefer_near=AWAY_FROM)     # 缺类会抛 MissingClass
+
+    # --- 2. 拿几何。骨架带缓存；extend 只在 --endpoint-extend region 时生效 ---
+    line = ctx.centerline(CLASS, extend=("xmin", "xmax"))
+    tls = fit_line_tls(line.pts)      # 角度用 TLS（方向无偏）
+    ols = fit_line_ols(line.pts)      # R²/rmse 用 OLS
+    p1, p2 = tls.endpoints_spanning(line.pts)
+
+    # --- 3. 不确定就 warn，不要静默 ---
+    if ols["axis"] != "y~x":
+        ctx.warn("{}: closer to vertical; R2 computed on x~y".format(CLASS))
+
+    # --- 4. 返回。距离用 ctx.dist()，点用 ctx.point()，偏移用 ctx.offset() ---
+    return {
+        "skeleton_points": int(len(line)),
+        "skeleton_length": ctx.dist(line.length),        # -> {px, nm}
+        "angle_deg_image": tls.angle_deg_image,
+        "angle_deg_math": tls.angle_deg_math,
+        "fit_r2": ols["r2"],
+        "fit_r2_degenerate": ols["r2_degenerate"],       # 近水平时为 True
+        "fit_r2_note": ols["r2_note"],
+        "rmse": ctx.dist(ols["rmse_px"]),
+        "max_residual": ctx.dist(ols["max_residual_px"]),
+        "blockD1": ctx.point(p1),                        # -> {x_px,y_px,x_orig_px,y_orig_px}
+        "blockD2": ctx.point(p2),
+        "endpoint_rule": "the fitted line extended to the x extent of the region",
+        "residual_profile": [                            # 曲线序列，便于事后复核
+            [ctx.nm(float(s)), ctx.nm(float(r))]
+            for s, r in zip(line.s, tls.signed_distance(line.pts))
+        ],
+    }
+
+
+# 如果要组合别的量测结果（像 corner_offsets 那样）：
+def measure_combined(ctx: AnalysisContext) -> Dict[str, Any]:
+    a = ctx.measured_point("non_mag", "Non_mag1")        # 拿不到就返回 None
+    b = ctx.measured_point("milling_l", "max_curvature_point")
+    if a is None or b is None:
+        ctx.warn("...: 依赖的点不可用")
+        return {"offset": None}
+    return {"offset": {"from_point": ctx.point(a), "to_point": ctx.point(b),
+                       **ctx.offset(a, b)}}
+</code></pre>
+
+<h3>ctx 提供的全部工具</h3>
+<table>
+<thead><tr><th>调用</th><th>作用</th></tr></thead>
+<tbody>
+<tr><td><code>ctx.mask(name, prefer_near=None)</code></td><td>清理过的布尔掩膜（已按 min_area 过滤 + 只留最大/锚定连通域），带缓存，丢弃会自动 warn</td></tr>
+<tr><td><code>ctx.centerline(name, extend=())</code></td><td>Guo–Hall 骨架的最长路径 <code>Polyline</code>，带缓存</td></tr>
+<tr><td><code>ctx.centroid(name)</code></td><td>类质心</td></tr>
+<tr><td><code>ctx.nm(px)</code> / <code>ctx.px(nm)</code></td><td>单位换算</td></tr>
+<tr><td><code>ctx.dist(px)</code></td><td>→ <code>{"px":…, "nm":…}</code></td></tr>
+<tr><td><code>ctx.point(xy)</code></td><td>→ 校平坐标 + 原图坐标</td></tr>
+<tr><td><code>ctx.offset(a, b)</code></td><td>→ dx/dy/distance + convention 说明</td></tr>
+<tr><td><code>ctx.measured_point(key, *path)</code></td><td>读回前面模块算出的点，不可用时返回 None</td></tr>
+<tr><td><code>ctx.polyline_out(line, step)</code></td><td>折线序列化</td></tr>
+<tr><td><code>ctx.warn(msg)</code></td><td>写一条去重的 warning</td></tr>
+<tr><td><code>ctx.params</code> / <code>ctx.classes</code> / <code>ctx.ids</code> / <code>ctx.rect</code> / <code>ctx.scale_nm</code></td><td>参数、类别表、校平后的 id 数组、变换器、标尺</td></tr>
+</tbody>
+</table>
+<p><code>Polyline</code>（<code>skeleton.py</code>）另有：<code>.length</code>、<code>.s</code>(弧长)、<code>.pts</code>、<code>.x</code>/<code>.y</code>、
+<code>.endpoint("xmin"|"xmax"|"ymin"|"ymax")</code>、<code>.window_from(end, max_s)</code>、<code>.tangent(i)</code>、<code>.tangents()</code>。
+<code>geometry.py</code> 另有：<code>fit_line_tls/ols</code>、<code>trimmed_line_fit</code>(σ剔除)、<code>fit_circle</code>、<code>Spline.fit/curvature/sample</code>。
+<code>contour.py</code>：<code>trace_outer_contour</code>(有序外轮廓)、<code>longest_run</code>(环形最长连续段)。</p>
+
+<h3>写新量测时请遵守的约定</h3>
+<div class="tip"><b>五条</b>
+<ol style="margin:6px 0 0 18px">
+<li><b>缺类抛 <code>MissingClass</code>，不要 return None。</b>框架会把它转成 <code>null</code> + warning 并继续跑批。</li>
+<li><b>任何长度都走 <code>ctx.dist()</code>，任何点都走 <code>ctx.point()</code>。</b>不要自己乘标尺，不要只给一种坐标。</li>
+<li><b>魔数变成 CLI 参数。</b>这样它会自动出现在 JSON 的 <code>params</code> 里，结果永远可追溯。</li>
+<li><b>把"规则"写进输出。</b>像 <code>endpoint_rule</code>、<code>convention</code>、<code>magnitude_note</code> 这样，让数据自解释。</li>
+<li><b>先写自检再写实现。</b>合成一个已知真值的几何，让新量测在上面误差为 0；真实数据上"看起来对"不算数。</li>
+</ol></div>
+
+<h3>示例：如果现在要加"Block_D 下边缘"</h3>
+<p>这是一个真实的候选需求（早期版本有、当前版本没有，见 <a href="#s8">§8</a>）。落到模板上就是：</p>
+<ol>
+<li>新建 <code>measures/block_d.py</code>，复用 <code>non_mag.py</code> 的 <code>edge_columns()</code> 逐列取极值像素的思路；</li>
+<li>选边规则：取<b>不与 Non_mag 相邻</b>的那条（与 Non_mag 模块正好互为镜像），并把两侧接触计数一起输出；</li>
+<li>σ 剔除后 TLS 拟合，端点 <code>blockD1</code>/<code>blockD2</code> 延伸到区域 x 范围；</li>
+<li>注册进 <code>MEASURES</code>（放在 <code>non_mag</code> 之后，如果要和 Non_mag 做偏移对比就再放到 <code>corner_offsets</code> 之前）；</li>
+<li>CSV 加 <code>results.block_d.blockD1.x_px</code> 等约 9 列；</li>
+<li>叠加图里 <code>blockD1/blockD2</code> 与 <code>a1/b1</code> 位置很近，<b>标签偏移要手工错开</b>（<code>report.py</code> 里 <code>labelled</code> 列表已有这个注释）。</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s8"><span class="n">08</span>缺口与后续</h2>
+
+<h3>8.1 已知缺失的量测能力</h3>
+<table>
+<thead><tr><th>能力</th><th>现状</th><th>补起来的成本</th></tr></thead>
+<tbody>
+<tr><td><b>Block_D 下边缘</b>（blockD1 / blockD2）</td><td>readme 和 <code>report.py</code> 的注释里还留着痕迹，但当前 <code>MEASURES</code> 里<b>没有</b>这一项，CSV 里也没有对应列。早期需求 7 后来被 <code>corner_offsets</code> 取代了。</td><td>小。完全套用 <code>non_mag.py</code>，见 §7 示例</td></tr>
+<tr><td><b>逐类形状统计</b>（每类的面积 px/nm²、轮廓周长、骨架长度）</td><td>无。当前只有个别模块顺带输出了自己那条骨架的长度。</td><td>小。一个遍历 <code>ctx.classes</code> 的模块即可，但 CSV 会膨胀到 ~100 列（11 类 × 8 项）</td></tr>
+<tr><td><b>MgO_L / MgO_R / Block_U 的量测</b></td><td>这三类被标注了、也被分割了，但<b>没有任何量测用到它们</b>（只在 Milling 分侧时作为"邻居"参与判断）。</td><td>取决于需求定义</td></tr>
+<tr><td><b>层厚度</b>（每层垂直方向的厚度及其沿 x 的分布）</td><td>无。目前所有量测都是端点/边缘/角度，没有"厚度"。</td><td>中。需要定义"沿哪个法向测"，以及处理层弯曲</td></tr>
+<tr><td><b>批次统计与画图</b></td><td>只出 CSV，箱线图/趋势图要自己画。</td><td>小。一个 <code>plot_summary.py</code></td></tr>
+<tr><td><b>结果回写数据库 / 网页展示</b></td><td>分析工具是<b>完全独立的 CLI</b>，与 Next.js 平台之间没有任何代码耦合，结果也不进数据库。</td><td>中。需要设计表结构 + 一个触发分析的 API 路由</td></tr>
+<tr><td><b>与人工量测的对比验证</b></td><td>自检验证的是"算法实现是否符合定义"，<b>没有验证"定义是否符合客户想要的"</b>。</td><td>需要一批人工量过的图作为标定集</td></tr>
+</tbody>
+</table>
+
+<div class="note"><b>一个需要澄清的现象</b>
+在 <code>G:\datasets\TEM\1300kgroup2\normal_test_temfull\</code> 下存在一批更晚（8/10）产出的结果，其 CSV 有 <b>559 列</b>，
+包含 <code>class_shapes.*</code>（逐类面积/周长/骨架长）、<code>block_d_left.*</code>、<code>block_d_right.*</code> 等本仓库<b>不存在</b>的字段，
+命名风格也不同（<code>PascalCase</code> vs 现在的点分小写）。
+说明曾经存在（或正在别处存在）一个功能更全的变体，但它<b>不在本仓库里</b>。
+上表中的"缺失"是相对<b>当前仓库代码</b>而言的 —— 如果那份变体还找得到，很多项可以直接移植而不用重写。</div>
+
+<h3>8.2 已知的方法论局限</h3>
+<ul>
+<li><b>骨架端点内缩</b>：默认偏内侧约半个带宽，靠差分抵消。需要绝对端点时用 <code>--endpoint-extend region</code>。</li>
+<li><b>校平引入 1–2 px 重采样噪声</b>：自检里残余角 0.007°，但 dy 误差可达约 5 px。对 dy 敏感的指标可考虑 <code>--no-rotate</code> 并自行处理倾斜。</li>
+<li><b>曲率是尺度相关量</b>：1 px 量化的边缘上没有唯一"真"曲率。当前给两个数（样条 + 密切圆）并说明各自偏差，但用户必须知道自己在用哪个。</li>
+<li><b>分割误差没有被量化</b>：分析工具假设标签图是对的。分割把边界画偏 2 px，所有下游数字就偏 0.15 nm，而且<b>没有任何 warning</b>。这是整条链路里最大的未量化误差源。</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s9"><span class="n">09</span>配图清单</h2>
+
+<h3>已有配图（本页已引用，均来自真实数据）</h3>
+<table>
+<thead><tr><th>文件</th><th>内容</th><th>来源</th></tr></thead>
+<tbody>
+<tr><td><code>assets/01_raw.png</code></td><td>原始 TEM 灰度图</td><td><code>1300kgroup2\normal_test\753964_RMF 18(36,45)_...tif</code></td></tr>
+<tr><td><code>assets/02_mask.png</code></td><td>伪彩标签图</td><td>同图的 <code>pseudo_color_prediction/</code></td></tr>
+<tr><td><code>assets/03_added.png</code></td><td>混合预览（反例）</td><td>同图的 <code>added_prediction/</code></td></tr>
+<tr><td><code>assets/04_overlay_raw.png</code></td><td>量测叠加图（画在原图上）</td><td><code>normal_test_analysis/*_overlay.png</code></td></tr>
+<tr><td><code>assets/05_overlay_mask.png</code></td><td>量测叠加图（画在掩膜上）</td><td><code>1300kgroup1\analysis\751845_RMF 24(12,15)_...</code></td></tr>
+<tr><td><code>assets/06_interfaces_zoom.png</code></td><td>a1/b1/b3 + 5 nm 窗口放大</td><td>从 05 裁切</td></tr>
+<tr><td><code>assets/07_milling_zoom.png</code></td><td>m1 与密切圆放大</td><td>从 05 裁切</td></tr>
+<tr><td><code>assets/08_nonmag_zoom.png</code></td><td>Non_mag 边缘与端点放大</td><td>从 05 裁切</td></tr>
+<tr><td><code>assets/09_leveling_zoom.png</code></td><td>Leveling 层与校平拟合线</td><td>从 05 裁切</td></tr>
+<tr><td><code>assets/10_legend.png</code></td><td>叠加图文字图例</td><td>从 05 裁切</td></tr>
+</tbody>
+</table>
+
+<h3>需要你提供的图（占位已就绪，放进 assets/ 即可自动显示）</h3>
+<p>下面这些位置在正文里已经用虚线框标出来了。文件名对上就会自动替换成图片 —— 或者直接告诉我文件在哪，我来接。</p>
+<table>
+<thead><tr><th>文件名</th><th>放在哪一节</th><th>希望看到什么</th></tr></thead>
+<tbody>
+<tr><td><code>assets/11_napari_ui.png</code></td><td>§2.1</td><td>napari 标注界面全窗口截图：图层列表 + 自定义面板（类别下拉/笔刷/contour/导出按钮）+ 标了一半的画布</td></tr>
+<tr><td><code>assets/12_train_job.png</code></td><td>§2.3</td><td>网页端训练任务页：状态、进度、生成的命令</td></tr>
+<tr><td><code>assets/13_train_curve.png</code></td><td>§2.3</td><td>loss 与 mIoU 随 iter 的训练曲线</td></tr>
+<tr><td><code>assets/14_batch_stats.png</code></td><td>§6</td><td>批次分布图/箱线图（如果需要，我可以写脚本从 summary.csv 生成）</td></tr>
+<tr><td><code>assets/15_definition.png</code></td><td>§4 开头</td><td><b>最有价值的一张</b>：客户原始的量测定义示意图（<code>G:\datasets\TEM\TEM metrology\*.pptx</code> 里应该有）。把它和我们的叠加图并排放，可以直接证明"我们量的就是他们要的"</td></tr>
+<tr><td><code>assets/16_manual_vs_auto.png</code></td><td>§8.2</td><td>人工量测 vs 自动量测的对比（散点或表格截图），用于回答"准不准"</td></tr>
+</tbody>
+</table>
+
+<div class="ph" id="ph-def">
+  <div class="tag">缺图 · 优先级最高</div>
+  <div class="title">客户原始量测定义示意图</div>
+  <div class="desc">目前这份汇报能证明"算法自洽、可复现、误差可控"，但<b>不能证明"定义正确"</b>。
+  <code>G:\datasets\TEM\TEM metrology\</code> 下有三份 PPT（ABS TEM measurement definition / HR FTEM measurement parameters v2 / MetrologyForDFLjunctions），
+  从里面截出定义 a1/b1/m1/Non_mag 等量的示意图，与我们的叠加图并排，这份汇报的说服力会完全不同。</div>
+  <div class="file">放到 assets/15_definition.png</div>
+</div>
+
+<footer>
+生成自仓库代码：<code>tools/napari_seg/annotate.py</code>、<code>tools/tem_analysis/</code>（v1.0.0）、
+<code>src/lib/{frameworks,default-configs,training-yaml,model-yaml,yaml-merge}.ts</code>；
+统计数据来自 <code>G:\datasets\TEM\1300kgroup1\analysis_batch\summary.csv</code>（26 张）。
+本页为静态 HTML，直接用浏览器打开即可；打印/另存 PDF 时侧边目录会自动隐藏。
+</footer>
+
+</main>
+</div>
+</body>
+</html>

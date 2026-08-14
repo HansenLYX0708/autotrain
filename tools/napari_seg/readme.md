@@ -22,6 +22,11 @@ py -3.11 -m venv .venv-napari
     --images G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm `
     --out    G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm_out `
     --classes SAF_Ru_L,SAF_Ru_R,MgO_L,MgO_R,MgO_C,Non_mag,Milling_L,Milling_R,Leveling,Block_U,Block_D
+
+.\.venv-napari\Scripts\python tools\napari_seg\annotate.py `
+    --images G:\datasets\TEM\1300kgroup1\temp `
+    --out    G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm_out1 `
+    --classes SAF_Ru_L,SAF_Ru_R,MgO_L,MgO_R,MgO_C,Non_mag,Milling_L,Milling_R,Leveling,Block_U,Block_D,Block_C
 ```
 
 ## check how filenames are rewritten

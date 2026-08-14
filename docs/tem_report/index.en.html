@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TEM Segmentation + Geometric Metrology — System Report</title>
+<style>
+:root{
+  --bg:#0f1216; --panel:#171b21; --panel2:#1d222a; --line:#2a313b;
+  --fg:#e6e9ee; --dim:#9aa4b2; --accent:#4ea1ff; --ok:#4ec9a5; --warn:#e0b24c; --bad:#e4695e;
+  --mono:"Cascadia Mono","Consolas","SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  font-size:15px;line-height:1.75;}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.88em;background:#232a33;padding:1px 5px;border-radius:4px;color:#d8e2ee}
+pre{background:#11151a;border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:6px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:13px;line-height:1.6}
+pre code{background:none;padding:0}
+
+.layout{display:flex;align-items:flex-start}
+nav{position:sticky;top:0;height:100vh;overflow:auto;width:270px;flex:0 0 270px;
+  background:var(--panel);border-right:1px solid var(--line);padding:22px 16px}
+nav h2{font-size:12px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase;margin:0 0 12px}
+nav ol{list-style:none;margin:0;padding:0;counter-reset:s}
+nav ol li{margin:2px 0}
+nav ol > li > a{display:block;padding:5px 8px;border-radius:5px;color:var(--fg);font-size:13.5px}
+nav ol > li > a:hover{background:var(--panel2);text-decoration:none}
+nav ol ol a{font-size:12.5px;color:var(--dim);padding-left:20px}
+.langbar{margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.langbar a{margin-right:10px}
+.langbar .cur{color:var(--fg);font-weight:600}
+main{flex:1;min-width:0;max-width:1080px;margin:0 auto;padding:40px 46px 120px}
+
+header.hero{border:1px solid var(--line);border-radius:12px;padding:30px 34px;margin-bottom:34px;
+  background:linear-gradient(140deg,#1b2430 0%,#141920 100%)}
+header.hero h1{margin:0 0 6px;font-size:29px;letter-spacing:.5px}
+header.hero .sub{color:var(--dim);font-size:15px}
+.meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.meta span{background:#232c37;border:1px solid var(--line);border-radius:20px;padding:3px 13px;font-size:12.5px;color:var(--dim)}
+
+h2.sec{font-size:22px;margin:52px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h2.sec .n{color:var(--accent);font-family:var(--mono);font-size:17px;margin-right:10px}
+h3{font-size:17.5px;margin:32px 0 8px}
+h4{font-size:15px;margin:20px 0 6px;color:#cfd8e3}
+p{margin:10px 0}
+
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--panel2);color:#cfd8e3;font-weight:600}
+tbody tr:nth-child(even){background:#14181e}
+td code{white-space:nowrap}
+
+figure{margin:20px 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+figure img{width:100%;display:block;border-radius:6px;background:#000}
+figcaption{color:var(--dim);font-size:13px;margin-top:10px;text-align:center}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid2 figure{margin:0}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.grid4 figure{margin:0;padding:10px}
+.grid4 figcaption{font-size:12px}
+
+.ph{border:2px dashed #3b4655;border-radius:10px;background:repeating-linear-gradient(45deg,#161b22,#161b22 12px,#1a2029 12px,#1a2029 24px);
+  padding:30px 22px;margin:20px 0;text-align:center}
+.ph .tag{display:inline-block;background:var(--warn);color:#241c05;font-weight:700;font-size:11.5px;
+  letter-spacing:.1em;padding:2px 10px;border-radius:4px;margin-bottom:10px}
+.ph .title{font-size:15.5px;font-weight:600;margin-bottom:6px}
+.ph .desc{color:var(--dim);font-size:13.5px;max-width:640px;margin:0 auto}
+.ph .file{font-family:var(--mono);font-size:12.5px;color:#7f8b9a;margin-top:10px}
+
+.note,.warn,.tip{border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px;border:1px solid}
+.note{background:#141c26;border-color:#254058}
+.warn{background:#241d10;border-color:#5a4718}
+.tip{background:#122019;border-color:#1f4a3a}
+.note b,.warn b,.tip b{display:block;margin-bottom:4px}
+.warn b{color:var(--warn)} .tip b{color:var(--ok)} .note b{color:var(--accent)}
+
+.pipe{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:22px 0}
+.pipe .step{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:12px 10px;text-align:center;font-size:13px}
+.pipe .step b{display:block;font-size:13.5px;margin-bottom:3px}
+.pipe .step span{color:var(--dim);font-size:11.8px;font-family:var(--mono)}
+.pipe .arw{display:flex;align-items:center;color:var(--accent);padding:0 8px;font-size:18px}
+
+.swatch{display:inline-block;width:13px;height:13px;border-radius:3px;vertical-align:-2px;margin-right:7px;border:1px solid #0006}
+
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}
+.kpi div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
+.kpi .v{font-size:22px;font-weight:700;font-family:var(--mono)}
+.kpi .k{color:var(--dim);font-size:12.5px;margin-top:2px}
+
+.badge{font-size:11.5px;padding:1px 8px;border-radius:4px;font-weight:600}
+.b-ok{background:#153228;color:#5fd6ae} .b-no{background:#331a17;color:#f08c81} .b-mid{background:#332a12;color:#e6bd5c}
+details{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 16px;margin:14px 0}
+summary{cursor:pointer;font-weight:600;color:#cfd8e3}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+footer{color:var(--dim);font-size:13px;margin-top:60px;padding-top:20px;border-top:1px solid var(--line)}
+@media print{nav{display:none} main{max-width:none;padding:0} body{background:#fff;color:#000}}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="langbar"><span class="cur">English</span><a href="index.html">中文</a><a href="slides.en.html">Slides ▸</a></div>
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s0">0. Executive summary</a></li>
+    <li><a href="#s1">1. End-to-end pipeline</a></li>
+    <li><a href="#s2">2. Segmentation training</a>
+      <ol>
+        <li><a href="#s2-1">2.1 Annotation &amp; dataset</a></li>
+        <li><a href="#s2-2">2.2 Three merged YAMLs</a></li>
+        <li><a href="#s2-3">2.3 Launch &amp; logs</a></li>
+        <li><a href="#s2-4">2.4 Prediction output</a></li>
+        <li><a href="#s2-5">2.5 Pseudo-label loop</a></li>
+      </ol>
+    </li>
+    <li><a href="#s3">3. Analysis tool overview</a>
+      <ol>
+        <li><a href="#s3-1">3.1 How to run</a></li>
+        <li><a href="#s3-2">3.2 Code structure</a></li>
+        <li><a href="#s3-3">3.3 Scale &amp; rectification</a></li>
+      </ol>
+    </li>
+    <li><a href="#s4">4. Measurements, one by one</a>
+      <ol>
+        <li><a href="#m1">M1 leveling</a></li>
+        <li><a href="#m2">M2 mgo_c straightness</a></li>
+        <li><a href="#m3">M3 interfaces offsets</a></li>
+        <li><a href="#m4">M4 5 nm dip</a></li>
+        <li><a href="#m5">M5 milling curvature</a></li>
+        <li><a href="#m6">M6 non_mag edge</a></li>
+        <li><a href="#m7">M7 corner_offsets</a></li>
+      </ol>
+    </li>
+    <li><a href="#s5">5. Output files explained</a>
+      <ol>
+        <li><a href="#s5-1">5.1 JSON field by field</a></li>
+        <li><a href="#s5-2">5.2 summary.csv</a></li>
+        <li><a href="#s5-3">5.3 Overlay colour key</a></li>
+        <li><a href="#s5-4">5.4 Reading warnings</a></li>
+      </ol>
+    </li>
+    <li><a href="#s6">6. Measured batch statistics</a></li>
+    <li><a href="#s7">7. Template for a new measurement</a></li>
+    <li><a href="#s8">8. Gaps &amp; next steps</a></li>
+    <li><a href="#s9">9. Figure inventory</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header class="hero">
+  <h1>TEM Cross-sections: Segmentation + Geometric Metrology</h1>
+  <div class="sub">Semantic segmentation splits a TEM cross-section into 11 structural layers; a deterministic geometry stage then measures it to sub-nanometre precision. Per-image JSON and annotated overlay, per-batch CSV.</div>
+  <div class="meta">
+    <span>Code: <code>tools/napari_seg</code> + <code>tools/tem_analysis</code></span>
+    <span>Analysis tool v1.0.0</span>
+    <span>7 measurement modules</span>
+    <span>73-column summary CSV</span>
+    <span>Measured batch: 26 images / 0 failures</span>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s0"><span class="n">00</span>Executive summary</h2>
+
+<p>The problem this solves: <b>structural dimensions on TEM cross-section images used to be measured by hand — slow, not reproducible, and not comparable across batches.</b>
+The approach is to let a segmentation model identify each layer first, then measure on the label map with a deterministic geometry stage. Every result lands in machine-readable fields.</p>
+
+<div class="kpi">
+  <div><div class="v">11</div><div class="k">segmentation classes (excl. background)</div></div>
+  <div><div class="v">7</div><div class="k">measurement modules</div></div>
+  <div><div class="v">0.0746</div><div class="k">nm/px (FOV 76.37 / 1024)</div></div>
+  <div><div class="v">≈0.1 nm</div><div class="k">typical fit rmse</div></div>
+</div>
+
+<table>
+<thead><tr><th>Capability</th><th>Status</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>napari manual annotation + dataset export</td><td><span class="badge b-ok">done</span></td><td>Emits PaddleSeg <code>train.txt</code>/<code>val.txt</code> directly</td></tr>
+<tr><td>PaddleSeg training (driven from the web app)</td><td><span class="badge b-ok">done</span></td><td>Dataset/training/model YAMLs deep-merged, then run as a child process</td></tr>
+<tr><td>Inference → pseudo-colour label maps</td><td><span class="badge b-ok">done</span></td><td><code>pseudo_color_prediction/</code></td></tr>
+<tr><td>Feed predictions back into the annotator (pseudo-labelling)</td><td><span class="badge b-ok">done</span></td><td><code>--import-masks</code></td></tr>
+<tr><td>Leveling-based auto rectification</td><td><span class="badge b-ok">done</span></td><td>M1</td></tr>
+<tr><td>Interface endpoint offsets a1/a2 ↔ b1..b4</td><td><span class="badge b-ok">done</span></td><td>M3</td></tr>
+<tr><td>Max downward dip within 5 nm of the endpoint</td><td><span class="badge b-ok">done</span></td><td>M4</td></tr>
+<tr><td>MgO_C straightness / tilt</td><td><span class="badge b-ok">done</span></td><td>M2</td></tr>
+<tr><td>Milled-flank curvature radius, m1/m2</td><td><span class="badge b-ok">done</span></td><td>M5</td></tr>
+<tr><td>Non_mag edge line and endpoints</td><td><span class="badge b-ok">done</span></td><td>M6</td></tr>
+<tr><td>Non_mag ↔ Milling corner offsets</td><td><span class="badge b-ok">done</span></td><td>M7</td></tr>
+<tr><td>Block_D lower edge (blockD1/blockD2)</td><td><span class="badge b-no">missing</span></td><td>An early requirement, superseded by M7 in the current tree — see <a href="#s8">§8</a></td></tr>
+<tr><td>Per-class shape statistics (area / perimeter)</td><td><span class="badge b-no">missing</span></td><td>See <a href="#s8">§8</a></td></tr>
+<tr><td>Batch trend / distribution plots</td><td><span class="badge b-no">missing</span></td><td>CSV only today; plotting is external</td></tr>
+<tr><td>Results written back to the DB / shown in the web UI</td><td><span class="badge b-no">missing</span></td><td>The analysis tool is a standalone CLI</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s1"><span class="n">01</span>End-to-end pipeline</h2>
+
+<p>In one sentence: <b>segment first, then analyse.</b> Segmentation answers "what is where"; analysis answers "how big is it and by how much is it off".
+The only interface between the two stages is the pseudo-colour label map PaddleSeg writes.</p>
+
+<div class="pipe">
+  <div class="step"><b>① Acquire</b><span>*.tif + FOV</span></div><div class="arw">▶</div>
+  <div class="step"><b>② Annotate</b><span>annotate.py</span></div><div class="arw">▶</div>
+  <div class="step"><b>③ Dataset</b><span>train/val.txt</span></div><div class="arw">▶</div>
+  <div class="step"><b>④ Train</b><span>tools/train.py</span></div><div class="arw">▶</div>
+  <div class="step"><b>⑤ Predict</b><span>pseudo_color</span></div><div class="arw">▶</div>
+  <div class="step"><b>⑥ Analyse</b><span>analyze.py</span></div><div class="arw">▶</div>
+  <div class="step"><b>⑦ Report</b><span>JSON/CSV/overlay</span></div>
+</div>
+
+<div class="grid4">
+  <figure><img src="assets/01_raw.png" alt="Raw TEM"><figcaption>① Raw TEM greyscale<br>1024×1024, FOV 77.35 nm</figcaption></figure>
+  <figure><img src="assets/02_mask.png" alt="Pseudo-colour label map"><figcaption>⑤ Pseudo-colour label map<br><code>pseudo_color_prediction/</code></figcaption></figure>
+  <figure><img src="assets/03_added.png" alt="Blended preview"><figcaption>Blended preview <code>added_prediction/</code><br><b>NOT</b> accepted by the analyser</figcaption></figure>
+  <figure><img src="assets/04_overlay_raw.png" alt="Measurement overlay"><figcaption>⑦ Measurement overlay<br><code>*_overlay.png</code></figcaption></figure>
+</div>
+
+<div class="warn"><b>Interface contract: pseudo_color_prediction/ only</b>
+<code>added_prediction/</code> is the image <b>blended</b> with the mask — its colours are contaminated by the greyscale, so it is not a label map.
+The tool refuses it on purpose: when snapping RGB onto the palette, if more than 5% of pixels are off-palette it errors out rather than silently producing a page of wrong numbers.</div>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s2"><span class="n">02</span>Segmentation training</h2>
+
+<h3 id="s2-1">2.1 Annotation and dataset (tools/napari_seg/annotate.py)</h3>
+
+<p>The annotator is a thin wrapper around napari whose output directory <i>is</i> a PaddleSeg dataset:</p>
+
+<pre><code>&lt;out&gt;/
+  JPEGImages/       source images (filenames already ASCII-sanitised)
+  Annotations/      8-bit paletted PNG, pixel value == class id
+  train.txt         one line per image: "JPEGImages/xxx.jpg Annotations/xxx.png"
+  val.txt
+  class_names.txt   first line is always _background_</code></pre>
+
+<table>
+<thead><tr><th>Point</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Filename sanitising</td><td>PaddleSeg splits <code>train.txt</code> lines on <b>whitespace</b>, so anything outside <code>[A-Za-z0-9._-]</code> (CJK, spaces, parentheses) becomes <code>_</code>; collisions get a <code>_2</code>, <code>_3</code>, … suffix. <code>--print-names --no-gui</code> previews the renaming before committing.</td></tr>
+<tr><td>Palette</td><td><code>build_palette()</code> is the PASCAL VOC colormap with the leading black entry dropped, so <b>class id == palette index</b> and class 0 is (128,0,0) dark red, not black. This is exactly why the analyser can map RGB back to ids — both tools call the same function, so they cannot drift apart.</td></tr>
+<tr><td>Class order defines the ids</td><td>11 classes here: <code>SAF_Ru_L, SAF_Ru_R, MgO_L, MgO_R, MgO_C, Non_mag, Milling_L, Milling_R, Leveling, Block_U, Block_D</code>, 12 with background. Change the order and every historical label shifts, so it is pinned in <code>class_names.txt</code> and travels with the dataset.</td></tr>
+<tr><td>Resuming</td><td>Reopen the same <code>--out</code> without <code>--classes</code> and the class list is read back from <code>class_names.txt</code>.</td></tr>
+</tbody>
+</table>
+
+<pre><code># first annotation pass
+.\.venv-napari\Scripts\python tools\napari_seg\annotate.py `
+    --images G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm `
+    --out    G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm_out `
+    --classes SAF_Ru_L,SAF_Ru_R,MgO_L,MgO_R,MgO_C,Non_mag,Milling_L,Milling_R,Leveling,Block_U,Block_D</code></pre>
+
+<div class="ph">
+  <div class="tag">figure needed</div>
+  <div class="title">napari annotator screenshot</div>
+  <div class="desc">Ideally showing: the layer list on the left (image + label), the custom panel on the right (class dropdown, brush size, contour toggle, "write train.txt / val.txt" button), and a half-annotated TEM image on the canvas. A full-window capture is fine.</div>
+  <div class="file">drop it at assets/11_napari_ui.png</div>
+</div>
+
+<h3 id="s2-2">2.2 One training job = three YAMLs, deep-merged</h3>
+
+<p>The web app does not ask anyone to write a full PaddleSeg config. The config is split into three independently authored files, merged at launch time:</p>
+
+<pre><code>Dataset config  ─┐
+Training config ─┼─► deep-merged YAML ─► tools/train.py ─► stdout parsed into TrainingLog rows
+Model config    ─┘
+
+Precedence: dataset → training → model (later wins, merged per key)</code></pre>
+
+<table>
+<thead><tr><th>Config</th><th>Owns</th><th>Typical content</th></tr></thead>
+<tbody>
+<tr><td>Dataset</td><td>Where the data comes from</td><td><code>train_dataset</code> / <code>val_dataset</code>, <code>dataset_root</code>, <code>num_classes</code>, <code>transforms</code></td></tr>
+<tr><td>Training</td><td>How to train</td><td><code>batch_size</code>, <code>iters</code>, <code>optimizer</code>, <code>lr_scheduler</code></td></tr>
+<tr><td>Model</td><td>What to train</td><td><code>model</code> (architecture + backbone), <b><code>loss</code></b></td></tr>
+</tbody>
+</table>
+
+<div class="warn"><b>Three hard PaddleSeg constraints (learned the hard way)</b>
+<ul style="margin:6px 0 0 18px">
+<li><b>It trains by iteration, not epoch.</b> <code>iters</code> is the total step count; likewise <code>warmup_iters</code> and <code>save_interval</code>. The epoch-named DB columns hold iteration counts for Seg projects.</li>
+<li><b><code>len(loss.types)</code> must equal the number of logits the model emits</b> (main head + auxiliary heads), or training dies with
+<code>RuntimeError: The length of logits_list should equal to the types of loss config</code>.
+That is why <code>loss:</code> always lives in the <b>model</b> config and never in the training config — so any training preset can be combined with any model preset without producing a mismatched loss.
+UNet=1, OCRNet=2, PP-LiteSeg=3, BiSeNetV2=5.</li>
+<li><b><code>save_dir</code> / <code>save_interval</code> / <code>log_iters</code> are CLI arguments, not YAML keys.</b></li>
+</ul></div>
+
+<div class="note"><b>Why it must be a deep merge rather than concatenating the three texts</b>
+Concatenation produces duplicate top-level keys. PyYAML tolerates that (last wins) but the document is invalid YAML and <code>yaml.parse()</code> throws
+<code>Map keys must be unique</code>. Merging is also per-key, so a training config can refine a single field under <code>train_dataset.transforms</code> without restating the whole dataset block.</div>
+
+<h3 id="s2-3">2.3 Launching training, and the logs</h3>
+
+<pre><code># the command the web app actually generates and runs (PaddleSeg branch)
+python -m paddle.distributed.launch --gpus 0 tools/train.py `
+    --config   "&lt;merged&gt;.yml" `
+    --do_eval `
+    --save_dir "&lt;output&gt;/jobs/&lt;job_name&gt;"</code></pre>
+
+<ul>
+<li>The working directory is resolved from <code>project.framework</code> by <code>src/lib/frameworks.ts::getWorkDir()</code> to the PaddleSeg repo root.</li>
+<li>The command is <b>generated server-side only</b>; a <code>command</code> field in the request body is never accepted (it runs with <code>shell:true</code>). <code>--gpus</code> is strictly whitelisted too.</li>
+<li>Child-process stdout is fed line by line into a PaddleSeg-specific parser that extracts iter / loss / lr / ETA. <code>EVAL</code> is a multi-line block, so the parser is stateful and only emits a <code>mIoU / Acc / Kappa / Dice</code> record once the block closes.</li>
+<li>Typical baseline preset: 80k iters @ 512×512, SGD + PolynomialDecay(power 0.9), <code>batch_size 4</code>. Run the 20k "quick" preset first to prove the pipeline end-to-end before committing to a full run.</li>
+</ul>
+
+<div class="ph">
+  <div class="tag">figures needed</div>
+  <div class="title">Training job page + training curves</div>
+  <div class="desc">Two shots: (a) the job list/detail page showing status, progress and the generated command; (b) loss and mIoU against iteration. These two make the "training is managed by the platform" point far better than prose.</div>
+  <div class="file">drop them at assets/12_train_job.png and assets/13_train_curve.png</div>
+</div>
+
+<h3 id="s2-4">2.4 Prediction output</h3>
+
+<pre><code>cd &lt;PaddleSeg&gt;
+python tools\predict.py `
+    --config     &lt;merged&gt;.yml `
+    --model_path output\best_model\model.pdparams `
+    --image_path G:\datasets\TEM\new_batch `
+    --save_dir   G:\datasets\TEM\new_batch_pred</code></pre>
+
+<p>Two directories come out: <code>pseudo_color_prediction/</code> (the label map — <b>this is what the analyser consumes</b>) and <code>added_prediction/</code> (a blended preview, for human eyes only).</p>
+
+<h3 id="s2-5">2.5 Pseudo-labelling loop (growing the dataset)</h3>
+
+<p>Annotation is the expensive step, so the pipeline is a closed loop: the model predicts, predictions are imported back into the annotator, a human only corrects them, and the result becomes new training data.</p>
+
+<pre><code>.\.venv-napari\Scripts\python tools\napari_seg\annotate.py `
+    --images G:\datasets\TEM\new_batch `
+    --out    G:\datasets\TEM\1300kgroup1\1300kx_FOV_76.37nm_out `
+    --import-masks G:\datasets\TEM\new_batch_pred\pseudo_color_prediction</code></pre>
+
+<p>Existing masks are kept unless <code>--overwrite</code> is passed; add <code>--no-gui</code> to import without opening the annotator.</p>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s3"><span class="n">03</span>Analysis tool overview</h2>
+
+<h3 id="s3-1">3.1 How to run</h3>
+
+<pre><code># single image
+python tools\tem_analysis\analyze.py --mask &lt;mask.png&gt; --out &lt;dir&gt;
+
+# batch + summary CSV + overlay drawn on the raw TEM greyscale
+python tools\tem_analysis\analyze.py `
+    --mask-dir   G:\datasets\TEM\1300kgroup2\normal_test_predict\pseudo_color_prediction `
+    --out        G:\datasets\TEM\1300kgroup2\normal_test_analysis `
+    --overlay-on G:\datasets\TEM\1300kgroup2\normal_test `
+    --csv        summary.csv
+
+# self-test (synthetic geometry with known ground truth, no real data needed)
+python tools\tem_analysis\selftest.py</code></pre>
+
+<p>Dependencies: <code>numpy / Pillow / scipy / matplotlib</code>, plus optional <code>opencv-contrib-python</code> (used only for <code>cv2.ximgproc.thinning</code>;
+without it the tool falls back to the NumPy Guo–Hall implementation in <code>skeleton.py</code>, which the self-test verifies is <b>pixel-identical</b>, just slower).</p>
+
+<h4>Main options</h4>
+<table>
+<thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--scale-nm</code></td><td><code>auto</code></td><td>auto = read the FOV out of the filename and divide by image width; or pass an explicit nm/px</td></tr>
+<tr><td><code>--fov-nm</code></td><td>—</td><td>Give the field of view (nm) directly; still divided by the image width</td></tr>
+<tr><td><code>--no-rotate</code></td><td>off</td><td>Skip Leveling rectification and measure on the raw mask</td></tr>
+<tr><td><code>--endpoint-extend</code></td><td><code>none</code></td><td><code>region</code> extrapolates a1/a2/b1/b2 back to the region tip along the tangent, compensating skeleton retraction</td></tr>
+<tr><td><code>--window-nm</code></td><td><code>5.0</code></td><td>Arclength window for the dip measurement</td></tr>
+<tr><td><code>--min-area</code></td><td><code>30</code></td><td>Minimum connected-component area (px)</td></tr>
+<tr><td><code>--keep-all-components</code></td><td>off</td><td>Disable "keep only the largest component per class"</td></tr>
+<tr><td><code>--thinning-backend</code></td><td><code>auto</code></td><td><code>cv2</code> / <code>numpy</code></td></tr>
+<tr><td><code>--milling-edge-method</code></td><td><code>outer</code></td><td><code>outer</code> (vacuum-facing / milled) / <code>inner</code> (against the stack) / <code>skeleton</code> (comparison only)</td></tr>
+<tr><td><code>--milling-frame-margin-px</code></td><td><code>4</code></td><td>Discard boundary pixels this close to the image frame or the rotation padding</td></tr>
+<tr><td><code>--milling-smooth</code></td><td><code>1.0</code></td><td>Assumed edge noise (px); sets the spline smoothing</td></tr>
+<tr><td><code>--milling-middle-frac</code></td><td><code>1.0</code></td><td>Central fraction eligible for the curvature maximum; 1.0 = unrestricted</td></tr>
+<tr><td><code>--milling-edge-margin-nm</code></td><td><code>2.0</code></td><td>Arclength excluded at both ends (spline end artefacts)</td></tr>
+<tr><td><code>--milling-circle-window-frac</code></td><td><code>0.8</code></td><td>Circle-fit half-window = this × spline radius (floor 12 px)</td></tr>
+<tr><td><code>--milling-tail-frac</code></td><td><code>0.25</code></td><td>Arclength fraction at each end fitted with a line (line–curve–line check)</td></tr>
+<tr><td><code>--nonmag-edge</code></td><td><code>auto</code></td><td>Pick the edge not adjacent to Block_D; can be forced to <code>top</code>/<code>bottom</code></td></tr>
+<tr><td><code>--nonmag-sigma</code> / <code>--no-nonmag-trim</code></td><td><code>2.0</code> / on</td><td>Sigma clipping for the Non_mag fit</td></tr>
+<tr><td><code>--classes</code></td><td>built-in 12</td><td>Comma-separated override of the class order</td></tr>
+<tr><td><code>--overlay-on</code> / <code>--no-overlay</code></td><td>—</td><td>Draw the overlay on the raw image / skip the overlay</td></tr>
+</tbody>
+</table>
+
+<h3 id="s3-2">3.2 Code structure</h3>
+
+<table>
+<thead><tr><th>File</th><th>Responsibility</th></tr></thead>
+<tbody>
+<tr><td><code>analyze.py</code></td><td>CLI, scale resolution, running measurements in registry order, isolating failures, writing output</td></tr>
+<tr><td><code>labelmap.py</code></td><td>Pseudo-colour PNG → class-id array; class-name resolution; component cleaning (<code>class_mask</code>); FOV parsing from the filename</td></tr>
+<tr><td><code>rectify.py</code></td><td>Rectification affine and its inverse (nearest-neighbour, padded with 255 = ignore)</td></tr>
+<tr><td><code>skeleton.py</code></td><td>Guo–Hall thinning (cv2 / NumPy), longest path through the skeleton graph, <code>Polyline</code> (arclength, endpoints, tangents, windows)</td></tr>
+<tr><td><code>contour.py</code></td><td>Ordered outer-contour tracing, longest contiguous run on a closed loop</td></tr>
+<tr><td><code>geometry.py</code></td><td>TLS/OLS line fits, sigma-clipped fit, circle fit, cubic B-spline with analytic curvature</td></tr>
+<tr><td><code>context.py</code></td><td><code>AnalysisContext</code>: mask/skeleton caches, px↔nm, dual-coordinate points, offsets, warnings</td></tr>
+<tr><td><code>measures/*.py</code></td><td>The 7 measurement modules, each a <code>measure(ctx) -> dict</code></td></tr>
+<tr><td><code>report.py</code></td><td>JSON serialisation, fixed-column CSV, matplotlib overlay</td></tr>
+<tr><td><code>selftest.py</code></td><td>End-to-end self-test on synthetic geometry with known ground truth</td></tr>
+</tbody>
+</table>
+
+<div class="tip"><b>The single most important design decision: one failure does not sink the batch</b>
+Each measurement is wrapped individually. If a prediction lost <code>Milling_L</code>, only <code>results.milling_l</code> becomes <code>null</code> and a line is added to
+<code>warnings</code>; the other six still produce output and the batch keeps going.</div>
+
+<h3 id="s3-3">3.3 Scale and rectification: the two premises behind every number</h3>
+
+<h4>Scale (nm/px)</h4>
+<p>By default the field of view is read from the filename with a regex: <code>..._FOV_76.37nm.png</code> → 76.37 nm, divided by the <b>actual image width</b>.
+All 26 images in the sample batch parsed successfully, giving <code>76.37 / 1024 = 0.074580 nm/px</code>.</p>
+<ul>
+<li>Dividing by the real width rather than a hard-coded 1024 keeps it correct if a mask is ever exported at a different size; a width ≠ 1024 raises a warning.</li>
+<li><code>fov_nm</code> / <code>image_width_px</code> / <code>scale_nm_per_px</code> / <code>scale_source</code> are all recorded in the JSON and the CSV, so the conversion can be re-checked afterwards.</li>
+<li><b>If no FOV can be parsed and no <code>--scale-nm</code> was given, the tool errors out</b> rather than silently using a wrong scale.</li>
+</ul>
+
+<h4>Rectification</h4>
+<p>The <code>Leveling</code> layer is fitted to a line, giving a tilt angle; the whole image is rotated so that line is horizontal, and every subsequent measurement runs on the rectified map.
+The statement "dy is how far down it sits" only has physical meaning after this step.</p>
+<ul>
+<li>Interpolation must be <b>nearest-neighbour</b> (<code>order=0</code>): the array holds class ids, and any averaging invents classes that were never predicted.</li>
+<li>Padding is <code>255</code> (ignore), not 0 (background), so "outside the original frame" stays distinguishable from "predicted as background" — M5's crop-edge rejection depends on exactly this.</li>
+<li>Every point in the JSON carries <b>both rectified and original-image coordinates</b> (<code>x_px/y_px</code> and <code>x_orig_px/y_orig_px</code>), so results can be overlaid back on the raw TEM image.</li>
+<li>The cost: resampling noise of 1–2 px on layer skeletons. In the self-test the residual angle after rectification is 0.007°, but dy error can reach about 5 px. <code>--no-rotate</code> avoids it entirely.</li>
+</ul>
+
+<figure><img src="assets/09_leveling_zoom.png" alt="Leveling layer">
+<figcaption>The Leveling layer (the green band at the bottom of the frame). White = Guo–Hall skeleton; bright green dashed = the line re-fitted <i>after</i> rectification, which is how the tool self-checks that the rotation really did flatten it.</figcaption></figure>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s4"><span class="n">04</span>Measurements, one by one</h2>
+
+<p>The seven modules run in registry order, and later ones may read earlier results:
+<code>leveling → mgo_c → interfaces → milling_l → milling_r → non_mag → corner_offsets</code>.
+Each is described below as <b>what it measures / how it is defined / algorithm / output fields / pitfalls</b>.</p>
+
+<figure><img src="assets/05_overlay_mask.png" alt="Full measurement overlay">
+<figcaption>Every measurement on one image (drawn on the pseudo-colour label map). The close-ups in the sections below are all crops of this figure.</figcaption></figure>
+
+<!-- ---------------- M1 ---------------- -->
+<h3 id="m1">M1 · <code>leveling</code> — the rectification datum</h3>
+<p><b>What it measures:</b> the sample's tilt in the image, and how straight the Leveling layer itself is. It is the only module whose result feeds back into every other measurement.</p>
+<table>
+<tbody>
+<tr><th style="width:150px">Definition</th><td>Leveling class → largest component → Guo–Hall skeleton → line fit → tilt angle</td></tr>
+<tr><th>Algorithm</th><td>The angle comes from <b>TLS (total least squares)</b> — OLS systematically flattens the slope when residuals are comparable to the x-span, while TLS is orientation-unbiased. R²/rmse come from an OLS <code>y~x</code> fit, because that is what "fit R²" normally means. Both are reported so the difference is visible rather than hidden.</td></tr>
+<tr><th>Reliability</th><td>Judge it by <code>angle_stderr_deg</code> (slope standard error = σ/√Σ(x−x̄)²), <b>not by R²</b>. The layer is re-fitted after rectification; a residual angle &gt; 0.05° triggers a warning — a free self-check on the whole rotate/inverse-transform path.</td></tr>
+<tr><th>Output</th><td><code>angle_deg_image</code>, <code>angle_deg_math</code>, <code>angle_stderr_deg</code>, <code>rmse</code>, <code>max_residual</code>, <code>skeleton_length</code>, <code>residual_angle_deg_after_rotation</code>, <code>rectified{...}</code></td></tr>
+</tbody>
+</table>
+<div class="warn"><b>R² is meaningless for near-horizontal layers</b>
+<code>R² = 1 − SS_res/SS_tot</code>, and for a horizontal layer <code>SS_tot</code> (the variance of y) is itself tiny — so an excellent line 1029 px long with only 1.9 px rmse still scores R² ≈ 0.02.
+Leveling, MgO_C and Non_mag are all like this. Results therefore carry <code>fit_r2_degenerate: true</code> and an explanatory <code>fit_r2_note</code>.
+<b>Judge straightness by <code>rmse</code> and <code>max_residual</code>.</b></div>
+
+<!-- ---------------- M2 ---------------- -->
+<h3 id="m2">M2 · <code>mgo_c</code> — MgO_C straightness and tilt</h3>
+<p><b>What it measures:</b> the angle and goodness of fit of the central MgO barrier layer once fitted to a line, plus the two endpoints <code>b3</code>/<code>b4</code> of that fitted segment.</p>
+<table>
+<tbody>
+<tr><th style="width:150px">Definition</th><td>MgO_C skeleton → TLS line; <code>b3</code>/<code>b4</code> = the extreme (min/max x) skeleton points <b>projected onto the fitted line</b></td></tr>
+<tr><th>Why b3/b4 exist</th><td><code>b1</code>/<code>b2</code> (M3) are the raw skeleton tips; <code>b3</code>/<code>b4</code> are the endpoints of the straight-line model. The difference between them <i>is</i> the local waviness of the layer. So both <code>a1→b1</code> and <code>a1→b3</code> are reported: the first targets the real tip, the second the model and is insensitive to local burrs. Measured: dx agrees to 0.001 nm (medians 5.332 / 5.333 nm), but the dy scatter is smaller for <code>b3</code>.</td></tr>
+<tr><th>Output</th><td><code>angle_deg_image/math</code>, <code>fit_r2</code> (+ degenerate flag), <code>fit_slope/intercept</code>, <code>rmse</code>, <code>max_residual</code>, <code>perp_rmse</code> (perpendicular-distance rmse), <code>b3</code>, <code>b4</code>, <code>fit_length</code>, <code>residual_profile</code> (per-point residual curve)</td></tr>
+<tr><th>Measured</th><td>rmse ≈ 0.045 nm (0.6 px), max_residual ≈ 0.126 nm. Tilt varies between −3.5° and +3.5° across the batch.</td></tr>
+</tbody>
+</table>
+
+<!-- ---------------- M3 ---------------- -->
+<h3 id="m3">M3 · <code>interfaces</code> — interface endpoint offsets a ↔ b</h3>
+<p><b>What it measures:</b> the horizontal and vertical offset of each SAF_Ru layer's inner endpoint relative to the MgO_C endpoints. This is the core set of numbers in the whole system.</p>
+
+<figure><img src="assets/06_interfaces_zoom.png" alt="a1 b1 b3 endpoints">
+<figcaption>Close-up of the central region. <span style="color:#f66">a1/a2</span> = SAF_Ru inner tips; <span style="color:#0ff">b1/b2</span> = MgO_C skeleton tips; <span style="color:#3bf">b3/b4</span> = MgO_C fitted-segment endpoints (the cyan dashed line is the fit); the <span style="color:#f4f">magenta</span> parts belong to M4's 5 nm window.</figcaption></figure>
+
+<table>
+<tbody>
+<tr><th style="width:150px">Endpoint definitions</th><td>
+<code>a1</code> = SAF_Ru_L skeleton tip at <b>max</b> x (the end facing the stack)<br>
+<code>a2</code> = SAF_Ru_R skeleton tip at <b>min</b> x<br>
+<code>b1</code>/<code>b2</code> = MgO_C <b>skeleton</b> tips at min/max x<br>
+<code>b3</code>/<code>b4</code> = endpoints of the MgO_C <b>fitted segment</b> (from M2)</td></tr>
+<tr><th>Four reported offsets</th><td><code>a1_b1</code>, <code>a1_b3</code>, <code>a2_b2</code>, <code>a2_b4</code>, each with <code>dx</code>/<code>dy</code>/<code>distance</code> in both px and nm</td></tr>
+<tr><th>Sign convention</th><td><b><code>dx&gt;0</code>: b is to the right of a; <code>dy&gt;0</code>: b sits lower than a in the image.</b> That sentence is written verbatim into every offset's <code>convention</code> field so nobody reading a report has to guess.</td></tr>
+<tr><th>Measured</th><td>26 images: <code>a1_b1.dx</code> median +5.332 nm (σ 0.61), <code>a2_b2.dx</code> median −5.332 nm (σ 0.50) — symmetric left/right, as physically expected.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><b>Skeleton tips retract</b>
+Guo–Hall (like any morphological thinning) pulls back from the tip of a region by roughly <b>half the band width</b>, so a1/b1 sit slightly inward by default; on a synthetic 13 px thick layer the retraction is exactly 6 px.
+<code>--endpoint-extend region</code> extrapolates back to the region tip along the local tangent (in that mode the self-test's a1 error is zero); it is off by default to stay faithful to Guo–Hall.
+The saving grace: dx/dy are <b>differences</b> of two endpoints, so when both retract by similar amounts the effect largely cancels.</div>
+
+<!-- ---------------- M4 ---------------- -->
+<h3 id="m4">M4 · <code>*_dip</code> — maximum downward excursion within 5 nm of the endpoint</h3>
+<p><b>What it measures:</b> walking 5 nm back along the SAF_Ru skeleton from a1 (or a2), how far down does the layer dip? It characterises sagging/bending near the tip.</p>
+<table>
+<tbody>
+<tr><th style="width:150px">Baseline</th><td>The endpoint itself: <code>dev = y − y(endpoint)</code>, positive = lower</td></tr>
+<tr><th>Window</th><td>5 nm measured along <b>arclength</b>, not along x. The layer bends near the tip, so an x-window would cover a different amount of actual layer.</td></tr>
+<tr><th>Output</th><td><code>window</code> (requested and actual, px + nm), <code>window_points</code>, <code>window_start/end</code>, <code>window_polyline</code> (the traversed skeleton span, verbatim), <code>max_downward_deviation</code>, <code>max_downward_point</code>, <code>max_downward_arclength</code> (how far into the window the maximum sits), <code>max_abs_deviation</code>/<code>max_abs_point</code> (largest by magnitude, possibly upward), <code>deviation_profile</code> (the whole s–dev curve)</td></tr>
+<tr><th>On the overlay</th><td>Magenta: the thickened skeleton span is the searched range, the two vertical ticks are the window bounds, the dashed line is the endpoint baseline, and the arrow points at the maximum with its value.</td></tr>
+<tr><th>Measured</th><td>Left median 0.597 nm (0–1.417), right 0.709 nm (0.224–1.268).</td></tr>
+</tbody>
+</table>
+<div class="note"><b>Why the whole <code>deviation_profile</code> is written to JSON</b>
+So that trying a different window length, or checking whether the maximum is an isolated burr, does not require re-running the batch — it can be done on the JSON.
+The same applies to M5's <code>curvature_profile</code> and M2's <code>residual_profile</code>.</div>
+
+<!-- ---------------- M5 ---------------- -->
+<h3 id="m5">M5 · <code>milling_l</code> / <code>milling_r</code> — milled-flank curvature, m1/m2</h3>
+<p><b>What it measures:</b> the flank produced by ion milling. Its shape is straight–curved–straight; the goal is the point of sharpest bend (m1 left / m2 right) and the curvature radius there.</p>
+
+<figure><img src="assets/07_milling_zoom.png" alt="Milling curvature">
+<figcaption>Close-up of the left Milling band. The <span style="color:#fa0">orange</span> curve is the selected milled flank (spline sample), <span style="color:#fa0">m1</span> is the curvature maximum, and the <span style="color:#3cf">blue dotted circle</span> is the osculating circle fitted to the raw edge points there — whether the radius estimate is sane is visible at a glance.</figcaption></figure>
+
+<h4>(a) Which flank: adjacency, not the skeleton normal</h4>
+<p>A Milling band has two flanks: one against the device stack (MgO_L/MgO_R/Block_*), one facing vacuum. The default <code>outer</code> is the vacuum-facing one,
+selected by keeping boundary pixels that touch <b>no other class</b>, then taking the longest contiguous run in contour order.</p>
+<div class="warn"><b>Why the "skeleton normal" method was abandoned</b>
+The original requirement proposed splitting the boundary with the skeleton and keeping the positive-normal side. Measuring the neighbouring class on both sides of the real mask:
+<pre style="margin:8px 0"><code>i= 411 p=(420,682)  +n -&gt; _background_   -n -&gt; MgO_L
+i= 651 p=(431,443)  +n -&gt; Block_U        -n -&gt; _background_</code></pre>
+The stack sits on the <b>negative</b> normal side low down and on the <b>positive</b> side higher up — <b>no single sign holds one flank along the whole band</b>, so the selection flips partway.
+The adjacency criterion has nothing to do with the skeleton normal. <code>--milling-edge-method skeleton</code> keeps the old method for comparison only.</div>
+
+<h4>(b) Rejecting the crop edge</h4>
+<div class="warn"><b>The image crop fabricates the sharpest corner on the edge</b>
+The Milling bands run off the left/right edge of the field of view, so the outer flank includes a straight cut made by the crop plus two 90° corners — the highest curvature anywhere on the edge.
+Before this criterion existed, <code>m2</code> landed on the right image border. Boundary pixels within 4 px of the image frame or the rotation padding are now discarded.
+(<b>This is exactly why the rotation pads with 255 = ignore rather than background</b>: after rectification the cut becomes a slanted line <i>inside</i> the image, and the only remaining evidence that it is a crop and not a real surface is that the far side lies outside the original frame.)</div>
+
+<h4>(c) Locate with the spline, quantify with the circle</h4>
+<p>The whole edge is smoothed with a cubic B-spline and the curvature is taken <b>analytically</b>. The straight tails come out at κ≈0 and cannot win the maximum, so there is no need to actually fit a piecewise straight–curved–straight model.</p>
+<div class="warn"><b>Curvature magnitude is scale-dependent, and the spline underestimates it</b>
+<code>splprep</code> reduces the knot count until the residual matches <code>s</code>, and a handful of cubic segments cannot hold constant curvature: on a synthetic arc of true radius 200 px,
+the spline reports 168 px (−16%) while the circle fit reports 190 px (−5%). Therefore:
+<ul style="margin:6px 0 0 18px">
+<li><code>radius</code> / <code>kappa_*</code> come from the spline derivatives and <b>locate m1/m2 reliably</b></li>
+<li><code>local_circle.radius</code> is a circle fitted to the raw edge points at the same location — <b>use it for magnitudes</b></li>
+<li><code>local_circle.rms</code> is the fit residual; a real bend is not a circular arc, so 1–2 px is normal. Above 3.5 px, <code>reliable</code> is set false and a warning is raised</li>
+</ul>
+This explanation is written verbatim into the JSON as <code>magnitude_note</code>.</div>
+
+<table>
+<tbody>
+<tr><th style="width:150px">Output</th><td><code>edge_method</code>, <code>boundary_points</code>/<code>selected_points</code>/<code>edge_points</code>, <code>edge_length</code>, <code>spline_rmse</code>, <code>search_band_nm</code>, <code>max_curvature_point</code> (= m1/m2), <code>max_curvature_arclength</code>, <code>kappa_per_px</code>/<code>kappa_per_nm</code>/<code>kappa_abs_per_nm</code>, <code>radius</code>, <code>local_circle{centre,radius,rms,points,window,reliable}</code>, <code>tail_left</code>/<code>tail_right</code> (line fits over the outer 25% of arclength at each end, validating the straight–curved–straight model), <code>edge_polyline</code>, <code>curvature_profile</code></td></tr>
+<tr><th>Sign</th><td><code>kappa&gt;0</code> means turning clockwise in image coordinates (y down)</td></tr>
+<tr><th>Measured</th><td>26 images: <code>milling_l.local_circle.radius</code> median 4.835 nm, <code>milling_r</code> 5.329 nm.</td></tr>
+</tbody>
+</table>
+<div class="note"><b>"The middle curve" has no objective definition</b>
+The bend actually sits at about 73% of the arclength, not the midpoint, so <code>--milling-middle-frac</code> defaults to 1.0 (no restriction). If the maximum lands exactly on a search-band boundary, a warning is raised.</div>
+
+<!-- ---------------- M6 ---------------- -->
+<h3 id="m6">M6 · <code>non_mag</code> — Non_mag horizontal edge and Non_mag1/2</h3>
+<p><b>What it measures:</b> the horizontal edge of the Non_mag block on the side away from Block_D, fitted to a line, giving its angle, length and two endpoints.</p>
+
+<figure><img src="assets/08_nonmag_zoom.png" alt="Non_mag edge">
+<figcaption>Right-hand region. The thin <span style="color:#ff0">yellow</span> line is the raw per-column edge; the yellow dashed line is the sigma-clipped fit; <span style="color:#ff0">Non_mag1/Non_mag2</span> are that line extended to the x extent of the region.</figcaption></figure>
+
+<table>
+<tbody>
+<tr><th style="width:150px">Which edge</th><td>Default <code>auto</code>: count how many columns of each of the two horizontal edges touch Block_D and take the one with fewer contacts. On the sample image <code>top:172 / bottom:0</code>, hence the bottom edge. <b>Written this way rather than hard-coded as "bottom" so that a flipped sample or a relabelled stack does not silently measure the wrong interface.</b> <code>edge_side</code> and both contact counts go into the JSON/CSV.</td></tr>
+<tr><th>Edge extraction</th><td>The extreme foreground pixel per column. Both Non_mag edges are single-valued functions of x, so this <i>is</i> the edge — no side-selection heuristic to get wrong.</td></tr>
+<tr><th>Fit</th><td>Sigma-clipped (2σ by default) TLS. The two corners round off and would drag the line; a single stray predicted pixel would dominate a plain least-squares fit.</td></tr>
+<tr><th>Endpoint rule</th><td><b>The fitted line is extended outward to the min/max x column of the Non_mag region</b>, not stopped at the columns that survived clipping. The clipped columns are precisely the rounded corners, so stopping there would pull the endpoints inward by however much the corners happen to round; extending to the region boundary makes the endpoints a property of <b>the region</b> rather than of the clipping threshold. y is taken from the line (not from raw pixels), so the corner rounding never contaminates it. <code>max_extrapolation</code> records how far it was extended.</td></tr>
+<tr><th>Output</th><td><code>edge_side</code>, <code>edge_side_rule</code>, <code>block_d_contact_columns{top,bottom}</code>, <code>edge_columns</code>/<code>columns_used</code>/<code>columns_dropped</code>, <code>Non_mag1</code>, <code>Non_mag2</code>, <code>endpoint_rule</code>, <code>region_x_range_px</code>, <code>max_extrapolation</code>, <code>angle_deg_image/math</code>, <code>length</code>, <code>fit_r2</code>, <code>rmse</code>, <code>max_residual</code>, <code>edge_polyline</code></td></tr>
+</tbody>
+</table>
+
+<div class="warn"><b>"Largest component" is not the same as "the right one"</b>
+In one of the 26 images the prediction grew a spurious Non_mag band across the bottom of the frame whose area (11128 px) was <i>larger</i> than the real Non_mag box, so the size rule measured the artefact — reporting an edge length of 33.98 nm against a normal value of about 10 nm.
+Non_mag's component is now <b>anchored on Block_D</b>: candidates are first restricted to components touching Block_D, falling back to size only if none do. After the fix that image reads 9.14 nm, back in range.
+Other classes still use size; any discarded component raises a warning that also states whether anchoring was used.</div>
+
+<!-- ---------------- M7 ---------------- -->
+<h3 id="m7">M7 · <code>corner_offsets</code> — Non_mag endpoints ↔ Milling bend points</h3>
+<p><b>What it measures:</b> dx/dy and straight-line distance for <code>Non_mag1 → m1</code> and <code>Non_mag2 → m2</code>, i.e. how far the block corner and the milled bend are offset from each other.</p>
+<table>
+<tbody>
+<tr><th style="width:150px">What makes it special</th><td>It is the <b>only module that combines other measurements</b>. It does not recompute anything; it reads M5 and M6 back out of <code>ctx.results</code> — which is why it must sit after <code>non_mag</code> and <code>milling_*</code> in the registry.</td></tr>
+<tr><th>Degradation</th><td>If a side's dependency failed, <b>that side alone becomes null</b> and the other is still reported. The module only fails outright if neither side is available.</td></tr>
+<tr><th>Output</th><td><code>non_mag1_m1</code> / <code>non_mag2_m2</code>, each with <code>from</code>/<code>to</code> (point names), <code>from_point</code>/<code>to_point</code> (dual coordinates), <code>dx</code>/<code>dy</code>/<code>distance</code>, <code>convention</code></td></tr>
+<tr><th>On the overlay</th><td>A spring-green dotted L: the horizontal leg is dx, the vertical leg is dy, with the values annotated in between</td></tr>
+<tr><th>Measured</th><td>26 images: <code>non_mag1_m1.dx</code> median −1.251 nm, <code>non_mag2_m2.dx</code> +1.288 nm.</td></tr>
+</tbody>
+</table>
+
+<!-- ---------------- self-test ---------------- -->
+<h3>How much to trust the numbers: what selftest.py covers</h3>
+<p>Everything is <b>synthetic geometry with known ground truth</b>, so it needs no real data, runs fast, and its conclusions are not arguable.</p>
+<details><summary>Expand the self-test checklist</summary>
+<ul>
+<li>Guo–Hall: the OpenCV and NumPy implementations are <b>pixel-identical</b> on straight bands, bent bands and random blobs</li>
+<li>Rotation round-trip error &lt; 1e-9 px; rotating by the fitted angle makes the direction exactly horizontal</li>
+<li>TLS angle error &lt; 1e-6° on an exact line; the R²-degenerate flag fires as expected</li>
+<li>Analytic curvature radius within 1% on exact circles (50 / 200 / 600 px)</li>
+<li>Contour tracing: exact perimeter on a rectangular ring, correct selection of the wrap-around run</li>
+<li>Untilted end-to-end image: a1/a2/b1/b2, dx/dy, angles and rmse are <b>exact</b>; skeleton retraction falls in the expected range (exactly 6 px on a 13 px thick layer)</li>
+<li>Non_mag auto side selection: the synthetic mask is isomorphic to the real one (Block_D directly above Non_mag), and the bottom edge must be chosen</li>
+<li>corner_offsets: the reported dx/dy must equal the difference of the two named points exactly (1e-9 px), and the nm conversion likewise</li>
+<li>Decoy component: a fake band 6× larger than the true Non_mag (57000 vs 9150 px) and far from Block_D is inserted; the measurement must still land on the real box (reproducing the bad prediction from the real batch)</li>
+<li>Scale: filename parsing (including returning None when there is no FOV); end-to-end on a <code>..._FOV_76.37nm.png</code>, nm/px must be exactly 76.37/width</li>
+<li>b3/b4: the synthetic MgO_C is a perfect rectangle, so the fitted endpoints must coincide with the skeleton tips</li>
+<li>Milling side selection: the synthetic inner/outer radii are known (200 / 215 px) and <code>outer</code>/<code>inner</code> must each land on the right one; the selected edge must contain no frame pixels</li>
+<li>Tilt by 3° then rectify: recovered tilt error &lt; 0.05°, residual angle &lt; 0.05°, osculating-circle radius error &lt; 10%</li>
+</ul>
+</details>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s5"><span class="n">05</span>Output files explained</h2>
+
+<p>Two files per image, plus one summary in batch mode:</p>
+
+<table>
+<thead><tr><th>File</th><th>Contents</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;stem&gt;.json</code></td><td>All metrics + all input parameters + curve series</td><td>The one complete record; re-checkable and reproducible</td></tr>
+<tr><td><code>&lt;stem&gt;_overlay.png</code></td><td>Skeletons, fitted lines, osculating circles, labelled points and a numeric legend</td><td>Human review — "did it measure the right place?"</td></tr>
+<tr><td><code>summary.csv</code></td><td>One row per image, <b>73 fixed columns</b></td><td>Batch statistics; straight into Excel/pandas</td></tr>
+</tbody>
+</table>
+
+<div class="note"><b>Why the CSV columns are hard-coded</b>
+A CSV whose columns are "whatever keys this batch happened to produce" cannot be compared across batches — if one image loses <code>Milling_L</code>, a whole column disappears and two CSVs no longer line up.
+The list is therefore declared explicitly in <code>report.py::CSV_COLUMNS</code>; missing values are left blank and the column count never changes.</div>
+
+<h3 id="s5-1">5.1 JSON field by field</h3>
+
+<h4>Top level</h4>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td><code>image</code> / <code>image_path</code></td><td>Mask filename / full path</td><td><code>751845_..._FOV_76.37nm.png</code></td></tr>
+<tr><td><code>image_size_px</code></td><td>Original mask size [w, h]</td><td><code>[1024, 1024]</code></td></tr>
+<tr><td><code>mask_note</code></td><td>How the file was interpreted</td><td><code>P (index == class id)</code> or <code>RGB snapped to palette (0.12% off-palette)</code></td></tr>
+<tr><td><code>classes</code></td><td>Class order used (index = class id)</td><td><code>["_background_","SAF_Ru_L",...]</code></td></tr>
+<tr><td><code>scale_nm_per_px</code></td><td><b>The scale.</b> Every nm value = its px value × this</td><td><code>0.074580078125</code></td></tr>
+<tr><td><code>scale_source</code></td><td>Where the scale came from: <code>filename</code> / <code>--fov-nm</code> / <code>--scale-nm</code></td><td><code>filename</code></td></tr>
+<tr><td><code>fov_nm</code> / <code>image_width_px</code></td><td>Field of view and the width used, for re-checking</td><td><code>76.37</code> / <code>1024</code></td></tr>
+<tr><td><code>tool_version</code></td><td>Analysis tool version</td><td><code>1.0.0</code></td></tr>
+<tr><td><code>params</code></td><td><b>Every CLI parameter of this run</b> (minus input/output paths)</td><td>Answers "what settings produced this number?"</td></tr>
+<tr><td><code>rotation</code></td><td><code>applied</code>, <code>angle_deg_image</code>, <code>matrix</code> (3×3 homogeneous forward matrix), <code>output_size_px</code></td><td>The matrix converts any coordinate between the two frames</td></tr>
+<tr><td><code>results</code></td><td>The seven modules; failed ones are <code>null</code></td><td>See below</td></tr>
+<tr><td><code>warnings</code></td><td>De-duplicated array of strings</td><td>See <a href="#s5-4">§5.4</a></td></tr>
+</tbody>
+</table>
+
+<h4>Three composite structures that appear everywhere</h4>
+<p>Understand these three and you know 90% of the fields.</p>
+
+<pre><code>// 1. Distance — every length is given in px AND nm; never multiply by the scale yourself
+"rmse": { "px": 1.9419, "nm": 0.14483 }
+
+// 2. Point — rectified coordinates AND original-image coordinates
+"a1": {
+  "x_px": 401.0,       "y_px": 532.0,          // rectified (where measurement happens)
+  "x_orig_px": 400.52, "y_orig_px": 531.61     // on the raw TEM image; overlay directly
+}
+
+// 3. Offset — b relative to a, with the sign convention travelling alongside
+"a1_b1": {
+  "dx": { "px": 70.0, "nm": 5.2206 },
+  "dy": { "px": -4.0, "nm": -0.2983 },
+  "distance": { "px": 70.114, "nm": 5.2291 },
+  "convention": "dx>0: b is right of a; dy>0: b is lower than a in the image"
+}</code></pre>
+
+<h4>Angles, goodness of fit, and curves: the conventions</h4>
+<table>
+<thead><tr><th>Field family</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>angle_deg_image</code></td><td>Angle in <b>image coordinates</b> (y down, clockwise positive). Use this when looking at the overlay.</td></tr>
+<tr><td><code>angle_deg_math</code></td><td>Angle in <b>mathematical coordinates</b> (counter-clockwise positive) = −angle_deg_image. Use this in formulas.</td></tr>
+<tr><td><code>fit_r2</code></td><td>R² of the OLS <code>y~x</code> fit. <b>Meaningless for near-horizontal layers.</b></td></tr>
+<tr><td><code>fit_r2_degenerate</code></td><td><code>true</code> = R² is degenerate, look at rmse instead. Essentially always true for Leveling / MgO_C / Non_mag.</td></tr>
+<tr><td><code>fit_r2_note</code></td><td>Plain-language reason for the degeneracy, embedded in the data itself.</td></tr>
+<tr><td><code>fit_r2_axis</code></td><td>Whether R² was computed on <code>y~x</code> or <code>x~y</code> (near-vertical lines switch axis automatically and warn).</td></tr>
+<tr><td><code>rmse</code> / <code>max_residual</code></td><td><b>These are what to judge straightness by.</b> Root-mean-square residual and worst single-point residual.</td></tr>
+<tr><td><code>perp_rmse</code></td><td>RMS of the <b>perpendicular</b> distance to the TLS line (M2). Fairer than y-residuals on a sloped line.</td></tr>
+<tr><td><code>angle_stderr_deg</code></td><td>Standard error of the fitted angle. It assumes independent residuals, whereas real layer waviness is correlated along x — so treat it as a <b>lower bound</b> on the angular uncertainty.</td></tr>
+<tr><td><code>*_profile</code> / <code>*_polyline</code></td><td>Whole curve/polyline series (<code>residual_profile</code>, <code>deviation_profile</code>, <code>curvature_profile</code>, <code>edge_polyline</code>, <code>window_polyline</code>). <b>They exist so parameters can be re-tuned without re-running</b>, and so you can plot them yourself.</td></tr>
+<tr><td><code>*_note</code> / <code>*_rule</code> / <code>convention</code></td><td>The rule behind a number is written into the data, not just the docs — so whoever reads the report in six months does not have to read the code.</td></tr>
+</tbody>
+</table>
+
+<h4>Key fields per module</h4>
+<table>
+<thead><tr><th>Path</th><th>Meaning</th><th>How to use it</th></tr></thead>
+<tbody>
+<tr><td><code>leveling.angle_deg_image</code></td><td>Sample tilt</td><td>Unusually large within a batch = mounting/prep issue</td></tr>
+<tr><td><code>leveling.rmse.nm</code></td><td>Straightness of the Leveling layer</td><td>Confidence in the rectification datum</td></tr>
+<tr><td><code>leveling.residual_angle_deg_after_rotation</code></td><td>Residual angle after rectification</td><td><b>&gt;0.05° means rectification did not fully work</b></td></tr>
+<tr><td><code>mgo_c.angle_deg_image</code> / <code>.rmse.nm</code></td><td>MgO_C tilt / straightness</td><td>Barrier layer quality</td></tr>
+<tr><td><code>mgo_c.fit_length.nm</code></td><td>Length of the fitted segment</td><td>≈ barrier layer width</td></tr>
+<tr><td><code>interfaces.a1_b1.dx.nm</code></td><td>Left lateral offset (raw tips)</td><td><b>Core metric</b></td></tr>
+<tr><td><code>interfaces.a1_b3.dx.nm</code></td><td>Same, against the fitted endpoint</td><td>Burr-insensitive variant</td></tr>
+<tr><td><code>interfaces.a2_b2.dx.nm</code> / <code>a2_b4</code></td><td>Right-hand equivalents</td><td>Left/right symmetry check</td></tr>
+<tr><td><code>interfaces.*.dy.nm</code></td><td>Vertical offset, positive = b lower</td><td>Height difference between layers</td></tr>
+<tr><td><code>interfaces.saf_ru_l_dip.max_downward_deviation.nm</code></td><td>Max dip within 5 nm of the left tip</td><td>Degree of tip sagging</td></tr>
+<tr><td><code>interfaces.saf_ru_l_dip.max_downward_arclength.nm</code></td><td>How far from the tip the maximum occurs</td><td>Right at the tip vs at the window edge means different things</td></tr>
+<tr><td><code>milling_l.max_curvature_point</code></td><td>m1 coordinates</td><td>Bend location</td></tr>
+<tr><td><code>milling_l.local_circle.radius.nm</code></td><td><b>The radius to quote</b></td><td>Size of the milled fillet</td></tr>
+<tr><td><code>milling_l.radius.nm</code></td><td>Spline radius, systematically ~15% low</td><td>Location and trends only</td></tr>
+<tr><td><code>milling_l.local_circle.reliable</code></td><td>Circle-fit rms ≤ 3.5 px</td><td><b>Do not quote the radius when false</b></td></tr>
+<tr><td><code>milling_l.tail_left/right.angle_deg_image</code></td><td>Angles of the two straight tails</td><td>Validates straight–curved–straight; also usable as the milled sidewall angle</td></tr>
+<tr><td><code>non_mag.edge_side</code></td><td>Which edge was actually chosen</td><td><b>Should be consistent across a batch</b>; investigate if not</td></tr>
+<tr><td><code>non_mag.length.nm</code></td><td>Non_mag edge length</td><td>Block width</td></tr>
+<tr><td><code>non_mag.angle_deg_image</code> / <code>.rmse.nm</code></td><td>Edge tilt / straightness</td><td>—</td></tr>
+<tr><td><code>non_mag.columns_dropped</code></td><td>Columns removed by sigma clipping</td><td>&gt;25% warns; the edge is not straight</td></tr>
+<tr><td><code>corner_offsets.non_mag1_m1.dx/dy/distance</code></td><td>Left corner offset</td><td>—</td></tr>
+<tr><td><code>corner_offsets.non_mag2_m2.*</code></td><td>Right corner offset</td><td>—</td></tr>
+</tbody>
+</table>
+
+<h3 id="s5-2">5.2 summary.csv</h3>
+<p>73 columns whose names are the <b>dotted paths</b> into the JSON (e.g. <code>results.interfaces.a1_b1.dx.nm</code>), so there is zero translation cost between the CSV and the JSON.
+Encoding is <code>utf-8-sig</code>, so Excel opens it correctly on a double click.</p>
+<table>
+<thead><tr><th>Group</th><th>Columns</th></tr></thead>
+<tbody>
+<tr><td>Identity &amp; scale</td><td><code>image</code>, <code>fov_nm</code>, <code>image_width_px</code>, <code>scale_nm_per_px</code>, <code>scale_source</code></td></tr>
+<tr><td>Rectification</td><td><code>rotation.applied</code>, <code>rotation.angle_deg_image</code>, <code>results.leveling.*</code> (5 columns)</td></tr>
+<tr><td>Interface offsets</td><td><code>results.interfaces.*</code>: x,y for a1/b1/b3/a2/b2/b4 plus four dx,dy pairs (20 columns)</td></tr>
+<tr><td>Dip</td><td><code>max_downward_deviation.nm</code> + <code>max_downward_arclength.nm</code>, left and right</td></tr>
+<tr><td>MgO_C</td><td><code>angle_deg_image</code>, <code>fit_r2</code>, <code>rmse.nm</code>, <code>fit_length.nm</code></td></tr>
+<tr><td>Milling L/R</td><td>9 columns each: curvature point x,y, <code>kappa_abs_per_nm</code>, spline radius, circle radius, circle rms, <code>reliable</code>, both tail angles</td></tr>
+<tr><td>Non_mag</td><td><code>edge_side</code>, Non_mag1/2 x,y, <code>angle_deg_image</code>, <code>length.nm</code>, <code>fit_r2</code>, <code>rmse.nm</code></td></tr>
+<tr><td>Corner offsets</td><td>dx.nm / dy.nm / distance.nm, left and right</td></tr>
+<tr><td>Quality</td><td><code>n_warnings</code> (count), <code>warnings</code> (full text joined with <code> | </code>)</td></tr>
+</tbody>
+</table>
+<div class="tip"><b>Recommended batch triage</b>
+Sort by <code>n_warnings &gt; 0</code> and open those images' <code>_overlay.png</code> one by one; then look at rows where <code>results.milling_*.local_circle.reliable == false</code>;
+finally box-plot the core columns to find outliers. The coordinate columns exist precisely so an outlier can be located on the image immediately.</div>
+
+<h3 id="s5-3">5.3 Overlay colour key</h3>
+<figure><img src="assets/10_legend.png" alt="Overlay legend">
+<figcaption>The text legend in the bottom-right corner of the overlay prints the key scalars straight onto the image, so the JSON does not have to be opened.</figcaption></figure>
+<table>
+<thead><tr><th>Colour</th><th>Element</th><th>Measurement</th></tr></thead>
+<tbody>
+<tr><td><span class="swatch" style="background:#fff"></span>thin white line</td><td>Guo–Hall skeletons (Leveling / SAF_Ru_L,R / MgO_C / Milling_L,R)</td><td>All skeleton-based measurements</td></tr>
+<tr><td><span class="swatch" style="background:#0ff"></span>cyan dashed + <b>b1 b2</b></td><td>MgO_C fitted segment and skeleton tips</td><td>M2 / M3</td></tr>
+<tr><td><span class="swatch" style="background:#3bf"></span>deep sky blue <b>b3 b4</b></td><td>MgO_C fitted-segment endpoints</td><td>M2</td></tr>
+<tr><td><span class="swatch" style="background:#f44"></span>red <b>a1 a2</b></td><td>SAF_Ru inner tips</td><td>M3</td></tr>
+<tr><td><span class="swatch" style="background:#f0f"></span>magenta</td><td>The 5 nm window: thickened skeleton span, end ticks, baseline, arrow and value</td><td>M4</td></tr>
+<tr><td><span class="swatch" style="background:#fa0"></span>orange curve + <b>m1 m2</b></td><td>Selected milled flank and curvature maximum</td><td>M5</td></tr>
+<tr><td><span class="swatch" style="background:#3cf"></span>sky-blue dotted circle</td><td>Osculating circle (visual check on the radius estimate)</td><td>M5</td></tr>
+<tr><td><span class="swatch" style="background:#ff0"></span>yellow line/dashed + <b>Non_mag1 2</b></td><td>Raw edge polyline, fitted line, both endpoints</td><td>M6</td></tr>
+<tr><td><span class="swatch" style="background:#00fa9a"></span>spring-green dotted L</td><td>Non_mag↔Milling offset (horizontal leg = dx, vertical = dy)</td><td>M7</td></tr>
+<tr><td><span class="swatch" style="background:#0f0"></span>bright green dashed</td><td>Leveling line re-fitted after rectification</td><td>M1 self-check</td></tr>
+</tbody>
+</table>
+<div class="tip"><b>Keep <code>--overlay-on</code> switched on</b>
+Drawing the annotations on the <b>raw TEM greyscale</b> instead of the pseudo-colour mask exposes two classes of error at once: a wrong geometry calculation, and <b>a wrong segmentation</b>.
+On the mask alone, a segmentation that placed a boundary 3 px off still looks perfect.</div>
+
+<h3 id="s5-4">5.4 Reading the warnings</h3>
+<table>
+<thead><tr><th>Warning</th><th>Meaning</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td><code>X: dropped N component(s), largest M px -- the layer may be split in the prediction</code></td><td>The class had several components; only the largest was kept</td><td>Small M (tens of px) = speckle, ignore. M in the thousands = <b>the segmentation split the layer</b>, and every endpoint on this image is suspect</td></tr>
+<tr><td><code>... ; kept the component touching Block_D</code></td><td>Non_mag used the anchoring rule rather than area</td><td>The area rule would have picked wrong and anchoring saved it. Glance at the overlay to confirm</td></tr>
+<tr><td><code>Leveling is still tilted by X deg after rectification</code></td><td>Residual angle exceeds 0.05°</td><td>The Leveling layer may be fragmented or genuinely not straight; the rectification datum is unreliable</td></tr>
+<tr><td><code>Leveling is N px long with M px rmse; ... standard error of X deg</code></td><td>Large uncertainty on the rectification angle</td><td>Informational; usually a short or ragged layer</td></tr>
+<tr><td><code>X: the local circle fit has a Y px rms residual (&gt; 3.5)</code></td><td>The osculating circle fit is unreliable</td><td><b>Do not quote that <code>local_circle.radius</code></b>; at this scale the bend is not a single arc</td></tr>
+<tr><td><code>X: the outer boundary is fragmented (N of M selected pixels...)</code></td><td>The milled flank is interrupted by another class</td><td>Only one segment was measured; the edge length will read short</td></tr>
+<tr><td><code>X: the curvature maximum sits on the edge of the search band</code></td><td>The maximum landed on a band boundary</td><td>Widen <code>--milling-middle-frac</code> or reduce <code>--milling-edge-margin-nm</code> and re-run</td></tr>
+<tr><td><code>Non_mag: both edges touch Block_D (a top / b bottom columns)</code></td><td>Automatic side selection is ambiguous</td><td>Check the overlay; force with <code>--nonmag-edge top|bottom</code> if needed</td></tr>
+<tr><td><code>Non_mag: sigma-clipping dropped N/M columns</code></td><td>More than 25% clipped</td><td>The edge is not straight; the fitted line may not represent it</td></tr>
+<tr><td><code>image is N px wide, not 1024</code></td><td>Unexpected mask size</td><td>The scale is still correct (computed from the real width), but check the export pipeline</td></tr>
+<tr><td><code>&lt;module&gt;: class 'X' has no pixels in this mask</code></td><td>The class was not predicted at all</td><td>That module is null. This is a <b>segmentation</b> problem, not an analysis one</td></tr>
+<tr><td><code>no matching raw image of the same size for --overlay-on</code></td><td>No same-size source image found</td><td>The overlay falls back to the mask; check the source directory and filename stems</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s6"><span class="n">06</span>Measured batch statistics (26 images, 1300kgroup1)</h2>
+
+<p>Command: <code>--mask-dir ...\pseudo_color_prediction --out ...\analysis_batch --csv summary.csv</code>, default parameters, rectification on.
+<b>All 26 analysed successfully, 0 failures, 9 warnings in total</b> — all of the "dropped a small component" kind, none affecting a result.</p>
+
+<table>
+<thead><tr><th>Metric</th><th>Median</th><th>σ</th><th>Min</th><th>Max</th><th>Reading</th></tr></thead>
+<tbody>
+<tr><td><code>a1_b1.dx</code> (nm)</td><td>5.332</td><td>0.610</td><td>4.251</td><td>6.488</td><td rowspan="2">Raw tip and fitted endpoint agree to 0.001 nm, confirming b3 is equivalent</td></tr>
+<tr><td><code>a1_b3.dx</code> (nm)</td><td>5.333</td><td>0.610</td><td>4.254</td><td>6.495</td></tr>
+<tr><td><code>a2_b2.dx</code> (nm)</td><td>−5.332</td><td>0.496</td><td>−5.966</td><td>−4.475</td><td>Strictly symmetric with the left side, as expected</td></tr>
+<tr><td><code>a1_b1.dy</code> (nm)</td><td>0.261</td><td>0.628</td><td>−0.895</td><td>1.417</td><td>Vertical offset distributed around zero</td></tr>
+<tr><td>Left 5 nm dip (nm)</td><td>0.597</td><td>0.385</td><td>0.000</td><td>1.417</td><td rowspan="2">Comparable magnitude on both sides</td></tr>
+<tr><td>Right 5 nm dip (nm)</td><td>0.709</td><td>0.274</td><td>0.224</td><td>1.268</td></tr>
+<tr><td>m1 circle radius (nm)</td><td>4.835</td><td>0.837</td><td>3.731</td><td>6.653</td><td rowspan="2">Milled fillet is about 5 nm</td></tr>
+<tr><td>m2 circle radius (nm)</td><td>5.329</td><td>0.795</td><td>3.982</td><td>6.769</td></tr>
+<tr><td>Non_mag length (nm)</td><td>12.048</td><td>1.543</td><td>9.297</td><td>14.692</td><td>Before the anchoring fix, one image reported 33.98 nm</td></tr>
+<tr><td>Nm1→m1 dx (nm)</td><td>−1.251</td><td>0.532</td><td>−3.334</td><td>−0.693</td><td rowspan="2">Opposite signs left/right — symmetric</td></tr>
+<tr><td>Nm2→m2 dx (nm)</td><td>1.288</td><td>0.278</td><td>0.734</td><td>2.000</td></tr>
+<tr><td>Leveling tilt (°)</td><td>0.259</td><td>0.629</td><td>−2.263</td><td>1.002</td><td>Mounting tilt stays within ±2°</td></tr>
+<tr><td>MgO_C tilt (°)</td><td>−0.341</td><td>1.601</td><td>−3.541</td><td>3.540</td><td>Noticeably more scattered than Leveling</td></tr>
+</tbody>
+</table>
+
+<div class="ph">
+  <div class="tag">figure — can follow later</div>
+  <div class="title">Batch distribution / trend plots</div>
+  <div class="desc">A few box plots or scatter plots from summary.csv (e.g. a1_b1.dx by wafer position, m1/m2 radius distribution) would make this section far more legible. The tool currently emits CSV only, so plotting needs an external script — I can add a <code>plot_summary.py</code> if that is wanted.</div>
+  <div class="file">drop it at assets/14_batch_stats.png</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s7"><span class="n">07</span>Template for adding a measurement</h2>
+
+<p>The architecture exists to make this cheap: <b>a new measurement = one new file + one registry line + a few CSV columns + a self-test</b>. No existing module has to change.</p>
+
+<h3>Checklist</h3>
+<table>
+<thead><tr><th>#</th><th>Do</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Create <code>measures/&lt;name&gt;.py</code> implementing <code>measure(ctx) -> dict</code></td><td><code>tools/tem_analysis/measures/</code></td></tr>
+<tr><td>2</td><td>Add a line to the <code>MEASURES</code> ordered dict; <b>if it reads another module's result it must come after it</b></td><td><code>measures/__init__.py</code></td></tr>
+<tr><td>3</td><td>Add the scalars you want in the CSV to <code>CSV_COLUMNS</code> (dotted paths)</td><td><code>report.py</code></td></tr>
+<tr><td>4</td><td>Add any new option to <code>build_parser()</code>; <b>never hard-code a constant in the module</b> (options land in the JSON's <code>params</code> automatically)</td><td><code>analyze.py</code></td></tr>
+<tr><td>5</td><td>To draw it, add a few lines to <code>render_overlay()</code> and one row to <code>_legend_text()</code></td><td><code>report.py</code></td></tr>
+<tr><td>6</td><td>Add a synthetic-geometry, known-ground-truth case to the self-test</td><td><code>selftest.py</code></td></tr>
+<tr><td>7</td><td>Update the measurement table in the readme</td><td><code>readme.md</code></td></tr>
+</tbody>
+</table>
+
+<h3>Skeleton you can copy verbatim</h3>
+<pre><code class="language-python">"""Requirement N: &lt;one sentence on what this measures&gt;.
+
+&lt;Why it is defined this way. If an alternative was rejected, say why —
+ whoever reads this next (including you) will wonder why the simpler
+ approach was not used.&gt;
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict
+
+import numpy as np
+
+from context import AnalysisContext, MissingClass
+from geometry import fit_line_ols, fit_line_tls
+
+CLASS = "Block_D"          # primary class
+AWAY_FROM = "Non_mag"      # neighbouring class used to disambiguate (if needed)
+
+
+def measure(ctx: AnalysisContext) -> Dict[str, Any]:
+    # --- 1. Get the mask. prefer_near makes component choice depend on
+    #        adjacency rather than sheer area ---
+    mask = ctx.mask(CLASS, prefer_near=AWAY_FROM)     # raises MissingClass if absent
+
+    # --- 2. Get the geometry. Skeletons are cached; `extend` only takes effect
+    #        under --endpoint-extend region ---
+    line = ctx.centerline(CLASS, extend=("xmin", "xmax"))
+    tls = fit_line_tls(line.pts)      # angle from TLS (orientation-unbiased)
+    ols = fit_line_ols(line.pts)      # R2 / rmse from OLS
+    p1, p2 = tls.endpoints_spanning(line.pts)
+
+    # --- 3. When unsure, warn. Never fail silently ---
+    if ols["axis"] != "y~x":
+        ctx.warn("{}: closer to vertical; R2 computed on x~y".format(CLASS))
+
+    # --- 4. Return. Distances via ctx.dist(), points via ctx.point(),
+    #        offsets via ctx.offset() ---
+    return {
+        "skeleton_points": int(len(line)),
+        "skeleton_length": ctx.dist(line.length),        # -> {px, nm}
+        "angle_deg_image": tls.angle_deg_image,
+        "angle_deg_math": tls.angle_deg_math,
+        "fit_r2": ols["r2"],
+        "fit_r2_degenerate": ols["r2_degenerate"],       # True when near-horizontal
+        "fit_r2_note": ols["r2_note"],
+        "rmse": ctx.dist(ols["rmse_px"]),
+        "max_residual": ctx.dist(ols["max_residual_px"]),
+        "blockD1": ctx.point(p1),                        # -> {x_px,y_px,x_orig_px,y_orig_px}
+        "blockD2": ctx.point(p2),
+        "endpoint_rule": "the fitted line extended to the x extent of the region",
+        "residual_profile": [                            # curve, for later re-checking
+            [ctx.nm(float(s)), ctx.nm(float(r))]
+            for s, r in zip(line.s, tls.signed_distance(line.pts))
+        ],
+    }
+
+
+# If it combines other measurements (the corner_offsets pattern):
+def measure_combined(ctx: AnalysisContext) -> Dict[str, Any]:
+    a = ctx.measured_point("non_mag", "Non_mag1")        # None if unavailable
+    b = ctx.measured_point("milling_l", "max_curvature_point")
+    if a is None or b is None:
+        ctx.warn("...: a required point is unavailable")
+        return {"offset": None}
+    return {"offset": {"from_point": ctx.point(a), "to_point": ctx.point(b),
+                       **ctx.offset(a, b)}}
+</code></pre>
+
+<h3>Everything ctx gives you</h3>
+<table>
+<thead><tr><th>Call</th><th>Does</th></tr></thead>
+<tbody>
+<tr><td><code>ctx.mask(name, prefer_near=None)</code></td><td>Cleaned boolean mask (min_area filtered, largest/anchored component only), cached; discards warn automatically</td></tr>
+<tr><td><code>ctx.centerline(name, extend=())</code></td><td>Longest path through the Guo–Hall skeleton as a <code>Polyline</code>, cached</td></tr>
+<tr><td><code>ctx.centroid(name)</code></td><td>Class centroid</td></tr>
+<tr><td><code>ctx.nm(px)</code> / <code>ctx.px(nm)</code></td><td>Unit conversion</td></tr>
+<tr><td><code>ctx.dist(px)</code></td><td>→ <code>{"px":…, "nm":…}</code></td></tr>
+<tr><td><code>ctx.point(xy)</code></td><td>→ rectified + original coordinates</td></tr>
+<tr><td><code>ctx.offset(a, b)</code></td><td>→ dx/dy/distance + the convention string</td></tr>
+<tr><td><code>ctx.measured_point(key, *path)</code></td><td>Read a point from an earlier module; None if unavailable</td></tr>
+<tr><td><code>ctx.polyline_out(line, step)</code></td><td>Serialise a polyline</td></tr>
+<tr><td><code>ctx.warn(msg)</code></td><td>Add a de-duplicated warning</td></tr>
+<tr><td><code>ctx.params</code> / <code>ctx.classes</code> / <code>ctx.ids</code> / <code>ctx.rect</code> / <code>ctx.scale_nm</code></td><td>Options, class list, rectified id array, transformer, scale</td></tr>
+</tbody>
+</table>
+<p><code>Polyline</code> (<code>skeleton.py</code>) also offers <code>.length</code>, <code>.s</code> (arclength), <code>.pts</code>, <code>.x</code>/<code>.y</code>,
+<code>.endpoint("xmin"|"xmax"|"ymin"|"ymax")</code>, <code>.window_from(end, max_s)</code>, <code>.tangent(i)</code>, <code>.tangents()</code>.
+<code>geometry.py</code> also offers <code>fit_line_tls/ols</code>, <code>trimmed_line_fit</code> (sigma clipping), <code>fit_circle</code>, <code>Spline.fit/curvature/sample</code>.
+<code>contour.py</code>: <code>trace_outer_contour</code> (ordered outer contour), <code>longest_run</code> (longest contiguous run on a loop).</p>
+
+<h3>Conventions to follow in a new measurement</h3>
+<div class="tip"><b>Five rules</b>
+<ol style="margin:6px 0 0 18px">
+<li><b>Raise <code>MissingClass</code> for a missing class; do not return None.</b> The framework converts it into <code>null</code> + a warning and keeps the batch running.</li>
+<li><b>Every length goes through <code>ctx.dist()</code>, every point through <code>ctx.point()</code>.</b> Never multiply by the scale yourself; never emit only one coordinate frame.</li>
+<li><b>Turn magic numbers into CLI options.</b> They then appear automatically in the JSON's <code>params</code>, so results stay traceable.</li>
+<li><b>Write the rule into the output</b> — like <code>endpoint_rule</code>, <code>convention</code>, <code>magnitude_note</code>. Make the data self-describing.</li>
+<li><b>Write the self-test before the implementation.</b> Synthesise geometry with known truth and require zero error; "looks right on real data" does not count.</li>
+</ol></div>
+
+<h3>Worked example: adding "Block_D lower edge"</h3>
+<p>This is a real candidate requirement (present in an early version, absent in the current one — see <a href="#s8">§8</a>). Mapped onto the template:</p>
+<ol>
+<li>Create <code>measures/block_d.py</code>, reusing the per-column extreme-pixel idea from <code>non_mag.py</code>'s <code>edge_columns()</code>;</li>
+<li>Side selection: take the edge <b>not adjacent to Non_mag</b> (the exact mirror of the Non_mag module) and report both contact counts;</li>
+<li>Sigma-clipped TLS fit, with <code>blockD1</code>/<code>blockD2</code> extended to the x extent of the region;</li>
+<li>Register in <code>MEASURES</code> after <code>non_mag</code> (and before <code>corner_offsets</code> if you also want an offset against Non_mag);</li>
+<li>Add roughly 9 CSV columns such as <code>results.block_d.blockD1.x_px</code>;</li>
+<li>On the overlay, <code>blockD1/blockD2</code> sit very close to <code>a1/b1</code>, so <b>the label offsets must be staggered by hand</b> (there is already a comment about this on the <code>labelled</code> list in <code>report.py</code>).</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s8"><span class="n">08</span>Gaps and next steps</h2>
+
+<h3>8.1 Missing measurement capabilities</h3>
+<table>
+<thead><tr><th>Capability</th><th>Current state</th><th>Cost to add</th></tr></thead>
+<tbody>
+<tr><td><b>Block_D lower edge</b> (blockD1 / blockD2)</td><td>Traces of it remain in the readme and in a <code>report.py</code> comment, but there is <b>no such entry</b> in <code>MEASURES</code> and no CSV columns for it. The old requirement 7 was superseded by <code>corner_offsets</code>.</td><td>Low — reuse <code>non_mag.py</code> wholesale, see the §7 example</td></tr>
+<tr><td><b>Per-class shape statistics</b> (area px/nm², contour perimeter, skeleton length per class)</td><td>Absent. Only a few modules incidentally report the length of their own skeleton.</td><td>Low — a module iterating <code>ctx.classes</code>. But the CSV would grow to ~100 columns (11 classes × 8 items)</td></tr>
+<tr><td><b>Measurements on MgO_L / MgO_R / Block_U</b></td><td>These three are annotated and segmented but <b>no measurement uses them</b> (they only participate as "neighbours" in Milling side selection).</td><td>Depends on the requirement</td></tr>
+<tr><td><b>Layer thickness</b> (per-layer thickness and its variation along x)</td><td>Absent. Every current measurement is an endpoint, an edge or an angle — none is a thickness.</td><td>Medium — needs a definition of "along which normal", plus handling of layer curvature</td></tr>
+<tr><td><b>Batch statistics and plots</b></td><td>CSV only; box plots / trend plots must be produced externally.</td><td>Low — one <code>plot_summary.py</code></td></tr>
+<tr><td><b>Results written back to the DB / shown in the UI</b></td><td>The analyser is a <b>fully standalone CLI</b> with no code coupling to the Next.js platform, and results never reach the database.</td><td>Medium — needs a schema plus an API route to trigger analysis</td></tr>
+<tr><td><b>Validation against manual measurement</b></td><td>The self-test proves the implementation matches the definition; it does <b>not</b> prove the definition matches what the customer wants.</td><td>Needs a set of manually measured images as a reference</td></tr>
+</tbody>
+</table>
+
+<div class="note"><b>One thing that needs clarifying</b>
+Under <code>G:\datasets\TEM\1300kgroup2\normal_test_temfull\</code> there is a later batch of results (dated 8/10) whose CSV has <b>559 columns</b>,
+including <code>class_shapes.*</code> (per-class area/perimeter/skeleton length), <code>block_d_left.*</code> and <code>block_d_right.*</code> — fields that <b>do not exist</b> in this repository,
+under a different naming convention (<code>PascalCase</code> vs the current dotted lowercase).
+So a more complete variant existed (or exists elsewhere), but it is <b>not in this repo</b>.
+The "missing" entries above are missing relative to <b>the current repository code</b> — if that variant can be found, several of them could be ported rather than rewritten.</div>
+
+<h3>8.2 Known methodological limits</h3>
+<ul>
+<li><b>Skeleton tips retract</b> by about half a band width by default; the effect largely cancels in differences. Use <code>--endpoint-extend region</code> when absolute endpoints matter.</li>
+<li><b>Rectification adds 1–2 px of resampling noise.</b> The self-test residual angle is 0.007°, but dy error can reach ~5 px. For dy-sensitive metrics, consider <code>--no-rotate</code> and handling the tilt analytically.</li>
+<li><b>Curvature is a scale-dependent quantity.</b> There is no unique "true" curvature on a 1 px quantised edge. Two numbers are given (spline and osculating circle) with their biases documented, but the user must know which one they are using.</li>
+<li><b>Segmentation error is not quantified.</b> The analyser assumes the label map is correct. If segmentation places a boundary 2 px off, every downstream number shifts by 0.15 nm — <b>with no warning at all</b>. This is the largest unquantified error source in the whole pipeline.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 class="sec" id="s9"><span class="n">09</span>Figure inventory</h2>
+
+<h3>Available figures (used above, all from real data)</h3>
+<table>
+<thead><tr><th>File</th><th>Content</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td><code>assets/01_raw.png</code></td><td>Raw TEM greyscale</td><td><code>1300kgroup2\normal_test\753964_RMF 18(36,45)_...tif</code></td></tr>
+<tr><td><code>assets/02_mask.png</code></td><td>Pseudo-colour label map</td><td>Same image, <code>pseudo_color_prediction/</code></td></tr>
+<tr><td><code>assets/03_added.png</code></td><td>Blended preview (counter-example)</td><td>Same image, <code>added_prediction/</code></td></tr>
+<tr><td><code>assets/04_overlay_raw.png</code></td><td>Measurement overlay on the raw image</td><td><code>normal_test_analysis/*_overlay.png</code></td></tr>
+<tr><td><code>assets/05_overlay_mask.png</code></td><td>Measurement overlay on the mask</td><td><code>1300kgroup1\analysis\751845_RMF 24(12,15)_...</code></td></tr>
+<tr><td><code>assets/06_interfaces_zoom.png</code></td><td>a1/b1/b3 and the 5 nm window, zoomed</td><td>Crop of 05</td></tr>
+<tr><td><code>assets/07_milling_zoom.png</code></td><td>m1 and the osculating circle, zoomed</td><td>Crop of 05</td></tr>
+<tr><td><code>assets/08_nonmag_zoom.png</code></td><td>Non_mag edge and endpoints, zoomed</td><td>Crop of 05</td></tr>
+<tr><td><code>assets/09_leveling_zoom.png</code></td><td>Leveling layer and the rectified fit line</td><td>Crop of 05</td></tr>
+<tr><td><code>assets/10_legend.png</code></td><td>Overlay text legend</td><td>Crop of 05</td></tr>
+</tbody>
+</table>
+
+<h3>Figures still needed (placeholders are in place; drop the file into assets/ and it appears)</h3>
+<p>The positions are already marked with dashed boxes in the body. Match the filename and the image shows up automatically — or just tell me where the file is and I will wire it in.</p>
+<table>
+<thead><tr><th>Filename</th><th>Section</th><th>What it should show</th></tr></thead>
+<tbody>
+<tr><td><code>assets/11_napari_ui.png</code></td><td>§2.1</td><td>Full-window napari screenshot: layer list + custom panel (class dropdown / brush / contour / export button) + a half-annotated canvas</td></tr>
+<tr><td><code>assets/12_train_job.png</code></td><td>§2.3</td><td>Web app training job page: status, progress, generated command</td></tr>
+<tr><td><code>assets/13_train_curve.png</code></td><td>§2.3</td><td>Loss and mIoU against iteration</td></tr>
+<tr><td><code>assets/14_batch_stats.png</code></td><td>§6</td><td>Batch distribution / box plots (I can write a script to generate these from summary.csv)</td></tr>
+<tr><td><code>assets/15_definition.png</code></td><td>§4 intro</td><td><b>The most valuable one</b>: the customer's original measurement-definition diagram (should be in <code>G:\datasets\TEM\TEM metrology\*.pptx</code>). Placed next to our overlay, it directly demonstrates that we measure what they asked for</td></tr>
+<tr><td><code>assets/16_manual_vs_auto.png</code></td><td>§8.2</td><td>Manual vs automated measurement comparison (scatter or table), answering "how accurate is it?"</td></tr>
+</tbody>
+</table>
+
+<div class="ph" id="ph-def">
+  <div class="tag">figure — highest priority</div>
+  <div class="title">The customer's original measurement-definition diagram</div>
+  <div class="desc">This report can demonstrate that the algorithm is self-consistent, reproducible and error-bounded, but it <b>cannot demonstrate that the definitions are right</b>.
+  There are three decks under <code>G:\datasets\TEM\TEM metrology\</code> (ABS TEM measurement definition / HR FTEM measurement parameters v2 / MetrologyForDFLjunctions).
+  A screenshot of the diagram defining a1/b1/m1/Non_mag placed alongside our overlay would change the persuasiveness of this report entirely.</div>
+  <div class="file">drop it at assets/15_definition.png</div>
+</div>
+
+<footer>
+Generated from the repository source: <code>tools/napari_seg/annotate.py</code>, <code>tools/tem_analysis/</code> (v1.0.0),
+<code>src/lib/{frameworks,default-configs,training-yaml,model-yaml,yaml-merge}.ts</code>;
+statistics from <code>G:\datasets\TEM\1300kgroup1\analysis_batch\summary.csv</code> (26 images).
+This is a static HTML page — open it in any browser. The sidebar hides automatically when printing or saving to PDF.
+</footer>
+
+</main>
+</div>
+</body>
+</html>
