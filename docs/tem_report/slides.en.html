@@ -93,8 +93,8 @@ p{margin:5px 0;font-size:12.2px}
 .note{background:#141c26;border-color:#254058}
 .warn{background:#241d10;border-color:#5a4718}
 .tip{background:#122019;border-color:#1f4a3a}
-.note b,.warn b,.tip b{display:block;margin-bottom:2px}
-.warn b{color:var(--warn)} .tip b{color:var(--ok)} .note b{color:var(--accent)}
+.note > b:first-child,.warn > b:first-child,.tip > b:first-child{display:block;margin-bottom:2px}
+.warn > b:first-child{color:var(--warn)} .tip > b:first-child{color:var(--ok)} .note > b:first-child{color:var(--accent)}
 .note li,.warn li,.tip li{font-size:11.2px;margin:2px 0}
 
 .pipe{display:flex;align-items:stretch;margin:2px 0 11px}
@@ -111,6 +111,7 @@ p{margin:5px 0;font-size:12.2px}
 
 .badge{font-size:9.6px;padding:1px 6px;border-radius:3px;font-weight:600;white-space:nowrap}
 .b-no{background:#331a17;color:#f08c81} .b-ok{background:#153228;color:#5fd6ae}
+.b-mid{background:#332a12;color:#e6bd5c}
 .swatch{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;margin-right:5px;border:1px solid #0006}
 
 .ph{border:2px dashed #3b4655;border-radius:7px;text-align:center;padding:10px 11px;
@@ -489,6 +490,77 @@ python tools/tem_analysis/selftest.py</code></pre>
     <b>very low contrast</b> in the raw image and cannot be thresholded out — hence segmentation. What makes it a
     good datum is that it spans the whole frame (1029 px of skeleton), the <b>longest</b> line available, so its
     angle carries a standard error of only 0.012°.</p>
+  </div>
+</div></section>
+
+<!-- ============ 10b requirements ============ -->
+<section class="slide" data-t="Five requirements vs status"><div class="fit">
+  <div class="kicker">04 · Requirements</div>
+  <h2>The five measurement requirements → status</h2>
+  <p class="lead">Four of the five are complete and backed by measured data. The fifth already produces numbers, but <b>its definition and the choice of magnitude still need to be agreed</b>.</p>
+  <div class="body">
+    <table class="sm">
+      <thead><tr>
+        <th style="width:4%">#</th><th style="width:19%">Requirement</th><th style="width:17%">Module(s)</th>
+        <th style="width:34%">Key outputs</th><th style="width:15%">Measured (median, n=26)</th><th style="width:11%">Status</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td>1</td><td><b>Leveling &amp; Scale Calibration</b></td>
+          <td>M1 <code>leveling</code><br>+ scale resolution</td>
+          <td><code>angle_deg_image</code> · <code>angle_stderr_deg</code> · <code>rmse</code> · <code>residual_angle_deg_after_rotation</code>; <code>scale_nm_per_px</code> · <code>fov_nm</code> · <code>scale_source</code></td>
+          <td>tilt 0.259°<br>0.0746 nm/px</td>
+          <td><span class="badge b-ok">done</span></td>
+        </tr>
+        <tr>
+          <td>2</td><td><b>SAF Ru Tip ↔ MgO Alignment</b></td>
+          <td>M3 <code>interfaces</code><br>(uses M2's b3/b4)</td>
+          <td><code>a1_b1</code> · <code>a1_b3</code> · <code>a2_b2</code> · <code>a2_b4</code>, each with <code>dx</code>/<code>dy</code>/<code>distance</code> (px + nm)</td>
+          <td>dx ±5.332 nm<br>strictly symmetric</td>
+          <td><span class="badge b-ok">done</span></td>
+        </tr>
+        <tr>
+          <td>3</td><td><b>Ru Tip Waviness</b></td>
+          <td>M4 <code>*_dip</code></td>
+          <td><code>max_downward_deviation</code> · <code>max_downward_arclength</code> · <code>max_abs_deviation</code> · full <code>deviation_profile</code></td>
+          <td>left 0.597 nm<br>right 0.709 nm</td>
+          <td><span class="badge b-ok">done</span></td>
+        </tr>
+        <tr>
+          <td>4</td><td><b>Sensor Barrier Waviness</b></td>
+          <td>M2 <code>mgo_c</code></td>
+          <td><code>rmse</code> · <code>max_residual</code> · <code>perp_rmse</code> · <code>angle_deg_image</code> · <code>fit_length</code> · <code>residual_profile</code></td>
+          <td>rmse 0.045 nm<br>max 0.126 nm</td>
+          <td><span class="badge b-ok">done</span></td>
+        </tr>
+        <tr>
+          <td>5</td><td><b>Junction Bottom Corners</b></td>
+          <td>M5 <code>milling_l/r</code><br>M6 <code>non_mag</code><br>M7 <code>corner_offsets</code></td>
+          <td><code>m1</code>/<code>m2</code> · <code>local_circle.radius</code> · <code>Non_mag1</code>/<code>Non_mag2</code> · corner <code>dx</code>/<code>dy</code>/<code>distance</code></td>
+          <td>R 4.84 / 5.33 nm<br>corner dx ∓1.27 nm</td>
+          <td><span class="badge b-mid">to refine</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="cols c2" style="margin-top:6px">
+      <div class="pane"><div class="warn" style="margin-top:0"><b>What #5 still needs</b>
+      <ol style="margin:3px 0 0 15px">
+        <li><b>The definition of "corner" is unconfirmed.</b> Today it is the milled flank's <b>curvature maximum</b>;
+        if the intent is the <b>intersection of the two straight tails</b>, that is scale-insensitive and steadier,
+        but the numbers would differ systematically</li>
+        <li><b>Curvature magnitude is scale-dependent</b>: spline 4.82 nm vs osculating circle 4.84 nm here
+        (15% apart on synthetic ground truth) — the window the radius is defined over must be agreed</li>
+        <li><b><code>Block_D</code>'s lower edge (blockD1/blockD2) is absent</b> from the current tree; the old
+        requirement 7 was superseded by <code>corner_offsets</code></li>
+        <li>When <code>local_circle.reliable = false</code> there is <b>no fallback value</b> — the image is simply unusable</li>
+      </ol></div></div>
+      <div class="pane"><div class="note" style="margin-top:0"><b>Two numbering schemes — do not mix them</b>
+      The <code>Requirement 1–7</code> comments at the top of <code>measures/*.py</code> are an
+      <b>older internal numbering</b> and do not map one-to-one onto these five:
+      <br>internal 1 → customer 1　|　internal 2, 3 → customer 2, 3　|　internal 4 → customer 4　|
+      <b>internal 5, 6, 7 → all fold into customer #5</b>
+      <br>Which is also why #5 spans three modules and carries the most room for refinement.</div></div>
+    </div>
   </div>
 </div></section>
 

@@ -254,6 +254,109 @@ export const SEG_ARCHITECTURES: SegArchitecture[] = [
   { value: 'FCN', label: 'FCN', logits: 1, defaultCoef: [1], needsBackbone: true, backbones: ['HRNet_W18', 'HRNet_W48'] },
 ];
 
+/**
+ * TorchSeg architectures. Must stay in sync with `_TV_BUILDERS` / `UNet` in
+ * `torchtrain/torchtrain/seg/models.py`.
+ *
+ * `logits` is what makes the shared PaddleSeg loss rule work for torch too: the
+ * torchvision builders attach an auxiliary FCN head when `aux_loss=True`, and
+ * torchtrain enables it exactly when the loss config declares two entries. UNet
+ * and LRASPP emit a single logit and take a single loss.
+ */
+export const TORCH_SEG_ARCHITECTURES: SegArchitecture[] = [
+  {
+    value: 'UNet',
+    label: 'UNet (from scratch)',
+    logits: 1,
+    defaultCoef: [1],
+    needsBackbone: false,
+    backbones: [],
+  },
+  {
+    value: 'DeepLabV3P',
+    label: 'DeepLabV3+ (torchvision, aux head)',
+    logits: 2,
+    defaultCoef: [1, 0.4],
+    needsBackbone: true,
+    backbones: ['ResNet50', 'ResNet101', 'MobileNetV3-Large'],
+  },
+  {
+    value: 'FCN',
+    label: 'FCN (torchvision, aux head)',
+    logits: 2,
+    defaultCoef: [1, 0.4],
+    needsBackbone: true,
+    backbones: ['ResNet50', 'ResNet101'],
+  },
+  {
+    value: 'LRASPP',
+    label: 'LR-ASPP (torchvision, lightweight)',
+    logits: 1,
+    defaultCoef: [1],
+    needsBackbone: true,
+    backbones: ['MobileNetV3-Large'],
+  },
+];
+
+/** Segmentation architecture table for a framework. */
+export function segArchitecturesFor(framework: ConfigFramework): SegArchitecture[] {
+  return framework === 'TorchSeg' ? TORCH_SEG_ARCHITECTURES : SEG_ARCHITECTURES;
+}
+
+/**
+ * TorchDet architectures. Must stay in sync with `DET_ARCHITECTURES` in
+ * `torchtrain/torchtrain/det/models.py`.
+ *
+ * Unlike PaddleDetection there is no separate neck/head to wire: torchvision
+ * builders are named `<arch>_<backbone>` and construct the whole detector, so
+ * the backbone label *is* the variant selector.
+ */
+export interface TorchDetPreset {
+  label: string;
+  architecture: string;
+  backbones: string[];
+  /** Whether COCO-pretrained weights can have their head replaced (transfer). */
+  supportsCocoTransfer: boolean;
+}
+
+export const TORCH_DET_PRESETS: Record<string, TorchDetPreset> = {
+  FasterRCNN: {
+    label: 'Faster R-CNN (two-stage, best accuracy)',
+    architecture: 'FasterRCNN',
+    backbones: ['ResNet50-FPN', 'ResNet50-FPN-v2', 'MobileNetV3-Large-FPN', 'MobileNetV3-Large-320-FPN'],
+    supportsCocoTransfer: true,
+  },
+  RetinaNet: {
+    label: 'RetinaNet (one-stage, focal loss)',
+    architecture: 'RetinaNet',
+    backbones: ['ResNet50-FPN', 'ResNet50-FPN-v2'],
+    supportsCocoTransfer: true,
+  },
+  FCOS: {
+    label: 'FCOS (anchor-free)',
+    architecture: 'FCOS',
+    backbones: ['ResNet50-FPN'],
+    supportsCocoTransfer: true,
+  },
+  SSD: {
+    label: 'SSD (fastest, lower accuracy)',
+    architecture: 'SSD',
+    backbones: ['VGG16', 'MobileNetV3-Large'],
+    // Head replacement is not implemented for SSD upstream, so a COCO request
+    // degrades to ImageNet backbone weights (with a warning at train time).
+    supportsCocoTransfer: false,
+  },
+};
+
+export const TORCH_DET_PRESET_KEYS = Object.keys(TORCH_DET_PRESETS);
+
+/** Where TorchDet initial weights come from; see `build_model` in det/models.py. */
+export const TORCH_PRETRAIN_OPTIONS = [
+  { value: 'COCO', label: 'COCO-pretrained (recommended)' },
+  { value: 'ImageNet', label: 'ImageNet backbone only' },
+  { value: '', label: 'Random initialisation' },
+];
+
 export const SEG_LOSS_TYPES = [
   'CrossEntropyLoss',
   'DiceLoss',
@@ -264,13 +367,16 @@ export const SEG_LOSS_TYPES = [
   'MixedLoss',
 ];
 
-export function segArchitecture(value: string): SegArchitecture | undefined {
-  return SEG_ARCHITECTURES.find((a) => a.value === value);
+export function segArchitecture(
+  value: string,
+  framework: ConfigFramework = 'PaddleSeg',
+): SegArchitecture | undefined {
+  return segArchitecturesFor(framework).find((a) => a.value === value);
 }
 
 /** Expected logits count for an architecture; 1 when unknown. */
-export function segLogitsFor(architecture: string): number {
-  return segArchitecture(architecture)?.logits ?? 1;
+export function segLogitsFor(architecture: string, framework: ConfigFramework = 'PaddleSeg'): number {
+  return segArchitecture(architecture, framework)?.logits ?? 1;
 }
 
 /**
@@ -282,8 +388,9 @@ export function reconcileSegLoss(
   architecture: string,
   types: string[],
   coef: number[],
+  framework: ConfigFramework = 'PaddleSeg',
 ): { segLossTypes: string[]; segLossCoef: number[] } {
-  const arch = segArchitecture(architecture);
+  const arch = segArchitecture(architecture, framework);
   const n = arch?.logits ?? 1;
   const fallbackType = types[0] || 'CrossEntropyLoss';
   const nextTypes = Array.from({ length: n }, (_, i) => types[i] ?? fallbackType);
@@ -307,12 +414,12 @@ export function validateModelParams(
     issues.push({ level: 'error', message: 'num_classes must be at least 1.' });
   }
 
-  if (framework === 'PaddleSeg') {
-    const expected = segLogitsFor(params.architecture);
+  if (framework === 'PaddleSeg' || framework === 'TorchSeg') {
+    const expected = segLogitsFor(params.architecture, framework);
     if (params.segLossTypes.length !== expected) {
       issues.push({
         level: 'error',
-        message: `${params.architecture} emits ${expected} logits during training, but ${params.segLossTypes.length} loss type(s) are configured. PaddleSeg requires them to match exactly.`,
+        message: `${params.architecture} emits ${expected} logits during training, but ${params.segLossTypes.length} loss type(s) are configured. ${framework} requires them to match exactly.`,
       });
     }
     if (params.segLossCoef.length !== params.segLossTypes.length) {
@@ -322,6 +429,37 @@ export function validateModelParams(
       issues.push({
         level: 'warning',
         message: 'Segmentation num_classes normally includes the background class, so it is usually >= 2.',
+      });
+    }
+    const arch = segArchitecture(params.architecture, framework);
+    if (arch?.needsBackbone && params.backbone && !arch.backbones.includes(params.backbone)) {
+      issues.push({
+        level: 'warning',
+        message: `${params.backbone} is not a standard backbone for ${params.architecture}; it will fall back to ${arch.backbones[0]}.`,
+      });
+    }
+    return issues;
+  }
+
+  if (framework === 'TorchDet') {
+    const preset = TORCH_DET_PRESETS[params.architecture];
+    if (!preset) {
+      issues.push({
+        level: 'error',
+        message: `${params.architecture} is not available in TorchDet. Choose one of: ${TORCH_DET_PRESET_KEYS.join(', ')}.`,
+      });
+      return issues;
+    }
+    if (params.backbone && !preset.backbones.includes(params.backbone)) {
+      issues.push({
+        level: 'warning',
+        message: `${params.backbone} is not a valid backbone for ${preset.architecture}; it will fall back to ${preset.backbones[0]}.`,
+      });
+    }
+    if (!preset.supportsCocoTransfer && /^coco$/i.test(params.pretrainWeights)) {
+      issues.push({
+        level: 'warning',
+        message: `${preset.architecture} does not support COCO head replacement; training will fall back to ImageNet backbone weights.`,
       });
     }
     return issues;
@@ -352,6 +490,50 @@ export function validateModelParams(
 // ---------------------------------------------------------------------------
 
 export function defaultModelParams(framework: ConfigFramework): ModelParams {
+  if (framework === 'TorchSeg') {
+    // UNet is the default rather than a pretrained backbone network: this
+    // platform's segmentation datasets are typically a few dozen single-channel
+    // microscopy images, where an ImageNet ResNet overfits quickly.
+    const arch = TORCH_SEG_ARCHITECTURES[0];
+    return {
+      architecture: arch.value,
+      backbone: arch.backbones[0] ?? '',
+      neck: '',
+      head: '',
+      numClasses: 2,
+      normType: 'bn',
+      useEma: false,
+      emaDecay: 0.9998,
+      depthMult: 1,
+      widthMult: 1,
+      segLossTypes: Array.from({ length: arch.logits }, () => 'CrossEntropyLoss'),
+      segLossCoef: [...arch.defaultCoef],
+      segAlignCorners: false,
+      pretrainWeights: '',
+    };
+  }
+
+  if (framework === 'TorchDet') {
+    const preset = TORCH_DET_PRESETS.FasterRCNN;
+    return {
+      architecture: preset.architecture,
+      backbone: preset.backbones[0],
+      neck: '',
+      head: '',
+      numClasses: 1,
+      normType: 'bn',
+      useEma: false,
+      emaDecay: 0.9998,
+      depthMult: 1,
+      widthMult: 1,
+      segLossTypes: [],
+      segLossCoef: [],
+      segAlignCorners: false,
+      // COCO transfer is the single biggest accuracy win on small datasets.
+      pretrainWeights: 'COCO',
+    };
+  }
+
   if (framework === 'PaddleSeg') {
     const arch = SEG_ARCHITECTURES[0];
     return {
@@ -463,14 +645,23 @@ ${backboneBlock}${neckBlock ? `\n${neckBlock}` : ''}
 ${headBlock}${multipliers ? `\n${multipliers}` : ''}`;
 }
 
-function generateSegModelYaml(p: ModelParams, name: string): string {
-  const arch = segArchitecture(p.architecture);
+function generateSegModelYaml(
+  p: ModelParams,
+  name: string,
+  framework: ConfigFramework = 'PaddleSeg',
+): string {
+  const arch = segArchitecture(p.architecture, framework);
   const needsBackbone = arch?.needsBackbone ?? false;
+  const isTorch = framework === 'TorchSeg';
 
   const modelLines = [`type: ${p.architecture}`, `num_classes: ${p.numClasses}`];
   if (p.segAlignCorners) modelLines.push('align_corners: True');
   if (needsBackbone && p.backbone) {
-    modelLines.push('backbone:', `  type: ${p.backbone}`, `  pretrained: ${p.pretrainWeights || 'Null'}`);
+    // torchtrain reads `pretrained: imagenet` as "download ImageNet backbone
+    // weights"; PaddleSeg expects a URL or `Null`. Default accordingly so
+    // neither framework silently trains a pretrained backbone from scratch.
+    const pretrained = p.pretrainWeights || (isTorch ? 'imagenet' : 'Null');
+    modelLines.push('backbone:', `  type: ${p.backbone}`, `  pretrained: ${pretrained}`);
   } else if (p.pretrainWeights) {
     modelLines.push(`pretrained: ${p.pretrainWeights}`);
   }
@@ -481,13 +672,57 @@ function generateSegModelYaml(p: ModelParams, name: string): string {
     `coef: [${p.segLossCoef.join(', ')}]`,
   ];
 
-  return `# ${name}
+  const header = isTorch
+    ? `# ${name}
+# Model configuration generated by AutoTrain (TorchSeg / PyTorch)
+# ${p.architecture} emits ${arch?.logits ?? '?'} logit(s) during training, so
+# loss.types must have exactly that many entries. torchtrain attaches the
+# torchvision auxiliary head exactly when two entries are configured.`
+    : `# ${name}
 # Model configuration generated by AutoTrain (PaddleSeg)
 # ${p.architecture} emits ${arch?.logits ?? '?'} logit(s) during training, so
-# loss.types must have exactly that many entries.
+# loss.types must have exactly that many entries.`;
+
+  return `${header}
 
 ${block('model', modelLines)}
 ${block('loss', lossLines)}`;
+}
+
+/**
+ * TorchDet model config.
+ *
+ * Kept separate from `generateDetectionModelYaml` rather than parameterised:
+ * torchvision builders construct the whole detector from `<arch>_<backbone>`, so
+ * there is no neck/head to wire and none of PaddleDetection's component blocks
+ * (`CSPResNet:`, `PPYOLOEHead:`, `norm_type`, `depth_mult`) mean anything. Emitting
+ * them would produce a config that reads as if it configured something.
+ */
+function generateTorchDetModelYaml(p: ModelParams, name: string): string {
+  const preset = TORCH_DET_PRESETS[p.architecture] ?? TORCH_DET_PRESETS.FasterRCNN;
+  const backbone = preset.backbones.includes(p.backbone) ? p.backbone : preset.backbones[0];
+  const pretrain = p.pretrainWeights || '';
+
+  return `# ${name}
+# Model configuration generated by AutoTrain (TorchDet / PyTorch)
+#
+# ${preset.label}
+# torchvision builds the full detector from architecture + backbone, so there is
+# no separate neck/head block. \`num_classes\` is set by the dataset config and
+# counts foreground classes only (PaddleDetection's convention); torchtrain adds
+# the background class itself.
+#
+# pretrain_weights:
+#   COCO      COCO-pretrained detector with its classifier replaced${preset.supportsCocoTransfer ? '' : ' (unsupported for SSD; falls back to ImageNet)'}
+#   ImageNet  ImageNet backbone only
+#   <path>.pt a checkpoint produced by this platform
+#   (empty)   random initialisation
+
+architecture: ${preset.architecture}
+
+${preset.architecture}:
+  backbone: ${backbone}
+${pretrain ? `\npretrain_weights: ${pretrain}\n` : ''}`;
 }
 
 function generateClasModelYaml(p: ModelParams, name: string): string {
@@ -515,9 +750,12 @@ export function generateModelYaml(
 ): string {
   switch (framework) {
     case 'PaddleSeg':
-      return generateSegModelYaml(params, modelName);
+    case 'TorchSeg':
+      return generateSegModelYaml(params, modelName, framework);
     case 'PaddleClas':
       return generateClasModelYaml(params, modelName);
+    case 'TorchDet':
+      return generateTorchDetModelYaml(params, modelName);
     default:
       return generateDetectionModelYaml(params, modelName);
   }

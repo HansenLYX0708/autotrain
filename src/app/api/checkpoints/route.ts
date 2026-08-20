@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getWorkDir } from '@/lib/frameworks';
+import { frameworkMeta, getWorkDir } from '@/lib/frameworks';
 
 // Simple YAML parser for save_dir extraction (avoiding js-yaml dependency issues)
 function extractSaveDir(yamlContent: string): string | null {
@@ -22,7 +22,8 @@ function extractSaveDir(yamlContent: string): string | null {
   return null;
 }
 
-// PaddleSeg keeps save_dir out of the YAML and passes it via CLI:
+// PaddleSeg, TorchSeg and TorchDet keep save_dir out of the YAML and pass it via
+// CLI:
 //   ... tools/train.py --config "..." --save_dir "H:\...\jobs\<name>" ...
 // This extractor recovers it from a stored command string so historical jobs
 // (whose `outputDir` still holds only the relative fallback) can still resolve
@@ -73,10 +74,10 @@ export async function GET(request: NextRequest) {
 
       framework = job.project?.framework || 'PaddleDetection';
 
-      // PaddleSeg: save_dir lives on the CLI (`--save_dir "..."`), not in the
-      // YAML. Check the stored command first so freshly-trained Seg jobs
+      // For frameworks that take save_dir on the CLI (`--save_dir "..."`) rather
+      // than in the YAML, check the stored command first so freshly-trained jobs
       // resolve without users having to manually type a path.
-      if (framework === 'PaddleSeg' && !saveDir) {
+      if (frameworkMeta(framework).saveDirOnCli && !saveDir) {
         const fromCmd = extractSaveDirFromCommand(job.command);
         if (fromCmd) saveDir = fromCmd;
       }
@@ -134,45 +135,50 @@ export async function GET(request: NextRequest) {
       exportedFiles?: string[];
     }> = [];
 
-    if (framework === 'PaddleSeg') {
-      // PaddleSeg layout:
-      //   {save_dir}/best_model/model.pdparams
-      //   {save_dir}/iter_{N}/model.pdparams  (also model.pdopt beside it)
+    const meta = frameworkMeta(framework);
+
+    if (meta.checkpointLayout === 'nested') {
+      // Nested layout (PaddleSeg, TorchSeg, TorchDet):
+      //   {save_dir}/best_model/<weightFile>
+      //   {save_dir}/iter_{N}/<weightFile>     (segmentation)
+      //   {save_dir}/epoch_{N}/<weightFile>    (TorchDet)
+      //   {save_dir}/model_final/<weightFile>  (TorchDet, last epoch)
       // We surface one entry per subfolder, using the subfolder name as the
-      // checkpoint's display name and its `model.pdparams` as the target
-      // weights path (this is what `val.py --model_path` / `predict.py
-      // --model_path` expect).
+      // checkpoint's display name and its weight file as the target path (this
+      // is what `val.py --model_path` / `predict.py --model_path` expect).
       const entries = fs.readdirSync(fullPath, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
-        const weightsFile = path.join(fullPath, entry.name, 'model.pdparams');
+        const weightsFile = path.join(fullPath, entry.name, meta.weightFile);
         if (!fs.existsSync(weightsFile)) continue;
 
         const stats = fs.statSync(weightsFile);
-        const iterMatch = entry.name.match(/iter[_-]?(\d+)/i);
-        const iter = iterMatch ? parseInt(iterMatch[1], 10) : undefined;
+        // `iter_N` for segmentation, `epoch_N` for TorchDet.
+        const stepMatch = entry.name.match(/(?:iter|epoch)[_-]?(\d+)/i);
+        const step = stepMatch ? parseInt(stepMatch[1], 10) : undefined;
 
-        // Preserve absolute vs relative semantics used by PaddleDetection
-        // branch: when save_dir was absolute, keep the full path; otherwise
-        // join under save_dir so downstream commands stay portable.
+        // Preserve absolute vs relative semantics used by the flat branch: when
+        // save_dir was absolute, keep the full path; otherwise join under
+        // save_dir so downstream commands stay portable.
         const relativePath = path.isAbsolute(saveDir)
           ? weightsFile
-          : path.join(saveDir, entry.name, 'model.pdparams');
+          : path.join(saveDir, entry.name, meta.weightFile);
 
         checkpoints.push({
-          name: entry.name, // e.g. "best_model" or "iter_20000"
+          name: entry.name, // e.g. "best_model", "iter_20000", "epoch_11"
           path: weightsFile,
           relativePath: relativePath.replace(/\\/g, '/'),
           size: stats.size,
           mtime: stats.mtime.toISOString(),
-          epoch: iter,
+          epoch: step,
         });
       }
 
-      // Sort: best_model first, then iter_N by iteration desc, then mtime desc.
+      // Sort: best_model, then model_final, then step folders desc, then mtime.
+      const rank = (name: string) => (name === 'best_model' ? 0 : name === 'model_final' ? 1 : 2);
       checkpoints.sort((a, b) => {
-        if (a.name === 'best_model') return -1;
-        if (b.name === 'best_model') return 1;
+        const byRank = rank(a.name) - rank(b.name);
+        if (byRank !== 0) return byRank;
         if (a.epoch !== undefined && b.epoch !== undefined) return b.epoch - a.epoch;
         return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
       });

@@ -50,6 +50,7 @@ import { toast } from '@/hooks/use-toast'
 import { ConfigYamlPane, yamlSyntaxError } from '@/components/config-yaml-pane'
 import {
   asConfigFramework,
+  countsIterations,
   defaultTrainingParams,
   generateTrainingYaml,
   parseTrainingParams,
@@ -204,7 +205,7 @@ export function TrainingPage() {
     asConfigFramework(projects.find((p) => p.id === projectId)?.framework)
 
   const dialogFramework = frameworkOf(configProjectId)
-  const isSeg = dialogFramework === 'PaddleSeg'
+  const isSeg = countsIterations(dialogFramework)
   const shows = (field: Parameters<typeof supportsField>[1]) => supportsField(dialogFramework, field)
 
   const generatedYaml = useMemo(
@@ -450,7 +451,7 @@ export function TrainingPage() {
   /** Short summary line for a config card, in the unit its framework uses. */
   const configSummary = (config: TrainingConfig) => {
     const framework = asConfigFramework(config.project?.framework)
-    return framework === 'PaddleSeg'
+    return countsIterations(framework)
       ? `${config.iters ?? config.epoch} iters`
       : `${config.epoch} epochs`
   }

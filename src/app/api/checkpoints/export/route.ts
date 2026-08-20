@@ -4,8 +4,9 @@ import { spawn, exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
-import { requireAuth, buildUserFilter, getCurrentUser } from '@/lib/auth';
+import { requireAuth } from '@/lib/auth';
 import { logActivity } from '@/lib/activity-log';
+import { frameworkMeta, getWorkDir, resolvePythonPath } from '@/lib/frameworks';
 
 const execAsync = promisify(exec);
 
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest) {
     if (authResult instanceof NextResponse) {
       return authResult;
     }
-    const { userId, role } = authResult;
+    const { userId } = authResult;
 
     // Get user info
     const user = await db.user.findUnique({
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest) {
     const job = await db.trainingJob.findUnique({
       where: { id: jobId },
       include: {
-        project: { select: { id: true, name: true } },
+        project: { select: { id: true, name: true, framework: true } },
         config: true,
       },
     });
@@ -51,89 +52,79 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
 
-    // Get system config
+    // Get system config. This route used to hardcode PaddleDetection's repo and
+    // `tools/export_model.py`, so exporting a PaddleSeg or torch checkpoint ran
+    // the wrong script in the wrong repository.
     const systemConfig = await db.systemConfig.findFirst();
-    if (!systemConfig?.paddleDetectionPath) {
+    const framework = job.project?.framework || 'PaddleDetection';
+    const meta = frameworkMeta(framework);
+    const workDir = getWorkDir(framework, systemConfig);
+
+    if (!meta.scripts.export) {
       return NextResponse.json(
-        { error: 'PaddleDetection path not configured' },
+        { error: `${framework} has no export entrypoint in this platform.` },
+        { status: 400 }
+      );
+    }
+    if (!workDir) {
+      return NextResponse.json(
+        { error: `${framework} path not configured in Settings.` },
         { status: 400 }
       );
     }
 
-    const paddleDetectionPath = systemConfig.paddleDetectionPath;
-
-    // Get Python path based on job's GPU configuration
-    let gpuMappings = (systemConfig as any).gpuPythonMappings;
-    let pythonPath = 'python';
-
-    // Parse gpuPythonMappings if it's a JSON string
-    if (gpuMappings && typeof gpuMappings === 'string') {
-      try {
-        gpuMappings = JSON.parse(gpuMappings);
-        console.log('[Export Debug] Parsed gpuPythonMappings:', gpuMappings);
-      } catch (e) {
-        console.error('[Export] Failed to parse gpuPythonMappings:', e);
-        gpuMappings = null;
-      }
+    // GPU the job ran on. `trainingParams` is a JSON *string*, so the previous
+    // `(job.trainingParams as any)?.gpuIds` was always undefined and every export
+    // silently used GPU 0's interpreter.
+    let jobParams: Record<string, unknown> = {};
+    try {
+      jobParams = job.trainingParams ? JSON.parse(job.trainingParams as string) : {};
+    } catch {
+      // Fall through to GPU 0.
     }
+    const primaryGpuId = String((jobParams.gpuIds as string) || '0').split(',')[0].trim();
 
-    // Get GPU ID from job's trainingParams (default to '0' if not found)
-    const jobGpuId = (job.trainingParams as any)?.gpuIds || '0';
-    const primaryGpuId = String(jobGpuId).split(',')[0].trim();
-
-    console.log('[Export Debug] GPU Mappings type:', typeof gpuMappings);
-    console.log('[Export Debug] GPU Mappings:', gpuMappings);
-    console.log('[Export Debug] Primary GPU ID:', primaryGpuId);
-
-    if (gpuMappings) {
-      // Handle array format: [{"gpuId": "0", "pythonPath": "..."}, ...]
-      if (Array.isArray(gpuMappings)) {
-        const mapping = gpuMappings.find((m: any) => String(m.gpuId) === primaryGpuId);
-        console.log('[Export Debug] Found array mapping:', mapping);
-        if (mapping?.pythonPath) {
-          pythonPath = mapping.pythonPath;
-        }
-      }
-      // Handle object format: {"0": {"pythonPath": "..."}, ...}
-      else if (typeof gpuMappings === 'object') {
-        const mapping = gpuMappings[primaryGpuId] || 
-                        gpuMappings[parseInt(primaryGpuId)] || 
-                        gpuMappings['0'] || 
-                        gpuMappings[0];
-        console.log('[Export Debug] Found object mapping:', mapping);
-        
-        pythonPath = mapping;
-        
-      }
+    const { pythonPath: resolvedPython, source: pythonSource } = resolvePythonPath(
+      framework,
+      primaryGpuId,
+      systemConfig,
+    );
+    if (!resolvedPython) {
+      return NextResponse.json(
+        {
+          error: `No Python environment configured for ${framework}. ` +
+            `Set one under Settings → Framework Python environments (or GPU ${primaryGpuId}).`,
+        },
+        { status: 400 }
+      );
     }
+    const pythonPath = resolvedPython;
 
-    // Use provided config path or find the training config file path
+    // Use provided config path, else the job's own merged config.
     let configPath: string | null = providedConfigPath || null;
 
-    // If no config path provided, try to find it
     if (!configPath) {
-      const userConfigsPath = process.env.USER_CONFIGS_PATH;
-      const config = job.config;
-
-      if (userConfigsPath && user?.username && config) {
-        // Try to find the config file in user's directory
-        const configDir = path.join(userConfigsPath, user.username, 'training_configs');
-        const configName = job.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase();
-        const possibleConfigPath = path.join(configDir, `${configName}.yml`);
-        
-        if (fs.existsSync(possibleConfigPath)) {
-          configPath = possibleConfigPath;
-        }
+      const userConfigsPath = (systemConfig as any)?.userConfigsPath || process.env.USER_CONFIGS_PATH;
+      // `job.configPath` is the merged job config written at creation time; it is
+      // the only config guaranteed to describe what was actually trained.
+      if (job.configPath) {
+        const candidate = path.isAbsolute(job.configPath)
+          ? job.configPath
+          : path.join(userConfigsPath || '', job.configPath);
+        if (fs.existsSync(candidate)) configPath = candidate;
       }
 
-      // Fallback: create a temporary config from yamlConfig
-      if (!configPath && config?.yamlConfig) {
+      // Fallback: materialise the merged YAML stored on the job. Prefer it over
+      // `job.config.yamlConfig`, which is only the *training* fragment and lacks
+      // the dataset and model blocks the export script needs.
+      const yaml = job.yamlConfig || job.config?.yamlConfig;
+      if (!configPath && yaml) {
         const tempDir = path.join(process.cwd(), 'temp');
         if (!fs.existsSync(tempDir)) {
           fs.mkdirSync(tempDir, { recursive: true });
         }
         configPath = path.join(tempDir, `export_config_${job.id}.yml`);
-        fs.writeFileSync(configPath, config.yamlConfig, 'utf-8');
+        fs.writeFileSync(configPath, yaml, 'utf-8');
       }
     }
 
@@ -154,18 +145,29 @@ export async function POST(request: NextRequest) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    // Build export command
-    // Use the checkpointPath directly as provided by frontend (same as frontend)
+    // Build export command. Args are passed as an argv array (never a shell
+    // string), so paths containing spaces need no quoting and cannot inject.
     const absoluteConfigPath = path.resolve(configPath);
     const absoluteCheckpointPath = checkpointPath; // Use frontend-provided path directly
     const absoluteOutputDir = path.resolve(outputDir);
-    const args = [
-      'tools/export_model.py',
-      '-c', absoluteConfigPath,
-      '-o', `weights=${absoluteCheckpointPath}`,
-      'trt=True',
-      '--output_dir', absoluteOutputDir,
-    ];
+
+    const args = meta.cliStyle === 'config-flags'
+      ? [
+          meta.scripts.export,
+          '--config', absoluteConfigPath,
+          '--model_path', absoluteCheckpointPath,
+          '--save_dir', absoluteOutputDir,
+          // torchtrain writes TorchScript by default; PaddleSeg ignores --format.
+          ...(meta.family === 'torch' ? ['--format', String(body.format || 'torchscript')] : []),
+        ]
+      : [
+          meta.scripts.export,
+          '-c', absoluteConfigPath,
+          '-o', `weights=${absoluteCheckpointPath}`,
+          // TensorRT-friendly export; PaddleDetection-only knob.
+          'trt=True',
+          '--output_dir', absoluteOutputDir,
+        ];
 
     // Log activity
     await logActivity(userId, {
@@ -173,12 +175,13 @@ export async function POST(request: NextRequest) {
       entityType: 'checkpoint',
       entityId: jobId,
       entityName: checkpointName,
-      details: { jobName: job.name, outputDir, pythonPath, cwd: paddleDetectionPath },
+      details: { jobName: job.name, outputDir, pythonPath, cwd: workDir, framework },
     });
 
     // Debug logging
-    console.log('[Export Debug] Python Path:', pythonPath);
-    console.log('[Export Debug] Working Directory:', paddleDetectionPath);
+    console.log('[Export Debug] Framework:', framework);
+    console.log('[Export Debug] Python Path:', pythonPath, `(from ${pythonSource})`);
+    console.log('[Export Debug] Working Directory:', workDir);
     console.log('[Export Debug] Config Path:', absoluteConfigPath);
     console.log('[Export Debug] Checkpoint Path:', absoluteCheckpointPath);
     console.log('[Export Debug] Output Dir:', absoluteOutputDir);
@@ -187,8 +190,8 @@ export async function POST(request: NextRequest) {
     // Execute export command
     return new Promise((resolve) => {
       const exportProcess = spawn(pythonPath, args, {
-        cwd: paddleDetectionPath,
-        env: { ...process.env, PYTHONPATH: paddleDetectionPath },
+        cwd: workDir,
+        env: { ...process.env, PYTHONPATH: workDir, PYTHONUNBUFFERED: '1' },
       });
 
       let stdout = '';

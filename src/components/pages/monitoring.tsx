@@ -98,13 +98,17 @@ interface TrainingLog {
   ips: number | null
   memReserved: number | null
   memAllocated: number | null
-  // PaddleSeg evaluation metrics
+  // Segmentation evaluation metrics (PaddleSeg, TorchSeg)
   mIoU: number | null
   acc: number | null
   kappa: number | null
   dice: number | null
+  // Detection evaluation metrics, parsed from the COCO summary block
+  // (PaddleDetection, TorchDet). mAP is AP@[0.50:0.95], mAP50 is AP@0.50.
+  mAP: number | null
+  mAP50: number | null
   // JSON string: {"iou":[..],"precision":[..],"recall":[..]} — populated on
-  // PaddleSeg EVAL rows only. Kept as JSON to accommodate variable
+  // segmentation EVAL rows only. Kept as JSON to accommodate variable
   // num_classes without schema changes.
   classMetrics: string | null
   rawLog: string | null
@@ -167,7 +171,7 @@ const lrChartConfig = {
   },
 } satisfies ChartConfig
 
-// PaddleSeg evaluation metrics chart config
+// Segmentation evaluation metrics chart config (PaddleSeg, TorchSeg)
 const segMetricChartConfig = {
   mIoU: {
     label: "mIoU",
@@ -184,6 +188,20 @@ const segMetricChartConfig = {
   dice: {
     label: "Dice",
     color: "var(--chart-4)",
+  },
+} satisfies ChartConfig
+
+// Detection evaluation metrics chart config (PaddleDetection, TorchDet).
+// Detection jobs previously had no evaluation chart at all: the COCO summary
+// block was printed but never parsed, so only the loss curve was visible.
+const detMetricChartConfig = {
+  mAP: {
+    label: "mAP@0.5:0.95",
+    color: "var(--chart-1)",
+  },
+  mAP50: {
+    label: "mAP@0.5",
+    color: "var(--chart-2)",
   },
 } satisfies ChartConfig
 
@@ -339,7 +357,7 @@ export function MonitoringPage() {
       learningRate: log.learningRate,
     }))
 
-  // PaddleSeg evaluation metrics over successive evaluations
+  // Segmentation evaluation metrics over successive evaluations
   const segMetricChartData = logs
     .filter(log => log.mIoU !== null)
     .map((log, i) => ({
@@ -348,6 +366,16 @@ export function MonitoringPage() {
       acc: log.acc,
       kappa: log.kappa,
       dice: log.dice,
+    }))
+
+  // Detection evaluation metrics over successive evaluations
+  const detMetricChartData = logs
+    .filter(log => log.mAP !== null || log.mAP50 !== null)
+    .map((log, i) => ({
+      step: i + 1,
+      epoch: log.epoch,
+      mAP: log.mAP,
+      mAP50: log.mAP50,
     }))
 
   // Filter logs for raw log viewer
@@ -364,10 +392,13 @@ export function MonitoringPage() {
   // Get latest log for current metrics
   const latestLog = logs[logs.length - 1]
 
-  // Latest PaddleSeg EVAL row (has mIoU + optional per-class metrics). Kept
+  // Latest segmentation EVAL row (has mIoU + optional per-class metrics). Kept
   // separate from `latestLog` because EVAL rows are interleaved with far
   // more numerous TRAIN rows; the last TRAIN row won't have mIoU set.
   const latestEvalLog = [...logs].reverse().find((l) => l.mIoU !== null)
+
+  // Same idea for detection: the newest row carrying COCO metrics.
+  const latestDetEvalLog = [...logs].reverse().find((l) => l.mAP !== null || l.mAP50 !== null)
 
   // Parse latest per-class metrics JSON blob into arrays (safe: catch bad
   // JSON so a corrupt row doesn't take down the page).
@@ -660,7 +691,53 @@ export function MonitoringPage() {
             </Card>
           </div>
 
-          {/* PaddleSeg Evaluation Metrics */}
+          {/* Detection Evaluation Metrics (PaddleDetection, TorchDet) */}
+          {detMetricChartData.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Detection Metrics</CardTitle>
+                <CardDescription>
+                  COCO mAP across evaluations
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="p-4 rounded-lg border bg-muted/50">
+                    <div className="text-sm text-muted-foreground mb-1">Best mAP@0.5:0.95</div>
+                    <div className="text-2xl font-bold">
+                      {selectedJob?.bestMetric?.toFixed(4) ?? 'N/A'}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-lg border bg-muted/50">
+                    <div className="text-sm text-muted-foreground mb-1">Best Checkpoint</div>
+                    <div className="text-2xl font-bold">
+                      epoch {selectedJob?.bestIter ?? '—'}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-lg border bg-muted/50">
+                    <div className="text-sm text-muted-foreground mb-1">Latest mAP@0.5</div>
+                    <div className="text-2xl font-bold">
+                      {latestDetEvalLog?.mAP50?.toFixed(4) ?? 'N/A'}
+                    </div>
+                  </div>
+                </div>
+
+                <ChartContainer config={detMetricChartConfig} className="h-[300px] w-full">
+                  <LineChart data={detMetricChartData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="step" className="text-xs" />
+                    <YAxis className="text-xs" domain={[0, 1]} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Legend />
+                    <Line type="monotone" dataKey="mAP" stroke="var(--chart-1)" strokeWidth={2} dot={false} name="mAP@0.5:0.95" />
+                    <Line type="monotone" dataKey="mAP50" stroke="var(--chart-2)" strokeWidth={1.5} dot={false} name="mAP@0.5" />
+                  </LineChart>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Segmentation Evaluation Metrics (PaddleSeg, TorchSeg) */}
           {segMetricChartData.length > 0 && (
             <Card>
               <CardHeader>
@@ -671,7 +748,7 @@ export function MonitoringPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 {/* Best checkpoint summary — sourced from EVAL "best mIoU (X)
-                    was saved at iter N" line. Only shown for PaddleSeg jobs
+                    was saved at iter N" line. Only shown for segmentation jobs
                     that have recorded at least one eval. */}
                 {(selectedJob?.bestMetric !== null && selectedJob?.bestMetric !== undefined) && (
                   <div className="grid gap-4 md:grid-cols-3">

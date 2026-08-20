@@ -4,7 +4,8 @@ import { spawn } from "child_process";
 import { exec } from "child_process";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentUser, notFoundOrDenied, requireOwnedScope } from "@/lib/auth";
-import { getWorkDir } from "@/lib/frameworks";
+import { frameworkMeta, getWorkDir, isSegmentation, isTorch, resolvePythonPath } from "@/lib/frameworks";
+import * as path from "path";
 import {
   createParserState,
   feed as feedParser,
@@ -23,18 +24,18 @@ const execAsync = promisify(exec);
  * `tools/train.py` with a cryptic `ModuleNotFoundError: No module named
  * 'paddleseg'` — instead we fail-fast with an actionable message.
  *
+ * This matters most for the torch frameworks: a Paddle environment has no
+ * `torch` and vice versa, so pointing a TorchSeg job at the default per-GPU
+ * (Paddle) interpreter is an easy mistake with an unhelpful failure mode.
+ *
  * Returns `null` when the env is ready, or a user-facing error string.
  */
 async function checkFrameworkModuleAvailable(
   pythonPath: string,
   framework: string,
 ): Promise<string | null> {
-  const moduleName =
-    framework === "PaddleSeg"
-      ? "paddleseg"
-      : framework === "PaddleClas"
-      ? "ppcls"
-      : "ppdet";
+  const meta = frameworkMeta(framework);
+  const moduleName = meta.pythonModule;
   try {
     // `find_spec` locates the package without importing it (fast + side-effect
     // free). If it returns None, argparse-level failure is guaranteed.
@@ -46,9 +47,11 @@ async function checkFrameworkModuleAvailable(
     if (err?.code === 2) {
       return (
         `Python environment at "${pythonPath}" does not have the ${framework} ` +
-        `package installed (import "${moduleName}" failed). ` +
-        `Activate that env and run: pip install ${moduleName}` +
-        (framework === "PaddleSeg" ? "  (or `pip install -e .` from the PaddleSeg repo root)" : "")
+        `package installed (import "${moduleName}" failed). ${meta.installHint}` +
+        (meta.family === "torch"
+          ? `  Tip: set a per-framework interpreter under Settings → "Framework Python environments" ` +
+            `so ${framework} jobs do not use the PaddlePaddle environment.`
+          : "")
       );
     }
     return (
@@ -68,39 +71,31 @@ const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
 // into the DB, keeping the routing logic in one place.
 const jobParserStates = new Map<string, JobParserState>();
 
-// Helper function to get Python path for a job
-async function getPythonPathForJob(job: any): Promise<string> {
-  const systemConfig = await db.systemConfig.findFirst();
-  
-  // Parse training params for GPU info
+/** Primary GPU index a job was configured with. */
+function primaryGpuOf(job: any): { gpuIdsStr: string; primaryGpuId: number } {
   let trainingParams: Record<string, unknown> = {};
   try {
-    trainingParams = job?.trainingParams 
-      ? JSON.parse(job.trainingParams as string) 
-      : {};
+    trainingParams = job?.trainingParams ? JSON.parse(job.trainingParams as string) : {};
   } catch {
-    // Ignore parse errors
+    // A malformed params blob should not stop a job from starting on GPU 0.
   }
-  
   const gpuIdsStr = (trainingParams.gpuIds as string) || '0';
-  const gpuIds = gpuIdsStr.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
-  const primaryGpuId = gpuIds[0] || 0;
-  
-  let pythonPath = 'python';
-  
-  if (systemConfig?.gpuPythonMappings) {
-    try {
-      const gpuMappings = JSON.parse(systemConfig.gpuPythonMappings) as Record<string, string>;
-      const gpuSpecificPath = gpuMappings[primaryGpuId.toString()];
-      if (gpuSpecificPath && gpuSpecificPath.trim()) {
-        pythonPath = gpuSpecificPath.trim();
-      }
-    } catch (e) {
-      console.error(`Failed to parse GPU Python mappings:`, e);
-    }
-  }
-  
-  return pythonPath;
+  const gpuIds = gpuIdsStr.split(',').map((id) => parseInt(id.trim(), 10)).filter((id) => !isNaN(id));
+  return { gpuIdsStr, primaryGpuId: gpuIds[0] || 0 };
+}
+
+/**
+ * Python interpreter for a job, for display purposes (GET responses).
+ *
+ * Falls back to a bare `python` so the UI has something to show; the start path
+ * below refuses to run without an explicit mapping instead.
+ */
+async function getPythonPathForJob(job: any): Promise<string> {
+  const systemConfig = await db.systemConfig.findFirst();
+  const { primaryGpuId } = primaryGpuOf(job);
+  const framework = job?.project?.framework;
+  const { pythonPath } = resolvePythonPath(framework, primaryGpuId, systemConfig);
+  return pythonPath || 'python';
 }
 
 // GET /api/training-jobs/[id] - Get a single training job
@@ -204,7 +199,19 @@ export async function GET(
     // Get Python path for this job
     const pythonPath = await getPythonPathForJob(job);
 
-    return NextResponse.json({ ...job, pythonPath });
+    // Resolve the stored (possibly relative) config path against
+    // `userConfigsPath`, the same way the list endpoint does. Without this a
+    // caller working from a single job has only a relative path, and handing it
+    // to `val.py`/`predict.py` (which run with cwd = the framework repo) fails
+    // with "Config file not found".
+    const systemConfig = await db.systemConfig.findFirst();
+    const userConfigsPath = (systemConfig as any)?.userConfigsPath;
+    const absoluteConfigPath =
+      userConfigsPath && job.configPath && !path.isAbsolute(job.configPath)
+        ? path.join(userConfigsPath, job.configPath)
+        : job.configPath;
+
+    return NextResponse.json({ ...job, pythonPath, absoluteConfigPath });
   } catch (error) {
     console.error("Error fetching training job:", error);
     return NextResponse.json(
@@ -310,28 +317,24 @@ export async function PUT(
       
       // Get system config for paths
       const systemConfig = await db.systemConfig.findFirst();
-      
-      // Parse GPU IDs from training params
+
+      const jobFramework = existingJob.project?.framework || "PaddleDetection";
       const gpuIdsStr = (trainingParams.gpuIds as string) || '0';
       const gpuIds = gpuIdsStr.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
       const primaryGpuId = gpuIds[0] || 0;
-      
-      // Determine Python path based on GPU mapping - MUST be configured
-      let pythonPath: string | null = null;
-      
-      if (systemConfig?.gpuPythonMappings) {
-        try {
-          const gpuMappings = JSON.parse(systemConfig.gpuPythonMappings) as Record<string, string>;
-          const gpuSpecificPath = gpuMappings[primaryGpuId.toString()];
-          if (gpuSpecificPath && gpuSpecificPath.trim()) {
-            pythonPath = gpuSpecificPath.trim();
-            console.log(`[Job ${id}] Using GPU ${primaryGpuId} specific Python path: ${pythonPath}`);
-          }
-        } catch (e) {
-          console.error(`[Job ${id}] Failed to parse GPU Python mappings:`, e);
-        }
+
+      // Resolve the interpreter framework-first, then per-GPU. A torch framework
+      // cannot run in a PaddlePaddle env (and vice versa), so the per-framework
+      // mapping has to win over the historical per-GPU one.
+      const { pythonPath, source: pythonSource } = resolvePythonPath(
+        jobFramework,
+        primaryGpuId,
+        systemConfig,
+      );
+      if (pythonPath) {
+        console.log(`[Job ${id}] Python from ${pythonSource}: ${pythonPath}`);
       }
-      
+
       console.log(`[Job ${id}] Starting training...`);
       console.log(`[Job ${id}] Command: ${existingJob.command}`);
       console.log(`[Job ${id}] System config found: ${!!systemConfig}`);
@@ -348,12 +351,16 @@ export async function PUT(
         updateData.errorMessage = "System configuration not found. Please configure paths in Settings.";
         updateData.completedAt = new Date();
       } else if (!pythonPath) {
-        console.error(`[Job ${id}] No Python path configured for GPU ${primaryGpuId}`);
+        console.error(`[Job ${id}] No Python path configured for ${jobFramework} / GPU ${primaryGpuId}`);
         updateData.status = "failed";
-        updateData.errorMessage = `No Python environment configured for GPU ${primaryGpuId}. Please configure GPU Python mapping in Settings.`;
+        updateData.errorMessage = isTorch(jobFramework)
+          ? `No Python environment configured for ${jobFramework}. Add a "Framework Python environments" ` +
+            `entry in Settings pointing at an environment that has PyTorch installed ` +
+            `(the per-GPU mapping normally points at a PaddlePaddle environment, which cannot run torch jobs).`
+          : `No Python environment configured for GPU ${primaryGpuId}. Please configure GPU Python mapping in Settings.`;
         updateData.completedAt = new Date();
       } else {
-        const framework = existingJob.project?.framework || "PaddleDetection";
+        const framework = jobFramework;
         // Route to the correct framework working directory. Previously this
         // ternary only handled PaddleClas vs PaddleDetection and silently fell
         // through to `paddleDetectionPath` for PaddleSeg jobs, which meant the
@@ -705,7 +712,7 @@ function startTrainingProcess(
     // per-framework parser. Zero, one, or many rows may come back per chunk.
     const rows = feedParser(parserState, output);
     for (const row of rows) {
-      await writeParsedLog(jobId, row);
+      await writeParsedLog(jobId, row, framework);
     }
   });
 
@@ -729,7 +736,7 @@ function startTrainingProcess(
     if (tailState) {
       try {
         const tail = flushParser(tailState);
-        for (const row of tail) await writeParsedLog(jobId, row);
+        for (const row of tail) await writeParsedLog(jobId, row, framework);
       } catch (e) {
         console.error(`[Job ${jobId}] parser flush failed:`, e);
       }
@@ -801,13 +808,26 @@ function startTrainingProcess(
  * log row is worth much less than a training run that dies because a DB
  * connection blipped.
  */
-async function writeParsedLog(jobId: string, log: ParsedTrainLog): Promise<void> {
+async function writeParsedLog(
+  jobId: string,
+  log: ParsedTrainLog,
+  framework?: string | null,
+): Promise<void> {
   try {
     // 1. Roll the TrainingJob progress snapshot forward. Only touch columns
     //    the parser actually produced so an EVAL row (which has no loss/lr)
     //    doesn't wipe the last known progress.
     const jobUpdate: Record<string, unknown> = {};
-    if (log.epoch) jobUpdate.currentEpoch = log.epoch;
+    // `currentEpoch` must be in the same unit as `totalEpochs`, which holds
+    // *iterations* for the segmentation frameworks (see `totalStepsFor`). The
+    // Seg log line carries both (`epoch: 2278, iter: 20500/160000`), and storing
+    // the epoch there made the progress bar read 2278/160000 instead of
+    // 20500/160000 — i.e. a run that was 13% done displayed as 1%.
+    if (isSegmentation(framework)) {
+      if (log.iteration) jobUpdate.currentEpoch = log.iteration;
+    } else if (log.epoch) {
+      jobUpdate.currentEpoch = log.epoch;
+    }
     if (log.loss !== null && log.loss !== undefined) jobUpdate.currentLoss = log.loss;
     if (log.learningRate !== null && log.learningRate !== undefined) {
       jobUpdate.currentLr = log.learningRate;
@@ -849,6 +869,8 @@ async function writeParsedLog(jobId: string, log: ParsedTrainLog): Promise<void>
         acc: log.acc ?? null,
         kappa: log.kappa ?? null,
         dice: log.dice ?? null,
+        mAP: log.mAP ?? null,
+        mAP50: log.mAP50 ?? null,
         eta: log.eta,
         batchCost: log.batchCost,
         dataCost: log.dataCost,

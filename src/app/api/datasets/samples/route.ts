@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { sessions } from '../../auth/route';
 import { getSegColorMap } from '@/lib/seg-colors';
 import { parseListFile } from '@/lib/paddleseg-list';
+import { isSegmentation } from '@/lib/frameworks';
 
 interface CocoAnnotation {
   id: number;
@@ -131,7 +132,7 @@ export async function GET(request: NextRequest) {
     }
 
     // PaddleSeg datasets: list files (train.txt/val.txt) of "image mask" pairs.
-    if ((dataset as any).project?.framework === 'PaddleSeg') {
+    if (isSegmentation((dataset as any).project?.framework)) {
       const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
         ? dataset.datasetDir
         : path.join(userDatabasePath, user.username, dataset.datasetDir || '');

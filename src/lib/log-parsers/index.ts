@@ -25,11 +25,11 @@
  *   disposeParserState(state)
  */
 
-import { parseDetectionLine } from './detection'
+import { parseDetectionLines, createDetState, type DetParserState } from './detection'
 import { parseSegLine, createSegState, type SegParserState } from './segmentation'
 import { parseClassificationLine } from './classification'
 import type { ParsedTrainLog } from './types'
-import { normalizeFramework, type Framework } from '@/lib/frameworks'
+import { isClassification, isSegmentation, normalizeFramework, type Framework } from '@/lib/frameworks'
 
 export type { ParsedTrainLog } from './types'
 
@@ -37,14 +37,17 @@ export interface JobParserState {
   framework: Framework
   /** Trailing bytes from the previous chunk that had no `\n` yet. */
   buffer: string
-  /** PaddleSeg needs multi-line EVAL accumulation; unused for other fws. */
+  /** Segmentation needs multi-line EVAL accumulation; unused for other tasks. */
   segState?: SegParserState
+  /** Detection needs multi-line COCO-block accumulation. */
+  detState?: DetParserState
 }
 
 export function createParserState(framework: string | null | undefined): JobParserState {
   const fw = normalizeFramework(framework)
   const state: JobParserState = { framework: fw, buffer: '' }
-  if (fw === 'PaddleSeg') state.segState = createSegState()
+  if (isSegmentation(fw)) state.segState = createSegState()
+  else if (!isClassification(fw)) state.detState = createDetState()
   return state
 }
 
@@ -54,16 +57,18 @@ export function createParserState(framework: string | null | undefined): JobPars
  * bulk import from a log file) can bypass the buffering step.
  */
 export function parseLine(line: string, state: JobParserState): ParsedTrainLog[] {
-  if (state.framework === 'PaddleSeg') {
+  // Dispatch on the *task kind*, not the framework name: `torchtrain` emits
+  // byte-identical log lines to PaddleSeg (segmentation) and PaddleDetection
+  // (detection) precisely so these parsers, and the monitoring charts they feed,
+  // are shared rather than duplicated. See `torchtrain/torchtrain/logger.py`.
+  if (isSegmentation(state.framework)) {
     return parseSegLine(line, state.segState!)
   }
-  if (state.framework === 'PaddleClas') {
+  if (isClassification(state.framework)) {
     const parsed = parseClassificationLine(line)
     return parsed ? [parsed] : []
   }
-  // PaddleDetection (or unknown → normalized to Detection)
-  const parsed = parseDetectionLine(line)
-  return parsed ? [parsed] : []
+  return parseDetectionLines(line, state.detState ?? (state.detState = createDetState()))
 }
 
 /**
@@ -89,8 +94,8 @@ export function feed(state: JobParserState, chunk: string): ParsedTrainLog[] {
 }
 
 /**
- * On process exit, flush any lingering line fragment and any open Seg EVAL
- * block. Safe to call multiple times; idempotent.
+ * On process exit, flush any lingering line fragment and any open EVAL block.
+ * Safe to call multiple times; idempotent.
  */
 export function flush(state: JobParserState): ParsedTrainLog[] {
   const out: ParsedTrainLog[] = []
@@ -102,12 +107,19 @@ export function flush(state: JobParserState): ParsedTrainLog[] {
     if (rows.length > 0) out.push(...rows)
   }
 
-  // For PaddleSeg, force-close any half-parsed eval block by feeding a
-  // sentinel line that doesn't match any pattern — the parser will finalize
-  // the open block on that miss.
-  if (state.framework === 'PaddleSeg' && state.segState?.open) {
+  // Force-close a half-parsed eval block by feeding a sentinel line that
+  // matches no pattern — both parsers finalize the open block on that miss.
+  // Without this, the last evaluation of a run (which is also usually the best
+  // one) would be dropped whenever the process exits right after printing it.
+  if (state.segState?.open) {
     const rows = parseSegLine('__eof_sentinel__', state.segState)
     if (rows.length > 0) out.push(...rows)
+  }
+  if (state.detState?.open) {
+    const rows = parseDetectionLines('Best test bbox ap is 0.0.', state.detState)
+    // Drop the synthetic best-metric row the sentinel produces; only the
+    // flushed COCO block is real data.
+    if (rows.length > 0) out.push(...rows.filter((r) => r.mAP != null || r.mAP50 != null))
   }
   return out
 }

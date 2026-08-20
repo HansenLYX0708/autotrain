@@ -19,10 +19,21 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  FRAMEWORK_LIST,
+  FRAMEWORK_META,
+  isDetection,
+  isSegmentation,
+  isTorch,
+  normalizeFramework,
+  resolveTask,
+} from '@/lib/frameworks'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -225,29 +236,46 @@ export function ProjectsPage() {
                     onValueChange={(value) => setFormData({
                       ...formData,
                       framework: value,
-                      // Task is derived from framework: Seg -> semantic_segmentation,
-                      // Detection keeps its current valid task, others -> detection.
-                      task: value === 'PaddleDetection'
-                        ? (formData.task === 'instance_segmentation' ? 'instance_segmentation' : 'detection')
-                        : value === 'PaddleSeg' ? 'semantic_segmentation' : 'detection',
+                      // Task is derived from the framework registry, so a switch can
+                      // never leave a project on a task its framework cannot run.
+                      task: resolveTask(value, formData.task),
                     })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select framework" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="PaddleDetection">PaddleDetection</SelectItem>
-                      <SelectItem value="PaddleClas">PaddleClas</SelectItem>
-                      <SelectItem value="PaddleSeg">PaddleSeg</SelectItem>
+                      {/* Grouped by runtime: the two families need different
+                          Python environments and different repository paths. */}
+                      <SelectGroup>
+                        <SelectLabel>PaddlePaddle</SelectLabel>
+                        {FRAMEWORK_LIST.filter((f) => FRAMEWORK_META[f].family === 'paddle').map((f) => (
+                          <SelectItem key={f} value={f}>{FRAMEWORK_META[f].label}</SelectItem>
+                        ))}
+                      </SelectGroup>
+                      <SelectGroup>
+                        <SelectLabel>PyTorch</SelectLabel>
+                        {FRAMEWORK_LIST.filter((f) => FRAMEWORK_META[f].family === 'torch').map((f) => (
+                          <SelectItem key={f} value={f}>{FRAMEWORK_META[f].label}</SelectItem>
+                        ))}
+                      </SelectGroup>
                     </SelectContent>
                   </Select>
                 </div>
-                {formData.framework === 'PaddleSeg' && (
+                {isSegmentation(formData.framework) && (
                   <p className="text-xs text-muted-foreground">
-                    PaddleSeg projects use semantic segmentation (per-pixel masks).
+                    {FRAMEWORK_META[normalizeFramework(formData.framework)].label} projects use
+                    semantic segmentation (per-pixel masks) and train by iteration.
                   </p>
                 )}
-                {formData.framework === 'PaddleDetection' && (
+                {isTorch(formData.framework) && (
+                  <p className="text-xs text-muted-foreground">
+                    Runs on the bundled <code>torchtrain</code> trainer. Make sure Settings has a
+                    Framework Python environment for {normalizeFramework(formData.framework)} that
+                    has PyTorch installed.
+                  </p>
+                )}
+                {isDetection(formData.framework) && (
                   <div className="space-y-2">
                     <Label htmlFor="task">Task Type</Label>
                     <Select
@@ -259,7 +287,16 @@ export function ProjectsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="detection">Object Detection</SelectItem>
-                        <SelectItem value="instance_segmentation">Instance Segmentation</SelectItem>
+                        <SelectItem
+                          value="instance_segmentation"
+                          // TorchDet's torchvision detectors are box-only here, so
+                          // offering polygon masks would promise something the
+                          // trainer does not deliver.
+                          disabled={isTorch(formData.framework)}
+                        >
+                          Instance Segmentation
+                          {isTorch(formData.framework) ? ' (PaddleDetection only)' : ''}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
@@ -364,7 +401,7 @@ export function ProjectsPage() {
                     <Badge variant={project.status === 'active' ? 'default' : 'secondary'}>
                       {project.status}
                     </Badge>
-                    {project.framework === 'PaddleDetection' && project.task === 'instance_segmentation' && (
+                    {isDetection(project.framework) && project.task === 'instance_segmentation' && (
                       <Badge variant="outline" className="border-purple-500/40 text-purple-600 dark:text-purple-400">
                         Instance Seg
                       </Badge>

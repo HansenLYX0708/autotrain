@@ -5,7 +5,7 @@ Project knowledge for anyone (human or agent) working on this repo.
 ## What this is
 
 A Next.js 16 (App Router, Turbopack) + Prisma/SQLite web app that drives
-PaddlePaddle training. A "job" is assembled from three independently authored
+deep-learning training. A "job" is assembled from three independently authored
 YAML configs and run as a child process:
 
 ```
@@ -14,9 +14,22 @@ Training config ─┼─► deep-merged YAML ─► tools/train.py ─► stdou
 Model config    ─┘
 ```
 
-Supported frameworks: `PaddleDetection`, `PaddleClas`, `PaddleSeg`
-(`project.framework` selects one; `src/lib/frameworks.ts` is the single source of
-truth for resolving each one's working directory).
+Supported frameworks (`project.framework` selects one):
+
+| Framework | Runtime | Task | Repo | Trains by |
+|---|---|---|---|---|
+| `PaddleDetection` | PaddlePaddle | detection | external, `paddleDetectionPath` | epochs |
+| `PaddleClas` | PaddlePaddle | classification | external, `paddleClasPath` | epochs |
+| `PaddleSeg` | PaddlePaddle | segmentation | external, `paddleSegPath` | iterations |
+| `TorchDet` | PyTorch | detection | bundled `torchtrain/`, `torchPath` | epochs |
+| `TorchSeg` | PyTorch | segmentation | bundled `torchtrain/`, `torchPath` | iterations |
+
+`src/lib/frameworks.ts` is the **single source of truth**: `FRAMEWORK_META`
+declares each framework's repo path field, Python module, CLI dialect, script
+names, checkpoint layout, dataset format and step unit. Prefer the predicates
+(`isSegmentation`, `isDetection`, `isTorch`, `frameworkMeta`) over comparing
+framework names — the string comparisons are what made adding a framework a
+whole-codebase grep in the first place.
 
 ## Commands
 
@@ -42,6 +55,22 @@ npx tsc --noEmit     # typecheck
    the code typechecks** — always run `tsc` separately.
 
 ## Gotchas
+
+### Never edit source files with PowerShell `Set-Content`
+
+On Windows, `Get-Content -Raw` / `Set-Content` (PowerShell 5.1) round-trip through
+the **ANSI code page**, which silently corrupts every non-ASCII character in the
+file. In practice a UTF-8 sequence loses its trailing byte *and* eats the byte
+after it, so `— ` becomes an invalid `E2 80 3F` and `<span>•</span>` becomes
+`<span>?/span>` — i.e. broken JSX with a confusing parse error hundreds of lines
+from anything you touched. Several files here contain `—`, `·`, `…`, `✓` and `×`
+in comments and JSX.
+
+Use an editor tool, or Python with an explicit encoding:
+
+```python
+open(path, "w", encoding="utf-8", newline="").write(text)
+```
 
 ### Database location
 
@@ -69,6 +98,20 @@ wrong, both of which SQLite handles by silently creating a new empty database:
 `src/lib/db.ts` now prints a loud warning at startup when `DATABASE_URL` points
 at a non-existent SQLite file, so this fails visibly instead of silently.
 
+**Important, as of 2026-08:** the tracked `.env` still contains
+`DATABASE_URL=file:/home/z/my-project/db/custom.db`, so a server started from the
+`D:` drive actually uses `D:\home\z\my-project\db\custom.db`, *not* the
+`autotrain_db` path documented above. Both files currently hold the same data.
+Any schema change must therefore be pushed to **both**:
+
+```bash
+$env:DATABASE_URL="file:D:/_work/projects/autoTraining/autotrain_db/custom.db"; npx prisma db push
+$env:DATABASE_URL="file:D:/home/z/my-project/db/custom.db";                     npx prisma db push
+```
+
+Decide which one is canonical and fix `.env` — but do it deliberately, since it
+changes which database the app reads.
+
 Never commit a `.db` file. `db/custom.db` used to be tracked and held a
 pre-user-system schema; it has been untracked and `.gitignore` now excludes
 `*.db` and `/db/`.
@@ -90,10 +133,18 @@ schema, or code will need `as any` casts to reach new columns.
 authoritative and is what gets merged into the job config and trained on.
 
 Unit convention for the epoch-named columns: they hold values in the
-framework's **native training unit**. For a PaddleSeg config that means
-`epoch`/`maxEpochs` carry `iters`, `warmupEpochs` carries `warmup_iters`, and
-`snapshotEpoch` carries `save_interval`. `iters`/`saveInterval` are Seg-only and
-null for other frameworks. Branch on `project.framework` when the unit matters.
+framework's **native training unit**. For a segmentation config (PaddleSeg,
+TorchSeg) that means `epoch`/`maxEpochs` carry `iters`, `warmupEpochs` carries
+`warmup_iters`, and `snapshotEpoch` carries `save_interval`. `iters`/`saveInterval`
+are segmentation-only and null for other frameworks. Use
+`countsIterations(framework)` from `src/lib/training-yaml.ts` when the unit
+matters.
+
+The same applies to `TrainingJob.currentEpoch` / `totalEpochs`: for segmentation
+frameworks **both hold iterations**. `writeParsedLog` stores `log.iteration` (not
+`log.epoch`) for those frameworks, because the Seg log line carries both
+(`epoch: 2278, iter: 20500/160000`) and storing the epoch made the progress bar
+read 2278/160000 instead of 20500/160000.
 
 If the columns ever drift from the YAML again, re-derive them:
 
@@ -110,13 +161,20 @@ Always derive the columns from the YAML via the shared libraries — never the
 other way around:
 
 - `src/lib/training-yaml.ts` — `generateTrainingYaml`, `parseTrainingParams`,
-  `trainingParamsToColumns`, `totalStepsFor`, `TRAINING_FIELD_SUPPORT`
+  `trainingParamsToColumns`, `totalStepsFor`, `countsIterations`,
+  `TRAINING_FIELD_SUPPORT`
 - `src/lib/model-yaml.ts` — `generateModelYaml`, `parseModelParams`,
-  `modelParamsToColumns`, `validateModelParams`, `SEG_ARCHITECTURES`
+  `modelParamsToColumns`, `validateModelParams`, `SEG_ARCHITECTURES`,
+  `TORCH_SEG_ARCHITECTURES`, `TORCH_DET_PRESETS`
+- `src/lib/job-commands.ts` — `buildTrainCommand`, `buildEvalCommand`,
+  `buildInferCommand`, `buildExportCommand`, `bestWeightsPath`
 
-Both are pure (no `fs`) so the browser can import them; the create/edit dialogs
-render their form from `TRAINING_FIELD_SUPPORT` and preview
-`generateTrainingYaml`, guaranteeing the previewed YAML is what gets saved.
+All three are pure (no `fs`) so the browser can import them. The create/edit
+dialogs render their form from `TRAINING_FIELD_SUPPORT` and preview
+`generateTrainingYaml`, guaranteeing the previewed YAML is what gets saved; the
+job/validation pages preview commands via `job-commands.ts`, which is the same
+module the API routes execute, so a previewed command cannot drift from the real
+one (it used to, in three separate copies).
 
 ### Merging job YAML
 
@@ -144,6 +202,49 @@ dataset block.
   The counts live in `SEG_ARCHITECTURES[].logits`. **`loss:` belongs in the
   model config**, never the training config.
 - `save_dir` / `save_interval` / `log_iters` are CLI arguments, not YAML keys.
+
+### PyTorch frameworks (TorchSeg / TorchDet)
+
+The trainer is **bundled** at `torchtrain/` (see `torchtrain/README.md`). It is
+not a wrapper around an external repo: it is a self-contained package that
+mirrors the Paddle repo shape (`torchtrain/` package + `tools/train.py`) so the
+platform treats it identically.
+
+The core design decision: **torch reuses the Paddle config schemas and log
+formats**. `TorchSeg` consumes PaddleSeg-shaped YAML, `TorchDet` consumes
+PaddleDetection-shaped YAML, and `torchtrain/torchtrain/logger.py` reproduces the
+Paddle stdout formats byte-for-byte. That is why `src/lib/log-parsers/*`,
+`yaml-merge`, the config generators and the monitoring charts are shared rather
+than forked. If you change a log format on either side, change both.
+
+Things that bite:
+
+- **A torch job must not be wrapped in `paddle.distributed.launch`.** `paddle` is
+  not installed in a torch env. `launchPrefix()` in `src/lib/frameworks.ts`
+  handles this; the GPU comes from `CUDA_VISIBLE_DEVICES`, which the runner sets.
+- **Python environments cannot be shared between runtimes.** `SystemConfig`
+  therefore has `frameworkPythonMappings` (`{"TorchSeg": "…/python.exe"}`), which
+  `resolvePythonPath()` consults *before* the historical per-GPU
+  `gpuPythonMappings`. Without an entry, a torch job fails fast with an
+  actionable message rather than importing `torch` from a Paddle env.
+- **`num_classes` means different things.** PaddleDetection (and therefore
+  TorchDet configs) counts foreground classes only; torchvision wants background
+  included. `torchtrain/det/dataset.py` does the `+1` and the label shift.
+- **Detection normalisation is a no-op.** torchvision detectors normalise inside
+  `GeneralizedRCNNTransform`, so `NormalizeImage`/`Permute`/`PadGT` are accepted
+  and ignored, and `TRAINING_FIELD_SUPPORT.TorchDet` omits those form fields
+  rather than showing controls that do nothing.
+- **Detection metrics have no pycocotools hard dependency.**
+  `torchtrain/det/metrics.py` ships a NumPy COCOeval re-implementation that was
+  verified to agree with pycocotools to 0.0 on all 12 stats; pycocotools is used
+  when importable.
+- **Checkpoints are nested** (`<save_dir>/best_model/model.pt`), like PaddleSeg,
+  not flat like PaddleDetection. `FRAMEWORK_META[...].checkpointLayout` drives the
+  discovery in `/api/checkpoints`.
+- Architecture tables must stay in sync in two places:
+  `TORCH_SEG_ARCHITECTURES` / `TORCH_DET_PRESETS` in `src/lib/model-yaml.ts`
+  (UI + validation) and `torchtrain/torchtrain/{seg,det}/models.py` (what actually
+  builds).
 
 ### PaddleDetection specifics
 
@@ -184,6 +285,14 @@ render *wider* than intended, so fixing those makes them smaller.)
   up by bare `{ id }` is an IDOR — ids are enumerable and rows belong to users.
 - Never accept `command` from a request body. Commands are generated
   server-side and executed with `shell: true`.
+- Build command strings with `src/lib/job-commands.ts`, never by hand. It is
+  imported by both the API routes and the UI previews, which is what keeps the
+  two from drifting, and it derives every flag from `FRAMEWORK_META`.
+- Resolve interpreters with `resolvePythonPath(framework, gpuId, systemConfig)`.
+  Reading `gpuPythonMappings` directly is how three call sites ended up with
+  copies of the parsing logic, two of which were wrong (one expected
+  `{gpu: {pythonPath}}` when the stored shape is `{gpu: "path"}` and so always
+  fell back to a bare `python`).
 - Any user string that becomes a path segment must go through `toSafeSlug` from
   `src/lib/safe-path.ts`; any assembled path must be checked with `isInside`
   before a destructive operation.
@@ -196,10 +305,12 @@ render *wider* than intended, so fixing those makes them smaller.)
   `/api/images`, `/api/datasets/image`, `/api/checkpoints`, `/api/annotation/save`
   are unauthenticated. The login screen polls the `system/*` ones, so adding
   auth requires a UI change first.
-- Paths are interpolated into shell strings in
-  `src/app/api/checkpoints/export/route.ts` and
-  `src/app/api/validation-jobs/route.ts` (TIFF staging). Should use `spawn`
-  with an argv array instead of `exec`.
+- Paths are interpolated into a shell string in the TIFF-staging helper in
+  `src/app/api/validation-jobs/route.ts`. Should use `spawn` with an argv array
+  instead of `exec`. (`checkpoints/export` was converted to argv and is fine.)
+- `src/app/api/training-jobs/[id]/route.ts` still contains a dead
+  `parseAndUpdateProgress` copy of the old inline log parser; the live path uses
+  `src/lib/log-parsers`.
 - Sessions live in memory (`src/lib/session-store.ts`) and are lost on restart;
   passwords are unsalted SHA-256; `changePassword` does not invalidate sessions.
 - `runningProcesses` is an in-memory map, so a server restart orphans running

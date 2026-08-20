@@ -1,0 +1,9 @@
+# Python bytecode. Scoped to this package rather than the repo root because
+# `tools/napari_seg` and `tools/tem_analysis` already have .pyc files tracked, and
+# a root-level rule would not untrack them but would make `git status` misleading.
+__pycache__/
+*.py[cod]
+
+# Local training output, if someone runs the trainer from this folder directly.
+output/
+export_model/

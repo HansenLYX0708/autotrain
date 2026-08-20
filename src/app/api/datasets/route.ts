@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
 import { logActivity } from '@/lib/activity-log';
-import { getWorkDir } from '@/lib/frameworks';
+import { getWorkDir, isSegmentation } from '@/lib/frameworks';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -74,7 +74,7 @@ function generateDatasetYaml(dataset: {
   framework?: string;
 }): string {
   // PaddleSeg datasets use list files (train.txt/val.txt) + num_classes.
-  if (dataset.framework === 'PaddleSeg') {
+  if (isSegmentation(dataset.framework)) {
     const root = dataset.datasetDir || '';
     const trainList = dataset.trainAnnoPath || 'train.txt';
     const valList = dataset.evalAnnoPath || 'val.txt';
@@ -266,7 +266,7 @@ export async function POST(request: NextRequest) {
       absoluteDatasetDir = path.join(userDatabasePath, body.username, body.datasetDir);
     }
 
-    if (framework === 'PaddleSeg') {
+    if (isSegmentation(framework)) {
       // PaddleSeg datasets use list files (train.txt/val.txt) + num_classes.
       // There is no COCO JSON to parse; derive stats from the list files and
       // the optional class names file instead.
@@ -409,7 +409,7 @@ export async function POST(request: NextRequest) {
         trainAnnoPath: body.trainAnnoPath || null,
         evalImagePath: body.evalImagePath || null,
         evalAnnoPath: body.evalAnnoPath || null,
-        datasetDir: (framework === 'PaddleSeg' ? absoluteDatasetDir : body.datasetDir) || null,
+        datasetDir: (isSegmentation(framework) ? absoluteDatasetDir : body.datasetDir) || null,
         numClasses: numClasses,
         numAnnotations: numAnnotations,
         numTrainImages: numTrainImages,

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
-import { getWorkDir } from '@/lib/frameworks';
+import { frameworkMeta, getWorkDir, isSegmentation, resolvePythonPath } from '@/lib/frameworks';
+import { buildEvalCommand, buildInferCommand } from '@/lib/job-commands';
 import { spawn, exec } from 'child_process';
 import { existsSync, readdirSync, statSync, mkdirSync } from 'fs';
 import { join, basename, extname, dirname } from 'path';
@@ -100,51 +101,46 @@ else:
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
 
-// Helper function to get Python path for a job based on GPU configuration
-async function getPythonPathForJob(trainingJobId: string): Promise<string> {
-  let pythonPath = 'python';
-  
-  if (!trainingJobId) return pythonPath;
-  
+/**
+ * Python interpreter for a validation run, resolved framework-first.
+ *
+ * Two bugs this replaces: the previous implementation read
+ * `gpuPythonMappings[id].pythonPath`, but the stored shape is
+ * `{"0": "C:/.../python.exe"}` — a plain string — so it *always* fell back to a
+ * bare `python`; and it had no notion of framework, so a torch job would have
+ * been handed a PaddlePaddle interpreter.
+ */
+async function getPythonPathForJob(trainingJobId: string, framework?: string | null): Promise<string> {
+  if (!trainingJobId) {
+    const systemConfig = await db.systemConfig.findFirst();
+    return resolvePythonPath(framework, 0, systemConfig).pythonPath || 'python';
+  }
+
   try {
-    // Get training job to find GPU info
     const job = await db.trainingJob.findUnique({
       where: { id: trainingJobId },
-      select: { trainingParams: true },
+      select: { trainingParams: true, project: { select: { framework: true } } },
     });
-    
-    if (!job?.trainingParams) return pythonPath;
-    
-    // Parse training params for GPU info
+
     let trainingParams: Record<string, unknown> = {};
     try {
-      trainingParams = JSON.parse(job.trainingParams as string);
+      trainingParams = job?.trainingParams ? JSON.parse(job.trainingParams as string) : {};
     } catch {
-      return pythonPath;
+      // Fall through to GPU 0.
     }
-    
+
     const gpuIdsStr = (trainingParams.gpuIds as string) || '0';
     const gpuIds = gpuIdsStr.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
     const primaryGpuId = gpuIds[0] || 0;
-    
-    // Get system config for GPU Python mappings
+
     const systemConfig = await db.systemConfig.findFirst();
-    if (systemConfig?.gpuPythonMappings) {
-      try {
-        const gpuMappings = JSON.parse(systemConfig.gpuPythonMappings) as Record<string, { pythonPath: string }>;
-        const mapping = gpuMappings[primaryGpuId.toString()];
-        if (mapping?.pythonPath) {
-          pythonPath = mapping.pythonPath;
-        }
-      } catch (e) {
-        console.error('Failed to parse GPU Python mappings:', e);
-      }
-    }
+    const effectiveFramework = framework || job?.project?.framework;
+    const { pythonPath } = resolvePythonPath(effectiveFramework, primaryGpuId, systemConfig);
+    return pythonPath || 'python';
   } catch (error) {
     console.error('Error getting Python path for job:', error);
+    return 'python';
   }
-  
-  return pythonPath;
 }
 
 // Check if path is likely a file (has image extension)
@@ -154,42 +150,46 @@ function isImageFile(path: string): boolean {
   return imageExtensions.includes(ext);
 }
 
-// Find inference result images in output directory
-function findInferenceImages(outputDir: string): string[] {
+/**
+ * Find inference result images under an output directory.
+ *
+ * Recurses one level, which is required for segmentation: both PaddleSeg's
+ * `predict.py` and torchtrain's write into `added_prediction/` and
+ * `pseudo_color_prediction/` sub-folders rather than the root. A flat scan (what
+ * this used to do) therefore found nothing and the validation page reported a
+ * successful run with zero images. Detection writes to the root, which is still
+ * covered.
+ *
+ * `_input_staging` is skipped: those are the PNG copies of the *input* TIFFs
+ * created for PaddleSeg, not results.
+ */
+function findInferenceImages(outputDir: string, depth = 1): string[] {
   const images: string[] = [];
-  
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'];
+
   try {
     if (!existsSync(outputDir)) {
       console.log(`Output directory does not exist: ${outputDir}`);
       return images;
     }
-    
-    const files = readdirSync(outputDir);
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'];
-    
-    for (const file of files) {
+
+    for (const file of readdirSync(outputDir)) {
       const filePath = join(outputDir, file);
       const stat = statSync(filePath);
-      
+
       if (stat.isFile()) {
-        const ext = extname(file).toLowerCase();
-        if (imageExtensions.includes(ext)) {
-          images.push(filePath);
-        }
+        if (imageExtensions.includes(extname(file).toLowerCase())) images.push(filePath);
+      } else if (stat.isDirectory() && depth > 0 && file !== '_input_staging') {
+        images.push(...findInferenceImages(filePath, depth - 1));
       }
     }
-    
+
     // Sort by modification time (newest first)
-    images.sort((a, b) => {
-      const statA = statSync(a);
-      const statB = statSync(b);
-      return statB.mtimeMs - statA.mtimeMs;
-    });
-    
+    images.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
   } catch (error) {
     console.error('Error finding inference images:', error);
   }
-  
+
   return images;
 }
 
@@ -309,36 +309,32 @@ export async function POST(request: NextRequest) {
     const framework = project.framework || 'PaddleDetection';
     const workDir = getWorkDir(framework, systemConfig);
 
-    // Get Python path based on training job's GPU configuration
-    const pythonPath = body.trainingJobId 
-      ? await getPythonPathForJob(body.trainingJobId)
-      : 'python';
+    // Get Python path based on the training job's GPU + this project's framework
+    const pythonPath = await getPythonPathForJob(body.trainingJobId, framework);
 
-    // Build command based on type - use customCommand if provided
+    // Build command based on type - use customCommand if provided.
+    // The strings come from `@/lib/job-commands`, the same module the UI preview
+    // uses, so the command a user reviews is the command that runs.
     let command = body.customCommand || '';
-    
+
     if (!command) {
       const configPath = body.configPath || '';
       const weightsPath = body.weightsPath || '';
-      if (framework === 'PaddleSeg') {
-        // PaddleSeg uses val.py (eval) and predict.py (infer) with --config/--model_path
-        if (body.type === 'eval') {
-          command = `${pythonPath} tools/val.py --config ${configPath} --model_path ${weightsPath}`;
-        } else if (body.type === 'infer') {
-          const inputPath = body.inferInputPath || '';
-          const outputPath = body.inferOutputPath || 'output/predict_results';
-          command = `${pythonPath} tools/predict.py --config ${configPath} --model_path ${weightsPath} --image_path ${inputPath} --save_dir ${outputPath}`;
-        }
-      } else if (body.type === 'eval') {
-        command = `${pythonPath} tools/eval.py -c ${configPath} -o weights=${weightsPath}`;
+      if (body.type === 'eval') {
+        command = buildEvalCommand({ framework, configPath, weightsPath, python: pythonPath });
       } else if (body.type === 'infer') {
         const inputPath = body.inferInputPath || '';
-        const outputPath = body.inferOutputPath || 'output/infer_results';
-        
-        // Determine if input is a file or directory
-        const inputParam = isImageFile(inputPath) ? '--infer_img' : '--infer_dir';
-        
-        command = `${pythonPath} tools/infer.py -c ${configPath} -o weights=${weightsPath} ${inputParam}=${inputPath} --output_dir=${outputPath}`;
+        const outputPath = body.inferOutputPath
+          || (isSegmentation(framework) ? 'output/predict_results' : 'output/infer_results');
+        command = buildInferCommand({
+          framework,
+          configPath,
+          weightsPath,
+          inputPath,
+          outputPath,
+          inputIsFile: isImageFile(inputPath),
+          python: pythonPath,
+        });
       }
     }
 
@@ -375,6 +371,10 @@ export async function POST(request: NextRequest) {
       // PaddleSeg + infer + TIFF input: transparently convert to PNGs into a
       // staging folder so predict.py's `get_image_list()` accepts them. The
       // conversion is a no-op when no TIFFs are present.
+      //
+      // Not needed for TorchSeg: `torchtrain`'s predictor reads TIFFs directly
+      // (see `read_image` in torchtrain/torchtrain/seg/dataset.py), so staging
+      // would only add latency and a folder of duplicate PNGs.
       let effectiveInferInput = body.inferInputPath;
       if (framework === 'PaddleSeg' && body.type === 'infer' && body.inferInputPath) {
         try {
@@ -470,40 +470,35 @@ function startValidationProcess(
   // Use the provided pythonPath directly (should be absolute path to python.exe)
   let args: string[] = [];
 
-  if (framework === 'PaddleSeg') {
+  // Build the argv array from the framework's declared CLI dialect. Using an
+  // argv array (rather than a shell string) is what makes paths with spaces work
+  // without quoting, so this mirrors `@/lib/job-commands` rather than reusing it.
+  const meta = frameworkMeta(framework);
+  const defaultOutput = isSegmentation(framework) ? 'output/predict_results' : 'output/infer_results';
+
+  if (meta.cliStyle === 'config-flags') {
     if (type === 'eval') {
-      // eval: python tools/val.py --config configPath --model_path weightsPath
-      args = [
-        'tools/val.py',
-        '--config', configPath || '',
-        '--model_path', weightsPath || '',
-      ];
+      args = [meta.scripts.eval, '--config', configPath || '', '--model_path', weightsPath || ''];
     } else if (type === 'infer') {
-      // infer: python tools/predict.py --config configPath --model_path weightsPath --image_path input --save_dir output
       args = [
-        'tools/predict.py',
+        meta.scripts.infer,
         '--config', configPath || '',
         '--model_path', weightsPath || '',
         '--image_path', inferInputPath || '',
-        '--save_dir', inferOutputPath || 'output/predict_results',
+        '--save_dir', inferOutputPath || defaultOutput,
       ];
     }
   } else if (type === 'eval') {
-    // eval: python tools/eval.py -c configPath -o weights=weightsPath
-    args = [
-      'tools/eval.py',
-      '-c', configPath || '',
-      '-o', `weights=${weightsPath || ''}`,
-    ];
+    args = [meta.scripts.eval, '-c', configPath || '', '-o', `weights=${weightsPath || ''}`];
   } else if (type === 'infer') {
-    // infer: python tools/infer.py -c configPath -o weights=weightsPath --infer_img/inputPath --output_dir=outputPath
+    // PaddleDetection distinguishes a single image from a directory by flag name.
     const inputParam = inferInputPath && isImageFile(inferInputPath) ? '--infer_img' : '--infer_dir';
     args = [
-      'tools/infer.py',
+      meta.scripts.infer,
       '-c', configPath || '',
       '-o', `weights=${weightsPath || ''}`,
       `${inputParam}=${inferInputPath || ''}`,
-      `--output_dir=${inferOutputPath || 'output/infer_results'}`,
+      `--output_dir=${inferOutputPath || defaultOutput}`,
     ];
   }
 
@@ -552,17 +547,24 @@ function startValidationProcess(
     let resultJson: string | null = null;
     let resultPath: string | null = null;
 
-    if (type === 'eval' && status === 'completed' && framework === 'PaddleSeg') {
-      // PaddleSeg val.py prints: [EVAL] #Images: N mIoU: .. Acc: .. Kappa: .. Dice: ..
+    if (type === 'eval' && status === 'completed' && isSegmentation(framework)) {
+      // Segmentation eval prints: [EVAL] #Images: N mIoU: .. Acc: .. Kappa: .. Dice: ..
+      // `torchtrain`'s val.py reproduces this line exactly (see
+      // torchtrain/torchtrain/logger.py), so TorchSeg parses identically.
       const segF = (re: RegExp): number | null => {
         const m = fullOutput.match(re);
         return m ? parseFloat(m[1]) : null;
       };
+      const classArrays = fullOutput.match(/\[EVAL\]\s*Class IoU:\s*\r?\n\s*\[([^\]]*)\]/i);
       resultJson = JSON.stringify({
         mIoU: segF(/mIoU:\s*([\d.]+)/i),
         acc: segF(/Acc:\s*([\d.]+)/i),
         kappa: segF(/Kappa:\s*([\d.]+)/i),
         dice: segF(/Dice:\s*([\d.]+)/i),
+        samplesCount: segF(/#Images:\s*(\d+)/i),
+        classIoU: classArrays
+          ? classArrays[1].trim().split(/\s+/).map(Number).filter((n) => !Number.isNaN(n))
+          : undefined,
       });
     } else if (type === 'eval' && status === 'completed') {
       // Parse sample count from eval output
@@ -603,7 +605,11 @@ function startValidationProcess(
         mAP75: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ]'),
         mAP_small: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ]'),
         mAP_medium: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ]'),
-        mAP_large: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50:0.95 | area=large | maxDets=100 ]'),
+        // pycocotools right-aligns the area label in 6 chars (`{:>6s}`), so
+        // "large" is printed as " large" — the same as the AR rows below. The
+        // previous `area=large` spelling never matched, so mAP_large was always
+        // null for PaddleDetection too.
+        mAP_large: parseMetricFrom(block, 'Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ]'),
         AR_1: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ]'),
         AR_10: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ]'),
         AR_100: parseMetricFrom(block, 'Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ]'),

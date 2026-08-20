@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
+import { isSegmentation } from '@/lib/frameworks'
 import { useAuth } from '@/contexts/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -243,10 +244,10 @@ export function DatasetsPage() {
   })
 
   // PaddleSeg datasets use list files (train.txt/val.txt) + num_classes instead of COCO annotations.
-  const isSegDataset = projects.find(p => p.id === formData.projectId)?.framework === 'PaddleSeg'
+  const isSegDataset = isSegmentation(projects.find(p => p.id === formData.projectId)?.framework)
 
   // Whether the dataset currently selected for stats/preview is PaddleSeg.
-  const isSegSelected = selectedDataset?.project?.framework === 'PaddleSeg'
+  const isSegSelected = isSegmentation(selectedDataset?.project?.framework)
 
   useEffect(() => {
     fetchDatasets()
@@ -366,7 +367,7 @@ export function DatasetsPage() {
   const handleProjectChange = (projectId: string) => {
     const newProject = projects.find(p => p.id === projectId)
     const expectedFormat: 'COCO' | 'PaddleSeg' =
-      newProject?.framework === 'PaddleSeg' ? 'PaddleSeg' : 'COCO'
+      isSegmentation(newProject?.framework) ? 'PaddleSeg' : 'COCO'
     setFormData(prev => {
       const currentDs = availableDatasets.find(d => d.name === prev.name)
       const compatible = !currentDs || currentDs.format === expectedFormat

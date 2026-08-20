@@ -36,11 +36,19 @@ model SystemConfig {
   condaPath             String?  // Path to conda executable (e.g., "C:\\Users\\name\\anaconda3\\Scripts\\conda.exe")
   pythonEnvsBasePath    String?  // Base path where multiple Python environments are stored
   gpuPythonMappings     String?  // JSON string mapping GPU IDs to Python environment paths (e.g., {"0": "C:/envs/gpu0/python.exe", "1": "C:/envs/gpu1/python.exe"})
+  // JSON string mapping a framework (optionally "<framework>:<gpuId>") to a
+  // Python interpreter, e.g. {"TorchSeg": "D:/pythonEnvs/torchEnv/Scripts/python.exe"}.
+  // Needed because a Paddle env has no `torch` and vice versa, so the per-GPU
+  // map above cannot serve both runtimes. Falls back to gpuPythonMappings.
+  frameworkPythonMappings String?
   userConfigsPath       String?  // Base path for user-specific training configs (replaces PaddleDetection\configs\autotrain)
   userDatabasePath      String?  // Base path for user database storage
   paddleDetectionPath   String?
   paddleClasPath        String?
   paddleSegPath         String?
+  // Repository root of the bundled PyTorch trainer (`torchtrain/`). Shared by
+  // the TorchDet and TorchSeg frameworks, which differ only in config schema.
+  torchPath             String?
   defaultFramework      String   @default("PaddleDetection")
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -308,11 +316,17 @@ model TrainingLog {
   lossL1      Float?
   learningRate Float?
 
-  // PaddleSeg metrics (nullable; populated for segmentation [EVAL] lines)
+  // Segmentation metrics (nullable; populated for [EVAL] lines emitted by
+  // PaddleSeg and TorchSeg)
   mIoU        Float?
   acc         Float?
   kappa       Float?
   dice        Float?
+
+  // Detection metrics (nullable; parsed from the COCO summary block printed by
+  // PaddleDetection and TorchDet). mAP is AP@[0.50:0.95], mAP50 is AP@0.50.
+  mAP         Float?
+  mAP50       Float?
 
   eta         String?
   batchCost   Float?

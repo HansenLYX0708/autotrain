@@ -22,11 +22,56 @@
 
 import { parseDocument, isMap, isSeq, type Document } from 'yaml';
 
-export type ConfigFramework = 'PaddleDetection' | 'PaddleClas' | 'PaddleSeg';
+export type ConfigFramework =
+  | 'PaddleDetection'
+  | 'PaddleClas'
+  | 'PaddleSeg'
+  | 'TorchDet'
+  | 'TorchSeg';
+
+const CONFIG_FRAMEWORKS: ConfigFramework[] = [
+  'PaddleDetection',
+  'PaddleClas',
+  'PaddleSeg',
+  'TorchDet',
+  'TorchSeg',
+];
 
 export function asConfigFramework(value: string | null | undefined): ConfigFramework {
-  if (value === 'PaddleClas' || value === 'PaddleSeg') return value;
-  return 'PaddleDetection';
+  return CONFIG_FRAMEWORKS.includes(value as ConfigFramework)
+    ? (value as ConfigFramework)
+    : 'PaddleDetection';
+}
+
+/**
+ * The torch frameworks reuse the Paddle *schemas* on purpose: `TorchSeg`
+ * consumes PaddleSeg-shaped YAML and `TorchDet` consumes PaddleDetection-shaped
+ * YAML (see `torchtrain/torchtrain/config.py`). Keeping one dialect per task
+ * means the generators, parsers and the deep merge in `@/lib/yaml-merge` are
+ * shared instead of forked, and a project can be migrated between runtimes by
+ * changing `project.framework` alone.
+ */
+type ConfigSchema = 'detection' | 'classification' | 'segmentation';
+
+const CONFIG_SCHEMA: Record<ConfigFramework, ConfigSchema> = {
+  PaddleDetection: 'detection',
+  PaddleClas: 'classification',
+  PaddleSeg: 'segmentation',
+  TorchDet: 'detection',
+  TorchSeg: 'segmentation',
+};
+
+export function configSchemaOf(framework: ConfigFramework): ConfigSchema {
+  return CONFIG_SCHEMA[framework];
+}
+
+export function isTorchConfigFramework(framework: ConfigFramework): boolean {
+  return framework === 'TorchDet' || framework === 'TorchSeg';
+}
+
+/** True when the framework measures training length in iterations, not epochs. */
+export function countsIterations(framework: ConfigFramework): boolean {
+  return CONFIG_SCHEMA[framework] === 'segmentation';
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +216,21 @@ export const DEFAULT_TRAINING_PARAMS: TrainingParams = {
   pretrainWeights: '',
 };
 
+const SEG_DEFAULTS: Partial<TrainingParams> = {
+  optimizerType: 'SGD',
+  scheduler: 'PolynomialDecay',
+  baseLr: 0.01,
+  weightDecay: 0.0005,
+  trainBatchSize: 4,
+  imageWidth: 512,
+  imageHeight: 512,
+  multiScaleTrain: false,
+  normalizeType: 'mean_std',
+  normMean: [0.5, 0.5, 0.5],
+  normStd: [0.5, 0.5, 0.5],
+  clipGradByNorm: null,
+};
+
 /** Per-framework defaults that differ from the shared baseline. */
 const FRAMEWORK_DEFAULT_OVERRIDES: Record<ConfigFramework, Partial<TrainingParams>> = {
   PaddleDetection: {},
@@ -189,19 +249,34 @@ const FRAMEWORK_DEFAULT_OVERRIDES: Record<ConfigFramework, Partial<TrainingParam
     normStd: [0.229, 0.224, 0.225],
     clipGradByNorm: null,
   },
-  PaddleSeg: {
-    optimizerType: 'SGD',
-    scheduler: 'PolynomialDecay',
-    baseLr: 0.01,
-    weightDecay: 0.0005,
-    trainBatchSize: 4,
-    imageWidth: 512,
-    imageHeight: 512,
-    multiScaleTrain: false,
-    normalizeType: 'mean_std',
-    normMean: [0.5, 0.5, 0.5],
-    normStd: [0.5, 0.5, 0.5],
-    clipGradByNorm: null,
+  PaddleSeg: SEG_DEFAULTS,
+  TorchSeg: {
+    ...SEG_DEFAULTS,
+    // torchvision segmentation backbones are ImageNet-normalised, and UNet (the
+    // sensible default for the small microscopy datasets this platform is used
+    // with) trains fine either way.
+    normMean: [0.485, 0.456, 0.406],
+    normStd: [0.229, 0.224, 0.225],
+    segOverrideTransforms: true,
+  },
+  TorchDet: {
+    // torchvision detectors resize internally to a [min_size, max_size] range,
+    // which the multi-scale list maps onto directly.
+    baseLr: 0.005,
+    optimizerType: 'Momentum',
+    weightDecay: 0.0001,
+    trainBatchSize: 2,
+    evalBatchSize: 1,
+    multiScaleTrain: true,
+    multiScaleSizes: [640, 800, 1024, 1333],
+    // Normalisation happens inside the model's GeneralizedRCNNTransform, so
+    // these values are informational only (and hidden from the form below).
+    normalizeType: 'none',
+    epochs: 24,
+    maxEpochs: 24,
+    warmupEpochs: 1,
+    warmupStartLr: 0.001,
+    snapshotEpoch: 1,
   },
 };
 
@@ -251,10 +326,27 @@ const SEG_FIELDS: TrainingFieldKey[] = [
   'useGpu', 'logIter', 'saveDir',
 ];
 
+// TorchSeg honours everything PaddleSeg does, plus mixed precision (torchtrain's
+// `tools/train.py --amp`), which PaddleSeg's CLI spells differently and the form
+// therefore never offered.
+const TORCH_SEG_FIELDS: TrainingFieldKey[] = [...SEG_FIELDS, 'useAmp'];
+
+// TorchDet differs from PaddleDetection in two honest ways:
+//   - `regularizer.type` is ignored (weight decay is always L2 in torch
+//     optimizers), so offering an L1 choice would be a lie.
+//   - normalisation is performed by torchvision's own transform, so
+//     `normalizeType`/`normMean`/`normStd` cannot change anything.
+// Both are therefore omitted rather than shown as no-op controls.
+const TORCH_DET_FIELDS: TrainingFieldKey[] = DETECTION_FIELDS.filter(
+  (field) => !['regularizerType', 'normalizeType', 'normMean', 'normStd', 'saveDir'].includes(field),
+);
+
 export const TRAINING_FIELD_SUPPORT: Record<ConfigFramework, Set<TrainingFieldKey>> = {
   PaddleDetection: new Set(DETECTION_FIELDS),
   PaddleClas: new Set(CLAS_FIELDS),
   PaddleSeg: new Set(SEG_FIELDS),
+  TorchSeg: new Set(TORCH_SEG_FIELDS),
+  TorchDet: new Set(TORCH_DET_FIELDS),
 };
 
 export function supportsField(framework: ConfigFramework, field: TrainingFieldKey): boolean {
@@ -266,12 +358,18 @@ export const OPTIMIZER_OPTIONS: Record<ConfigFramework, string[]> = {
   PaddleDetection: ['Momentum', 'SGD', 'Adam', 'AdamW', 'RMSProp'],
   PaddleClas: ['Momentum', 'SGD', 'Adam', 'AdamW'],
   PaddleSeg: ['SGD', 'Momentum', 'Adam', 'AdamW'],
+  // Mirrors `build_optimizer` in `torchtrain/torchtrain/utils.py`.
+  TorchSeg: ['SGD', 'Momentum', 'Adam', 'AdamW', 'RMSProp'],
+  TorchDet: ['Momentum', 'SGD', 'Adam', 'AdamW', 'RMSProp'],
 };
 
 export const SCHEDULER_OPTIONS: Record<ConfigFramework, string[]> = {
   PaddleDetection: ['CosineDecay', 'PiecewiseDecay', 'ExpDecay', 'ConstLR'],
   PaddleClas: ['Cosine', 'Piecewise', 'Linear', 'MultiStepDecay', 'Constant'],
   PaddleSeg: ['PolynomialDecay', 'CosineAnnealingDecay', 'PiecewiseDecay', 'StepDecay', 'ExponentialDecay'],
+  // Mirrors `LrScheduler.lr_at` in `torchtrain/torchtrain/utils.py`.
+  TorchSeg: ['PolynomialDecay', 'CosineAnnealingDecay', 'PiecewiseDecay', 'StepDecay', 'ExponentialDecay'],
+  TorchDet: ['CosineDecay', 'PiecewiseDecay', 'ExpDecay', 'ConstLR'],
 };
 
 /** Schedulers whose YAML carries `milestones` / boundary values. */
@@ -290,7 +388,12 @@ function detectionNormalize(p: TrainingParams): string {
     : `    - NormalizeImage: {mean: ${list(p.normMean)}, std: ${list(p.normStd)}, norm_type: none}`;
 }
 
-function generateDetectionYaml(p: TrainingParams, name: string): string {
+function generateDetectionYaml(
+  p: TrainingParams,
+  name: string,
+  framework: ConfigFramework = 'PaddleDetection',
+): string {
+  const isTorch = framework === 'TorchDet';
   const sampleTransforms = ['    - Decode: {}'];
   if (p.augRandomDistort) sampleTransforms.push('    - RandomDistort: {}');
   if (p.augRandomExpand) sampleTransforms.push('    - RandomExpand: {fill_value: [123.675, 116.28, 103.53]}');
@@ -343,14 +446,29 @@ function generateDetectionYaml(p: TrainingParams, name: string): string {
       ? [`    momentum: ${num(p.momentum)}`]
       : []),
     '  regularizer:',
-    `    type: ${p.regularizerType}`,
+    // torch optimizers only implement L2 weight decay, so TorchDet always emits
+    // L2 rather than echoing a choice it would ignore.
+    `    type: ${isTorch ? 'L2' : p.regularizerType}`,
     `    factor: ${num(p.weightDecay)}`,
   ].join('\n');
 
   const evalSize = `[${num(p.imageHeight)}, ${num(p.imageWidth)}]`;
 
-  return `# ${name}
-# Training configuration generated by AutoTrain (PaddleDetection)
+  // TorchDet consumes this same schema (see torchtrain/torchtrain/det/), with
+  // two documented differences worth stating in the file the user will read.
+  const header = isTorch
+    ? `# ${name}
+# Training configuration generated by AutoTrain (TorchDet / PyTorch)
+#
+# This is the PaddleDetection schema; torchtrain reads it directly. Two notes:
+#   - NormalizeImage / Permute / PadGT describe work torchvision performs inside
+#     the model (GeneralizedRCNNTransform), so they are accepted and ignored.
+#   - Resize / BatchRandomResize target sizes become the model's
+#     min_size / max_size, which is how torchvision expresses scale jitter.`
+    : `# ${name}
+# Training configuration generated by AutoTrain (PaddleDetection)`;
+
+  return `${header}
 
 epoch: ${num(p.epochs)}
 
@@ -481,7 +599,12 @@ ${transformOps(false)}
 `;
 }
 
-function generateSegYaml(p: TrainingParams, name: string): string {
+function generateSegYaml(
+  p: TrainingParams,
+  name: string,
+  framework: ConfigFramework = 'PaddleSeg',
+): string {
+  const isTorch = framework === 'TorchSeg';
   const lrLines: string[] = [`  type: ${p.scheduler}`, `  learning_rate: ${num(p.baseLr)}`];
   if (p.scheduler === 'PolynomialDecay') {
     lrLines.push(`  power: ${num(p.power)}`, `  end_lr: ${num(p.endLr)}`);
@@ -534,13 +657,28 @@ val_dataset:
 `;
   }
 
-  // `loss:` is intentionally absent — PaddleSeg enforces
+  // `loss:` is intentionally absent — both PaddleSeg and TorchSeg enforce
   // len(loss.types) == len(model.logits), so the loss belongs to the model
   // config. See `@/lib/model-yaml`.
-  return `# ${name}
+  const header = isTorch
+    ? `# ${name}
+# Training configuration generated by AutoTrain (TorchSeg / PyTorch)
+#
+# This is the PaddleSeg schema; torchtrain reads it directly. \`loss:\` lives in
+# the model config because len(loss.types) must equal the number of logits the
+# architecture emits. Do not add it here.`
+    : `# ${name}
 # Training configuration generated by AutoTrain (PaddleSeg)
 # Note: \`loss:\` lives in the model config because it must match the model's
-# logits count. Do not add it here.
+# logits count. Do not add it here.`;
+
+  // PaddleSeg ignores these three YAML keys (it only accepts them as CLI flags);
+  // torchtrain reads either, and the platform passes them on the CLI for both.
+  const runtimeComment = isTorch
+    ? '# Runtime (torchtrain reads these from the YAML or the CLI; the CLI wins)'
+    : '# Runtime (PaddleSeg reads these from the CLI; kept here for reference)';
+
+  return `${header}
 
 batch_size: ${num(p.trainBatchSize)}
 iters: ${num(p.iters)}
@@ -551,9 +689,9 @@ ${optimizerLines.join('\n')}
 lr_scheduler:
 ${lrLines.join('\n')}
 ${transformsBlock}
-# Runtime (PaddleSeg reads these from the CLI; kept here for reference)
+${runtimeComment}
 use_gpu: ${p.useGpu}
-num_workers: ${num(p.workerNum)}
+${isTorch ? `use_amp: ${p.useAmp}\n` : ''}num_workers: ${num(p.workerNum)}
 save_interval: ${num(p.saveInterval)}
 log_iters: ${num(p.logIter)}
 ${p.saveDir ? `save_dir: ${p.saveDir}\n` : ''}`;
@@ -564,13 +702,13 @@ export function generateTrainingYaml(
   params: TrainingParams,
   configName = 'Training Config',
 ): string {
-  switch (framework) {
-    case 'PaddleClas':
+  switch (CONFIG_SCHEMA[framework]) {
+    case 'classification':
       return generateClasYaml(params, configName);
-    case 'PaddleSeg':
-      return generateSegYaml(params, configName);
+    case 'segmentation':
+      return generateSegYaml(params, configName, framework);
     default:
-      return generateDetectionYaml(params, configName);
+      return generateDetectionYaml(params, configName, framework);
   }
 }
 
@@ -641,11 +779,11 @@ export function parseTrainingParams(
 
   const out: Partial<TrainingParams> = {};
 
-  switch (framework) {
-    case 'PaddleSeg':
+  switch (CONFIG_SCHEMA[framework]) {
+    case 'segmentation':
       parseSeg(doc, out);
       break;
-    case 'PaddleClas':
+    case 'classification':
       parseClas(doc, out);
       break;
     default:
@@ -884,7 +1022,7 @@ function parseSeg(doc: Record<string, any>, out: Partial<TrainingParams>): void 
  * dedicated `iters` / `saveInterval` columns are Seg-only and null elsewhere.
  */
 export function trainingParamsToColumns(framework: ConfigFramework, params: TrainingParams) {
-  const isSeg = framework === 'PaddleSeg';
+  const isSeg = countsIterations(framework);
   const nativeLength = Math.max(1, Math.round(isSeg ? params.iters : params.epochs));
   return {
     epoch: nativeLength,
@@ -916,7 +1054,7 @@ export function trainingParamsToColumns(framework: ConfigFramework, params: Trai
  * two is why Seg jobs used to show progress against a hardcoded 100.
  */
 export function totalStepsFor(framework: ConfigFramework, params: TrainingParams): number {
-  return framework === 'PaddleSeg'
+  return countsIterations(framework)
     ? Math.max(1, Math.round(params.iters))
     : Math.max(1, Math.round(params.epochs));
 }

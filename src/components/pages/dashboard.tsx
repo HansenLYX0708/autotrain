@@ -68,6 +68,8 @@ interface GpuEnvironmentCheck {
     paddleDetection: boolean
     paddleClas: boolean
     paddleSeg: boolean
+    torch: boolean
+    torchvision: boolean
   }
 }
 
@@ -75,15 +77,30 @@ interface SystemConfig {
   pythonPath: string
   paddleDetectionPath: string
   paddleClasPath: string
+  torchPath: string
+}
+
+interface FrameworkCheckResult {
+  exists: boolean
+  version: string | null
+  isValid: boolean
+  error?: string
+}
+
+/** A per-framework interpreter override (`frameworkPythonMappings`). */
+interface FrameworkEnvironmentCheck extends Omit<GpuEnvironmentCheck, 'gpuId'> {
+  key: string
+  framework: string
+  hasModule: boolean
 }
 
 interface EnvironmentCheck {
-  paddleDetection: {
-    exists: boolean
-    version: string | null
-    isValid: boolean
-    error?: string
-  }
+  paddleDetection: FrameworkCheckResult
+  /** The bundled `torchtrain/` repository, shared by TorchDet + TorchSeg. */
+  torch?: FrameworkCheckResult
+  /** Every registered framework's repository check, keyed by framework name. */
+  frameworks?: Record<string, FrameworkCheckResult>
+  frameworkEnvironments?: FrameworkEnvironmentCheck[]
   gpuEnvironments: GpuEnvironmentCheck[]
   totalGpus: number
   configuredGpus: number
@@ -133,6 +150,7 @@ export function DashboardPage() {
     pythonPath: '',
     paddleDetectionPath: '',
     paddleClasPath: '',
+    torchPath: '',
   })
   const [gpuHistory, setGpuHistory] = useState<{ time: string; gpu: number; memory: number }[]>([])
   const [loading, setLoading] = useState(true)
@@ -270,6 +288,7 @@ export function DashboardPage() {
               pythonPath: data.pythonPath || '',
               paddleDetectionPath: data.paddleDetectionPath || '',
               paddleClasPath: data.paddleClasPath || '',
+              torchPath: data.torchPath || '',
             })
           }
         }
@@ -746,6 +765,8 @@ export function DashboardPage() {
                               ['PaddleDetection', gpuEnv.frameworks.paddleDetection],
                               ['PaddleClas', gpuEnv.frameworks.paddleClas],
                               ['PaddleSeg', gpuEnv.frameworks.paddleSeg],
+                              ['torch', gpuEnv.frameworks.torch],
+                              ['torchvision', gpuEnv.frameworks.torchvision],
                             ] as [string, boolean][]).map(([label, ok]) => (
                               <Badge
                                 key={label}
@@ -808,11 +829,54 @@ export function DashboardPage() {
               </div>
             </div>
 
+            {/* Per-framework Python environments. Separate from the per-GPU list
+                above because a torch framework cannot run in a PaddlePaddle
+                environment, so it needs its own interpreter. */}
+            {environmentCheck?.frameworkEnvironments && environmentCheck.frameworkEnvironments.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">Framework Environments</div>
+                {environmentCheck.frameworkEnvironments.map((env) => (
+                  <div
+                    key={env.key}
+                    className={`p-3 rounded-lg border ${env.isValid ? 'border-emerald-500/30 bg-emerald-50/30' : 'border-red-500/30 bg-red-50/30'}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5">
+                        {env.isValid ? (
+                          <CheckCircle className="w-5 h-5 text-emerald-500" />
+                        ) : (
+                          <XCircle className="w-5 h-5 text-red-500" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-sm">{env.key}</span>
+                          {env.version && (
+                            <span className="text-xs text-muted-foreground">Python {env.version}</span>
+                          )}
+                        </div>
+                        <div className="text-xs font-mono truncate text-muted-foreground mt-1" title={env.pythonPath}>
+                          {env.pythonPath}
+                        </div>
+                        {!env.isValid && env.error && (
+                          <div className="text-xs text-red-600 mt-1">{env.error}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Path Info */}
             <div className="space-y-2 pt-2">
               <div className="text-xs text-muted-foreground">PaddleDetection Path</div>
               <div className="text-xs font-mono truncate text-muted-foreground" title={systemConfig.paddleDetectionPath}>
                 {systemConfig.paddleDetectionPath || 'Not configured'}
+              </div>
+              <div className="text-xs text-muted-foreground pt-1">PyTorch Trainer Path</div>
+              <div className="text-xs font-mono truncate text-muted-foreground" title={systemConfig.torchPath}>
+                {systemConfig.torchPath || 'Not configured'}
               </div>
             </div>
 

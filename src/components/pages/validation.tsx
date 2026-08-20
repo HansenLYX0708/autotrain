@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { isSegmentation } from '@/lib/frameworks'
+import { buildEvalCommand, buildExportCommand, buildInferCommand } from '@/lib/job-commands'
 import { useToast } from '@/hooks/use-toast'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -563,17 +565,18 @@ export function ValidationPage() {
     return 'python'
   }
 
-  // Generate export TRT command with absolute paths
+  // Generate export command with absolute paths. All three preview builders below
+  // go through `@/lib/job-commands`, the same module the API routes use, so a
+  // previewed command is exactly what the server will run.
   const generateExportCommand = () => {
     if (!selectedJob?.absoluteConfigPath || !selectedCheckpoint) return null
-    const pythonPath = getPythonPathForJob(selectedJob)
-    const configPath = selectedJob.absoluteConfigPath
-    const checkpointPath = selectedCheckpoint
-    if (selectedJob.project?.framework === 'PaddleSeg') {
-      // PaddleSeg export uses tools/export.py with --config/--model_path
-      return `${pythonPath} tools/export.py --config "${configPath}" --model_path "${checkpointPath}" --save_dir "${saveDir}/export_model"`
-    }
-    return `${pythonPath} tools/export_model.py -c "${configPath}" -o weights="${checkpointPath}" trt=True --output_dir "${saveDir}/export_model"`
+    return buildExportCommand({
+      framework: selectedJob.project?.framework,
+      configPath: selectedJob.absoluteConfigPath,
+      weightsPath: selectedCheckpoint,
+      outputDir: `${saveDir}/export_model`,
+      python: getPythonPathForJob(selectedJob),
+    })
   }
 
   // Expanded jobs in history
@@ -737,38 +740,28 @@ export function ValidationPage() {
   }
   const generateEvalCommand = () => {
     if (!selectedJob?.configPath || !selectedCheckpoint) return null
-    const pythonPath = getPythonPathForJob(selectedJob)
-    const configPath = selectedJob.absoluteConfigPath || selectedJob.configPath
-    const weightsPath = selectedCheckpoint
-    if (selectedJob.project?.framework === 'PaddleSeg') {
-      // PaddleSeg evaluation uses tools/val.py with --config/--model_path
-      return `${pythonPath} tools/val.py --config ${configPath} --model_path ${weightsPath}`
-    }
-    return `${pythonPath} tools/eval.py -c ${configPath} -o weights=${weightsPath}`
+    return buildEvalCommand({
+      framework: selectedJob.project?.framework,
+      configPath: selectedJob.absoluteConfigPath || selectedJob.configPath,
+      weightsPath: selectedCheckpoint,
+      python: getPythonPathForJob(selectedJob),
+    })
   }
 
   // Generate infer command - paths will be handled by backend
   const generateInferCommand = () => {
     if (!selectedJob?.configPath || !selectedCheckpoint || !inferInputPath) return null
-    const pythonPath = getPythonPathForJob(selectedJob)
-    const configPath = selectedJob.absoluteConfigPath || selectedJob.configPath
-    const weightsPath = selectedCheckpoint
-    const inputPath = inferInputPath
-
-    if (selectedJob.project?.framework === 'PaddleSeg') {
-      // PaddleSeg inference uses tools/predict.py with --config/--model_path/--image_path/--save_dir
-      const out = inferOutputPath || 'output/predict_results'
-      return `${pythonPath} tools/predict.py --config ${configPath} --model_path ${weightsPath} --image_path ${inputPath} --save_dir ${out}`
-    }
-
-    // Use --infer_img for single image files, --infer_dir for directories
-    const inputParam = isImageFile(inferInputPath) ? '--infer_img' : '--infer_dir'
-
-    let cmd = `${pythonPath} tools/infer.py -c ${configPath} -o weights=${weightsPath} ${inputParam}=${inputPath}`
-    if (inferOutputPath) {
-      cmd += ` --output_dir=${inferOutputPath}`
-    }
-    return cmd
+    const framework = selectedJob.project?.framework
+    return buildInferCommand({
+      framework,
+      configPath: selectedJob.absoluteConfigPath || selectedJob.configPath,
+      weightsPath: selectedCheckpoint,
+      inputPath: inferInputPath,
+      outputPath: inferOutputPath
+        || (isSegmentation(framework) ? 'output/predict_results' : 'output/infer_results'),
+      inputIsFile: isImageFile(inferInputPath),
+      python: getPythonPathForJob(selectedJob),
+    })
   }
 
   // Run evaluation

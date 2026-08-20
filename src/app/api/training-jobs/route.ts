@@ -2,9 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
-import { getWorkDir } from "@/lib/frameworks";
+import { frameworkMeta, getWorkDir } from "@/lib/frameworks";
+import {
+  bestWeightsPath,
+  buildEvalCommand,
+  buildInferCommand,
+  buildTrainCommand,
+  joinPath,
+} from "@/lib/job-commands";
 import { mergeYamlConfigs } from "@/lib/yaml-merge";
-import { asConfigFramework, defaultTrainingParams, parseTrainingParams, totalStepsFor } from "@/lib/training-yaml";
+import {
+  asConfigFramework,
+  countsIterations,
+  defaultTrainingParams,
+  parseTrainingParams,
+  totalStepsFor,
+} from "@/lib/training-yaml";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -401,56 +414,56 @@ export async function POST(request: NextRequest) {
     const useAmp = body.useAmp === true;
     const useVdl = body.useVdl === true;
 
-    let command = '';
-    let evalCommand = '';
-    let inferCommand = '';
-    const quotedConfigPath = `"${configFilePath}"`;
-
-    // Compute save_dir once for PaddleSeg (absolute when userDatabasePath is
-    // configured) so we can reuse it for both the CLI arg and the DB record.
-    // Storing the absolute path in `outputDir` is what lets the checkpoints
-    // API resolve `{save_dir}/best_model/model.pdparams` without any CLI
-    // reparse fallback.
+    // Compute save_dir once (absolute when userDatabasePath is configured) so we
+    // can reuse it for the CLI arg, the eval/infer commands and the DB record.
+    // Storing the absolute path in `outputDir` is what lets the checkpoints API
+    // resolve `{save_dir}/best_model/<weights>` without any CLI reparse fallback.
     // `project.name` is free-form user input but ends up both in a filesystem
     // path and, unquoted, inside a command string that is executed with
     // `shell: true`. Slugify it for the same reason as `jobName`.
     const projectSlug = toSafeSlug(project.name, 'project');
     const defaultOutputDir = `output/${projectSlug}/${jobName}`;
 
-    const segSaveDir = (userDatabasePath && currentUser.username)
+    const meta = frameworkMeta(framework);
+    // Frameworks that take `save_dir` on the CLI (PaddleSeg, TorchSeg, TorchDet)
+    // get the user's absolute job folder; the others keep writing under the
+    // framework repo's relative `output/` tree, as they always have.
+    const absoluteSaveDir = (userDatabasePath && currentUser.username)
       ? path.join(userDatabasePath, currentUser.username, 'jobs', jobName)
       : defaultOutputDir;
+    const saveDir = meta.saveDirOnCli ? absoluteSaveDir : defaultOutputDir;
 
-    if (framework === 'PaddleSeg') {
-      // PaddleSeg: save_dir is a CLI argument (the YAML has no top-level save_dir).
-      const quotedSaveDir = `"${segSaveDir}"`;
-      const bestModel = `"${path.join(segSaveDir, 'best_model', 'model.pdparams')}"`;
+    const command = buildTrainCommand({
+      framework,
+      configPath: configFilePath,
+      saveDir,
+      outputDir: defaultOutputDir,
+      gpuIds,
+      useAmp,
+      useVdl,
+    });
 
-      command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py --config ${quotedConfigPath} --do_eval --save_dir ${quotedSaveDir}`;
-      if (useVdl) command += ' --use_vdl';
+    // Point eval/infer at the checkpoint the run will consider "best", using the
+    // framework's own layout (see `bestWeightsPath`).
+    const bestWeights = bestWeightsPath(framework, saveDir);
+    const evalCommand = buildEvalCommand({
+      framework,
+      configPath: configFilePath,
+      weightsPath: bestWeights,
+    });
+    const inferCommand = buildInferCommand({
+      framework,
+      configPath: configFilePath,
+      weightsPath: bestWeights,
+      inputPath: '',
+      outputPath: joinPath(saveDir, 'predict'),
+    });
 
-      // PaddleSeg evaluation (val.py) and prediction (predict.py)
-      evalCommand = `python tools/val.py --config ${quotedConfigPath} --model_path ${bestModel}`;
-      inferCommand = `python tools/predict.py --config ${quotedConfigPath} --model_path ${bestModel} --save_dir ${quotedSaveDir}/predict`;
-    } else {
-      command = `python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py -c ${quotedConfigPath}`;
-      if (useAmp) command += ' --amp';
-      if (useVdl) {
-        command += ` --use_vdl=true --vdl_log_dir=${defaultOutputDir}/vdl`;
-      }
-
-      // Generate eval command using absolute path
-      evalCommand = `python tools/eval.py -c ${quotedConfigPath} -o weights=${defaultOutputDir}/model_final.pdparams`;
-
-      // Generate infer command (for single image inference) using absolute path
-      inferCommand = `python tools/infer.py -c ${quotedConfigPath} -o weights=${defaultOutputDir}/model_final.pdparams`;
-    }
-
-    // Progress total. PaddleSeg reports iterations, the other frameworks report
-    // epochs — conflating them is why Seg jobs used to render their progress
-    // bar against a hardcoded 100 and sat at "0%" for the whole run.
-    // Read it from the merged YAML so it stays correct even when the config was
-    // hand-edited after its display columns were computed.
+    // Progress total. Segmentation frameworks (PaddleSeg, TorchSeg) report
+    // iterations, the others report epochs — conflating them is why Seg jobs used
+    // to render their progress bar against a hardcoded 100 and sat at "0%" for
+    // the whole run. Read it from the merged YAML so it stays correct even when
+    // the config was hand-edited after its display columns were computed.
     const configFramework = asConfigFramework(framework);
     const resolvedParams = {
       ...defaultTrainingParams(configFramework),
@@ -473,10 +486,10 @@ export async function POST(request: NextRequest) {
         inferCommand: inferCommand,
         configPath: configPath,
         totalEpochs: totalSteps,
-        // For PaddleSeg persist the absolute save_dir so the checkpoints API
+        // Persist the save_dir the command actually uses so the checkpoints API
         // can locate {save_dir}/best_model/... without parsing the command.
-        outputDir: framework === 'PaddleSeg' ? segSaveDir : `${defaultOutputDir}`,
-        vdlLogDir: useVdl ? `${defaultOutputDir}/vdl` : null,
+        outputDir: saveDir,
+        vdlLogDir: useVdl ? joinPath(saveDir, 'vdl') : null,
         trainingParams: JSON.stringify({
           gpuIds,
           useAmp,
@@ -484,8 +497,8 @@ export async function POST(request: NextRequest) {
           jobSlug: jobName,
           framework,
           totalSteps,
-          epochs: configFramework === 'PaddleSeg' ? undefined : resolvedParams.epochs,
-          iters: configFramework === 'PaddleSeg' ? resolvedParams.iters : undefined,
+          epochs: countsIterations(configFramework) ? undefined : resolvedParams.epochs,
+          iters: countsIterations(configFramework) ? resolvedParams.iters : undefined,
           batchSize: resolvedParams.trainBatchSize,
           baseLr: resolvedParams.baseLr,
         }),

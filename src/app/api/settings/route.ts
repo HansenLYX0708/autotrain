@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
+import * as fs from "fs";
+import * as path from "path";
+
+/**
+ * Path of the PyTorch trainer bundled with this project.
+ *
+ * Unlike the Paddle repositories, `torchtrain/` ships inside the app, so we can
+ * offer a working default instead of making the user hunt for it. Only used when
+ * the folder actually exists next to the running server.
+ */
+function bundledTorchPath(): string {
+  const candidate = path.join(process.cwd(), "torchtrain");
+  return fs.existsSync(path.join(candidate, "tools", "train.py")) ? candidate : "";
+}
 
 // Default configuration values
 const DEFAULT_CONFIG = {
@@ -8,11 +22,13 @@ const DEFAULT_CONFIG = {
   condaPath: "",  // Path to conda executable
   pythonEnvsBasePath: "",  // Base path for multiple Python environments
   gpuPythonMappings: "",  // JSON string for GPU to Python path mappings
+  frameworkPythonMappings: "",  // JSON string for framework to Python path mappings
   userConfigsPath: "",  // Base path for user-specific training configs
   userDatabasePath: "",  // Base path for user database storage
   paddleDetectionPath: "",
   paddleClasPath: "",
   paddleSegPath: "",
+  torchPath: "",
   defaultFramework: "PaddleDetection",
 };
 
@@ -34,7 +50,14 @@ export async function GET(request: NextRequest) {
     // Create default config if none exists
     if (!config) {
       config = await db.systemConfig.create({
-        data: DEFAULT_CONFIG,
+        data: { ...DEFAULT_CONFIG, torchPath: bundledTorchPath() },
+      });
+    } else if (!config.torchPath && bundledTorchPath()) {
+      // Backfill for configs created before the torch frameworks existed, so a
+      // user upgrading does not have to discover and type this path.
+      config = await db.systemConfig.update({
+        where: { id: config.id },
+        data: { torchPath: bundledTorchPath() },
       });
     }
 
@@ -80,11 +103,13 @@ export async function PUT(request: NextRequest) {
           condaPath: body.condaPath ?? DEFAULT_CONFIG.condaPath,
           pythonEnvsBasePath: body.pythonEnvsBasePath ?? DEFAULT_CONFIG.pythonEnvsBasePath,
           gpuPythonMappings: body.gpuPythonMappings ?? DEFAULT_CONFIG.gpuPythonMappings,
+          frameworkPythonMappings: body.frameworkPythonMappings ?? DEFAULT_CONFIG.frameworkPythonMappings,
           userConfigsPath: body.userConfigsPath ?? DEFAULT_CONFIG.userConfigsPath,
           userDatabasePath: body.userDatabasePath ?? DEFAULT_CONFIG.userDatabasePath,
           paddleDetectionPath: body.paddleDetectionPath ?? DEFAULT_CONFIG.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath ?? DEFAULT_CONFIG.paddleClasPath,
           paddleSegPath: body.paddleSegPath ?? DEFAULT_CONFIG.paddleSegPath,
+          torchPath: body.torchPath ?? bundledTorchPath(),
           defaultFramework: body.defaultFramework ?? DEFAULT_CONFIG.defaultFramework,
         },
       });
@@ -97,11 +122,13 @@ export async function PUT(request: NextRequest) {
           condaPath: body.condaPath,
           pythonEnvsBasePath: body.pythonEnvsBasePath,
           gpuPythonMappings: body.gpuPythonMappings,
+          frameworkPythonMappings: body.frameworkPythonMappings,
           userConfigsPath: body.userConfigsPath,
           userDatabasePath: body.userDatabasePath,
           paddleDetectionPath: body.paddleDetectionPath,
           paddleClasPath: body.paddleClasPath,
           paddleSegPath: body.paddleSegPath,
+          torchPath: body.torchPath,
           defaultFramework: body.defaultFramework,
         },
       });

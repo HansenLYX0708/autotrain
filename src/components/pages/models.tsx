@@ -50,13 +50,16 @@ import {
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { ConfigYamlPane, yamlSyntaxError } from '@/components/config-yaml-pane'
-import { asConfigFramework, type ConfigFramework } from '@/lib/training-yaml'
+import { asConfigFramework, configSchemaOf, type ConfigFramework } from '@/lib/training-yaml'
 import {
   CLAS_ARCHITECTURES,
   DETECTION_PRESETS,
   DETECTION_PRESET_KEYS,
-  SEG_ARCHITECTURES,
   SEG_LOSS_TYPES,
+  TORCH_DET_PRESETS,
+  TORCH_DET_PRESET_KEYS,
+  TORCH_PRETRAIN_OPTIONS,
+  segArchitecturesFor,
   defaultModelParams,
   detectionPresetFor,
   generateModelYaml,
@@ -190,10 +193,15 @@ export function ModelsPage() {
     asConfigFramework(projects.find((p) => p.id === projectId)?.framework)
 
   const dialogFramework = frameworkOf(modelProjectId)
-  const isSeg = dialogFramework === 'PaddleSeg'
+  const isSeg = configSchemaOf(dialogFramework) === 'segmentation'
   const isClas = dialogFramework === 'PaddleClas'
+  const isTorchDet = dialogFramework === 'TorchDet'
   const preset = DETECTION_PRESETS[detectionPreset] ?? DETECTION_PRESETS['PP-YOLOE']
-  const segArch = segArchitecture(params.architecture)
+  // Architecture vocabularies are framework-specific: TorchSeg offers torchvision
+  // networks (UNet / DeepLabV3+ / FCN / LR-ASPP), PaddleSeg offers Paddle's.
+  const segArchitectures = segArchitecturesFor(dialogFramework)
+  const segArch = segArchitecture(params.architecture, dialogFramework)
+  const torchDetPreset = TORCH_DET_PRESETS[params.architecture] ?? TORCH_DET_PRESETS.FasterRCNN
 
   const generatedYaml = useMemo(
     () => generateModelYaml(dialogFramework, params, modelName || 'Model Config'),
@@ -238,13 +246,15 @@ export function ModelsPage() {
 
   /**
    * Changing segmentation architecture must resize `loss.types` / `loss.coef`,
-   * because PaddleSeg hard-fails when their length differs from the number of
-   * logits the network emits.
+   * because both PaddleSeg and TorchSeg hard-fail when their length differs from
+   * the number of logits the network emits.
    */
   const applySegArchitecture = (value: string) => {
     setParams((prev) => {
-      const arch = segArchitecture(value)
-      const { segLossTypes, segLossCoef } = reconcileSegLoss(value, prev.segLossTypes, prev.segLossCoef)
+      const arch = segArchitecture(value, dialogFramework)
+      const { segLossTypes, segLossCoef } = reconcileSegLoss(
+        value, prev.segLossTypes, prev.segLossCoef, dialogFramework,
+      )
       return {
         ...prev,
         architecture: value,
@@ -253,6 +263,19 @@ export function ModelsPage() {
         segLossCoef,
       }
     })
+  }
+
+  /** TorchDet: architecture + backbone fully determine the torchvision builder. */
+  const applyTorchDetArchitecture = (value: string) => {
+    const p = TORCH_DET_PRESETS[value]
+    if (!p) return
+    setParams((prev) => ({
+      ...prev,
+      architecture: p.architecture,
+      backbone: p.backbones.includes(prev.backbone) ? prev.backbone : p.backbones[0],
+      neck: '',
+      head: '',
+    }))
   }
 
   const resetDialog = () => {
@@ -294,8 +317,10 @@ export function ModelsPage() {
       pretrainWeights: model.pretrainWeights || '',
       ...parsed,
     }
-    if (framework === 'PaddleSeg') {
-      const reconciled = reconcileSegLoss(next.architecture, next.segLossTypes, next.segLossCoef)
+    if (configSchemaOf(framework) === 'segmentation') {
+      const reconciled = reconcileSegLoss(
+        next.architecture, next.segLossTypes, next.segLossCoef, framework,
+      )
       next.segLossTypes = reconciled.segLossTypes
       next.segLossCoef = reconciled.segLossCoef
     }
@@ -791,7 +816,7 @@ export function ModelsPage() {
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {SEG_ARCHITECTURES.map((a) => (
+                                  {segArchitectures.map((a) => (
                                     <SelectItem key={a.value} value={a.value}>
                                       {a.label} · {a.logits} logit{a.logits > 1 ? 's' : ''}
                                     </SelectItem>
@@ -824,8 +849,11 @@ export function ModelsPage() {
                                 <Label>Loss</Label>
                                 <p className="text-xs text-muted-foreground mt-1">
                                   {params.architecture} emits {segArch?.logits ?? '?'} logit
-                                  {(segArch?.logits ?? 1) > 1 ? 's' : ''} during training. PaddleSeg
-                                  requires exactly one loss entry per logit.
+                                  {(segArch?.logits ?? 1) > 1 ? 's' : ''} during training.{' '}
+                                  {dialogFramework} requires exactly one loss entry per logit.
+                                  {dialogFramework === 'TorchSeg' && (segArch?.logits ?? 1) > 1
+                                    ? ' The second entry is the torchvision auxiliary head.'
+                                    : ''}
                                 </p>
                               </div>
                               {params.segLossTypes.map((type, index) => (
@@ -890,6 +918,81 @@ export function ModelsPage() {
                               </SelectContent>
                             </Select>
                           </div>
+                        ) : isTorchDet ? (
+                          <>
+                            {/* torchvision builds the full detector from
+                                architecture + backbone, so there is no neck/head
+                                to choose (and none is emitted). */}
+                            <div className="space-y-2">
+                              <Label>Architecture</Label>
+                              <Select
+                                value={params.architecture}
+                                onValueChange={applyTorchDetArchitecture}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {TORCH_DET_PRESET_KEYS.map((key) => (
+                                    <SelectItem key={key} value={key}>
+                                      {TORCH_DET_PRESETS[key].label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Backbone</Label>
+                              <Select
+                                value={params.backbone}
+                                onValueChange={(value) => setParam('backbone', value)}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {torchDetPreset.backbones.map((b) => (
+                                    <SelectItem key={b} value={b}>{b}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <p className="text-xs text-muted-foreground">
+                                Builds <code>{torchDetPreset.architecture.toLowerCase()}_
+                                {params.backbone.toLowerCase().replace(/-/g, '_')}</code> from
+                                torchvision. No neck/head blocks are emitted.
+                              </p>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Initial Weights</Label>
+                              <Select
+                                value={
+                                  TORCH_PRETRAIN_OPTIONS.some((o) => o.value === params.pretrainWeights)
+                                    ? params.pretrainWeights
+                                    : 'custom'
+                                }
+                                onValueChange={(value) =>
+                                  setParam('pretrainWeights', value === 'custom' ? params.pretrainWeights : value)
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {TORCH_PRETRAIN_OPTIONS.map((o) => (
+                                    <SelectItem key={o.value || 'none'} value={o.value}>
+                                      {o.label}
+                                    </SelectItem>
+                                  ))}
+                                  <SelectItem value="custom">Checkpoint path…</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <p className="text-xs text-muted-foreground">
+                                {torchDetPreset.supportsCocoTransfer
+                                  ? 'COCO loads a pretrained detector and replaces its classifier to match num_classes — usually the single biggest accuracy win on small datasets.'
+                                  : 'SSD does not support COCO head replacement; a COCO choice falls back to ImageNet backbone weights.'}
+                              </p>
+                            </div>
+                          </>
                         ) : (
                           <>
                             <div className="space-y-2">
@@ -1004,6 +1107,27 @@ export function ModelsPage() {
                             PaddleClas model configs carry no additional structural options here. Use
                             the YAML editor for architecture-specific settings.
                           </p>
+                        ) : isTorchDet ? (
+                          <div className="space-y-3">
+                            <p className="text-sm text-muted-foreground">
+                              TorchDet models have no additional structural options: normalization,
+                              EMA and depth/width multipliers are PaddleDetection concepts with no
+                              torchvision equivalent, so they are not emitted.
+                            </p>
+                            <div className="space-y-2">
+                              <Label htmlFor="torchWeightsPath">Checkpoint Path (optional)</Label>
+                              <Input
+                                id="torchWeightsPath"
+                                value={params.pretrainWeights}
+                                onChange={(e) => setParam('pretrainWeights', e.target.value)}
+                                placeholder="COCO, ImageNet, or H:\\...\\best_model\\model.pt"
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Written as <code>pretrain_weights</code>. A <code>.pt</code> path
+                                resumes from a checkpoint produced by this platform.
+                              </p>
+                            </div>
+                          </div>
                         ) : (
                           <>
                             <div className="grid grid-cols-2 gap-4">

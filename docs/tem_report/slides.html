@@ -94,8 +94,8 @@ p{margin:6px 0;font-size:12.6px}
 .note{background:#141c26;border-color:#254058}
 .warn{background:#241d10;border-color:#5a4718}
 .tip{background:#122019;border-color:#1f4a3a}
-.note b,.warn b,.tip b{display:block;margin-bottom:2px}
-.warn b{color:var(--warn)} .tip b{color:var(--ok)} .note b{color:var(--accent)}
+.note > b:first-child,.warn > b:first-child,.tip > b:first-child{display:block;margin-bottom:2px}
+.warn > b:first-child{color:var(--warn)} .tip > b:first-child{color:var(--ok)} .note > b:first-child{color:var(--accent)}
 .note li,.warn li,.tip li{font-size:11.6px;margin:2px 0}
 
 .pipe{display:flex;align-items:stretch;margin:2px 0 12px}
@@ -112,6 +112,7 @@ p{margin:6px 0;font-size:12.6px}
 
 .badge{font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600;white-space:nowrap}
 .b-no{background:#331a17;color:#f08c81} .b-ok{background:#153228;color:#5fd6ae}
+.b-mid{background:#332a12;color:#e6bd5c}
 .swatch{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;margin-right:5px;border:1px solid #0006}
 
 .ph{border:2px dashed #3b4655;border-radius:7px;text-align:center;padding:11px 12px;
@@ -475,6 +476,74 @@ python tools/tem_analysis/selftest.py</code></pre>
     </div>
     <figure class="h090" style="margin-top:6px"><img src="assets/30_leveling_ovl.png" alt="leveling">
     <figcaption>Leveling 层（图像最下方绿带）。白线 = Guo–Hall 骨架，亮绿虚线 = <b>校平后</b>重新拟合的直线 —— 这是对整条旋转/逆变换链路的免费自检。</figcaption></figure>
+  </div>
+</div></section>
+
+<!-- ============ 10b requirements ============ -->
+<section class="slide" data-t="五项量测需求 vs 实现"><div class="fit">
+  <div class="kicker">04 · 需求对照</div>
+  <h2>五项量测需求 → 实现状态</h2>
+  <p class="lead">客户提出的五项，前四项已完成并有实测数据；第五项<b>已能出数，但定义与量值口径仍需对齐</b>。</p>
+  <div class="body">
+    <table class="sm">
+      <thead><tr>
+        <th style="width:4%">#</th><th style="width:20%">需求</th><th style="width:17%">对应模块</th>
+        <th style="width:33%">输出的关键量</th><th style="width:15%">实测（26 张中位数）</th><th style="width:11%">状态</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td>1</td><td><b>Leveling &amp; Scale Calibration</b><br>校平与标尺标定</td>
+          <td>M1 <code>leveling</code><br>+ 标尺解析</td>
+          <td><code>angle_deg_image</code> · <code>angle_stderr_deg</code> · <code>rmse</code> · <code>residual_angle_deg_after_rotation</code>；<code>scale_nm_per_px</code> · <code>fov_nm</code> · <code>scale_source</code></td>
+          <td>倾角 0.259°<br>0.0746 nm/px</td>
+          <td><span class="badge b-ok">已完成</span></td>
+        </tr>
+        <tr>
+          <td>2</td><td><b>SAF Ru Tip ↔ MgO Alignment</b><br>Ru 端点与势垒对位</td>
+          <td>M3 <code>interfaces</code><br>（依赖 M2 的 b3/b4）</td>
+          <td><code>a1_b1</code> · <code>a1_b3</code> · <code>a2_b2</code> · <code>a2_b4</code> 各自的 <code>dx</code>/<code>dy</code>/<code>distance</code>（px + nm）</td>
+          <td>dx ±5.332 nm<br>左右严格对称</td>
+          <td><span class="badge b-ok">已完成</span></td>
+        </tr>
+        <tr>
+          <td>3</td><td><b>Ru Tip Waviness</b><br>Ru 端点起伏</td>
+          <td>M4 <code>*_dip</code></td>
+          <td><code>max_downward_deviation</code> · <code>max_downward_arclength</code> · <code>max_abs_deviation</code> · 整条 <code>deviation_profile</code></td>
+          <td>左 0.597 nm<br>右 0.709 nm</td>
+          <td><span class="badge b-ok">已完成</span></td>
+        </tr>
+        <tr>
+          <td>4</td><td><b>Sensor Barrier Waviness</b><br>势垒层起伏</td>
+          <td>M2 <code>mgo_c</code></td>
+          <td><code>rmse</code> · <code>max_residual</code> · <code>perp_rmse</code> · <code>angle_deg_image</code> · <code>fit_length</code> · <code>residual_profile</code></td>
+          <td>rmse 0.045 nm<br>max 0.126 nm</td>
+          <td><span class="badge b-ok">已完成</span></td>
+        </tr>
+        <tr>
+          <td>5</td><td><b>Junction Bottom Corners</b><br>结底部拐角</td>
+          <td>M5 <code>milling_l/r</code><br>M6 <code>non_mag</code><br>M7 <code>corner_offsets</code></td>
+          <td><code>m1</code>/<code>m2</code> · <code>local_circle.radius</code> · <code>Non_mag1</code>/<code>Non_mag2</code> · 拐角 <code>dx</code>/<code>dy</code>/<code>distance</code></td>
+          <td>R 4.84 / 5.33 nm<br>拐角 dx ∓1.27 nm</td>
+          <td><span class="badge b-mid">待优化</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="cols c2" style="margin-top:6px">
+      <div class="pane"><div class="warn" style="margin-top:0"><b>第 5 项还缺什么</b>
+      <ol style="margin:3px 0 0 15px">
+        <li><b>"拐角"的定义未确认</b>：现在取研磨面<b>曲率最大点</b>；若客户指的是两条直段<b>延长线的交点</b>，
+        后者对尺度不敏感、更稳，但结果会系统性不同</li>
+        <li><b>曲率幅值是尺度相关量</b>：样条 4.82 nm vs 密切圆 4.84 nm（合成真值上差 15%），
+        需约定"在多长的窗口上定义半径"</li>
+        <li><b><code>Block_D</code> 下边缘（blockD1/blockD2）当前版本没有</b>，早期需求 7 被 <code>corner_offsets</code> 取代了</li>
+        <li><code>local_circle.reliable = false</code> 时<b>没有备选量值</b>，只能弃用该图</li>
+      </ol></div></div>
+      <div class="pane"><div class="note" style="margin-top:0"><b>注意两套编号不要混</b>
+      代码里 <code>measures/*.py</code> 顶部写的 <code>Requirement 1–7</code> 是<b>早期的内部编号</b>，
+      与客户这五项不是一一对应：
+      <br>内部 1 → 客户 1　|　内部 2、3 → 客户 2、3　|　内部 4 → 客户 4　|　<b>内部 5、6、7 → 全部归到客户第 5 项</b>
+      <br>这也是为什么第 5 项跨了三个模块、优化空间也最大。</div></div>
+    </div>
   </div>
 </div></section>
 

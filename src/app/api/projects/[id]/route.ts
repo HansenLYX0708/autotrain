@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { notFoundOrDenied, requireOwnedScope } from '@/lib/auth';
+import { isDetection, resolveTask } from '@/lib/frameworks';
 
 // Helper function to validate ID
 function isValidId(id: string): boolean {
@@ -190,21 +191,22 @@ export async function PUT(
     if (framework !== undefined) {
       updateData.framework = framework;
     }
-    // Resolve task based on the effective framework.
-    // PaddleSeg -> semantic_segmentation; PaddleDetection -> detection|instance_segmentation; others -> detection.
+    // Resolve task from the framework registry (see `resolveTask`). Segmentation
+    // and classification frameworks have exactly one task; detection frameworks
+    // additionally allow instance_segmentation.
     const effectiveFramework = framework !== undefined ? framework : existingProject.framework;
-    if (effectiveFramework === 'PaddleSeg') {
-      updateData.task = 'semantic_segmentation';
-    } else if (effectiveFramework === 'PaddleDetection') {
+    if (isDetection(effectiveFramework)) {
       if (task !== undefined && allowedTasks.includes(task)) {
         updateData.task = task;
       } else if (framework !== undefined) {
-        // Switching into PaddleDetection without a valid task -> keep existing valid task or default
-        updateData.task = allowedTasks.includes(existingProject.task) ? existingProject.task : 'detection';
+        // Switching into a detection framework without a valid task -> keep the
+        // existing valid task, else the framework's default.
+        updateData.task = allowedTasks.includes(existingProject.task)
+          ? existingProject.task
+          : resolveTask(effectiveFramework);
       }
-    } else if (framework !== undefined) {
-      // PaddleClas or any other framework
-      updateData.task = 'detection';
+    } else if (framework !== undefined || task !== undefined) {
+      updateData.task = resolveTask(effectiveFramework);
     }
     if (status !== undefined) {
       updateData.status = status;

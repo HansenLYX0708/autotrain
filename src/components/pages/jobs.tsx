@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { buildTrainCommand } from '@/lib/job-commands'
+import { isTorch } from '@/lib/frameworks'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -372,46 +374,36 @@ export function JobsPage() {
     }
   }
 
+  /**
+   * Preview of the command the server will generate.
+   *
+   * Built with the same `@/lib/job-commands` helpers the creation route uses, so
+   * the preview cannot drift from what actually runs. (It previously had its own
+   * copy of the logic, which had already diverged — e.g. it always emitted the
+   * Paddle distributed launcher, which a torch job must not use.)
+   */
   const generateCommand = () => {
     if (!formData.name || !formData.projectId) return ''
-    
+
     const jobName = formData.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase()
     const project = projects.find(p => p.id === formData.projectId)
     const framework = project?.framework || 'PaddleDetection'
+    const projectSlug = (project?.name || 'project')
+      .replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase()
     const configPath = `configs/autotrain/jobs/${jobName}.yml`
-    
-    const parts: string[] = []
-    
-    // GPU selection - always use paddle.distributed.launch
-    const gpuIds = formData.gpuIds || '0'
-    parts.push(`python -m paddle.distributed.launch --gpus ${gpuIds} tools/train.py`)
+    const outputDir = `output/${projectSlug}/${jobName}`
 
-    if (framework === 'PaddleSeg') {
-      // PaddleSeg uses --config and its own flags
-      parts.push(`--config ${configPath}`)
-      parts.push('--do_eval')
-      parts.push(`--save_dir output/${project?.name || 'default'}/${jobName}`)
-      if (formData.useVdl) {
-        parts.push('--use_vdl')
-      }
-      return parts.join(' ')
-    }
-
-    // Config file - use merged job config
-    parts.push(`-c ${configPath}`)
-
-    // AMP
-    if (formData.useAmp) {
-      parts.push('--amp')
-    }
-
-    // VDL
-    if (formData.useVdl) {
-      parts.push('--use_vdl=true')
-      parts.push(`--vdl_log_dir=output/${project?.name || 'default'}/${jobName}/vdl`)
-    }
-
-    return parts.join(' ')
+    return buildTrainCommand({
+      framework,
+      configPath,
+      // The server substitutes the user's absolute jobs folder here; the preview
+      // shows the relative fallback so it stays readable.
+      saveDir: outputDir,
+      outputDir,
+      gpuIds: formData.gpuIds || '0',
+      useAmp: formData.useAmp,
+      useVdl: formData.useVdl,
+    })
   }
   
   const generateCommandDisplay = () => {
@@ -421,13 +413,18 @@ export function JobsPage() {
     const gpuIds = formData.gpuIds || '0'
     const isMultiGpu = gpuIds.includes(',')
     const isWindows = typeof window !== 'undefined' && window.navigator.platform.toLowerCase().includes('win')
-    
+    const framework = projects.find(p => p.id === formData.projectId)?.framework
+
     let display = cmd
-    
-    if (isMultiGpu && isWindows) {
+
+    if (isMultiGpu && isTorch(framework)) {
+      // torchtrain is single-process by design; it trains on the first visible
+      // GPU. Saying so is better than letting the user believe both are used.
+      display = `# NOTE: the PyTorch trainer is single-process and will use GPU ${gpuIds.split(',')[0].trim()} only.\n${cmd}`
+    } else if (isMultiGpu && isWindows) {
       display = `# WARNING: Multi-GPU training is only supported on Linux.\n# On Windows, please use single GPU or WSL2.\n${cmd}`
     }
-    
+
     return display
   }
 

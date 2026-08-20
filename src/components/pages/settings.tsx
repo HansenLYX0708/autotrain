@@ -22,11 +22,32 @@ import {
   Trash2,
   X
 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { FRAMEWORK_LIST, FRAMEWORK_META } from '@/lib/frameworks'
 import { useAuth } from '@/contexts/auth-context'
 import { toast } from '@/hooks/use-toast'
 
 interface GpuPythonMapping {
   gpuId: number
+  pythonPath: string
+}
+
+/**
+ * A per-framework interpreter override.
+ *
+ * Needed because a PaddlePaddle environment has no `torch` and a torch
+ * environment has no `paddle`, so the per-GPU mapping below cannot serve both
+ * runtimes. `framework` is a framework name, or `"<framework>:<gpuId>"` when a
+ * specific GPU needs its own build.
+ */
+interface FrameworkPythonMapping {
+  framework: string
   pythonPath: string
 }
 
@@ -40,6 +61,8 @@ interface SystemConfig {
   paddleDetectionPath: string
   paddleClasPath: string
   paddleSegPath: string
+  torchPath: string
+  frameworkPythonMappings: FrameworkPythonMapping[]
   defaultFramework: string
 }
 
@@ -56,6 +79,8 @@ export function SettingsPage() {
     paddleDetectionPath: '',
     paddleClasPath: '',
     paddleSegPath: '',
+    torchPath: '',
+    frameworkPythonMappings: [],
     defaultFramework: 'PaddleDetection',
   })
   const [loading, setLoading] = useState(true)
@@ -115,6 +140,21 @@ export function SettingsPage() {
                 mappings = []
               }
             }
+
+            // Parse frameworkPythonMappings. Keys are framework names (optionally
+            // "<framework>:<gpuId>"), values are interpreter paths.
+            let frameworkMappings: FrameworkPythonMapping[] = []
+            if (data.frameworkPythonMappings) {
+              try {
+                const parsed = JSON.parse(data.frameworkPythonMappings)
+                frameworkMappings = Object.entries(parsed).map(([framework, path]) => ({
+                  framework,
+                  pythonPath: path as string,
+                }))
+              } catch {
+                frameworkMappings = []
+              }
+            }
             
             setConfig({
               condaEnv: data.condaEnv || '',
@@ -126,6 +166,8 @@ export function SettingsPage() {
               paddleDetectionPath: data.paddleDetectionPath || '',
               paddleClasPath: data.paddleClasPath || '',
               paddleSegPath: data.paddleSegPath || '',
+              torchPath: data.torchPath || '',
+              frameworkPythonMappings: frameworkMappings,
               defaultFramework: data.defaultFramework || 'PaddleDetection',
             })
           }
@@ -161,6 +203,13 @@ export function SettingsPage() {
           mappingsObject[mapping.gpuId.toString()] = mapping.pythonPath.trim()
         }
       })
+
+      const frameworkMappingsObject: Record<string, string> = {}
+      config.frameworkPythonMappings.forEach(mapping => {
+        if (mapping.framework.trim() && mapping.pythonPath.trim()) {
+          frameworkMappingsObject[mapping.framework.trim()] = mapping.pythonPath.trim()
+        }
+      })
       
       const payload = {
         condaEnv: config.condaEnv,
@@ -172,6 +221,8 @@ export function SettingsPage() {
         paddleDetectionPath: config.paddleDetectionPath,
         paddleClasPath: config.paddleClasPath,
         paddleSegPath: config.paddleSegPath,
+        torchPath: config.torchPath,
+        frameworkPythonMappings: JSON.stringify(frameworkMappingsObject),
         defaultFramework: config.defaultFramework,
       }
       
@@ -429,7 +480,7 @@ export function SettingsPage() {
             Framework Paths
           </CardTitle>
           <CardDescription>
-            Configure paths to PaddleDetection, PaddleClas and PaddleSeg repositories
+            Configure paths to the PaddlePaddle repositories and the bundled PyTorch trainer
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -487,7 +538,117 @@ export function SettingsPage() {
                 Path to PaddleSeg repository
               </p>
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="torchPath">PyTorch Trainer Path (torchtrain)</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="torchPath"
+                  value={config.torchPath}
+                  onChange={(e) => setConfig({ ...config, torchPath: e.target.value })}
+                  placeholder="D:\\_work\\projects\\autoTraining\\Autotrain_g\\torchtrain"
+                />
+                <Button variant="outline" size="icon">
+                  <FolderOpen className="w-4 h-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Shared by the <strong>TorchDet</strong> and <strong>TorchSeg</strong> frameworks.
+                This trainer ships with the app, so the default points at the{' '}
+                <code>torchtrain/</code> folder next to the server — you normally do not need to
+                change it.
+              </p>
+            </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Framework Python environments */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cpu className="w-5 h-5" />
+            Framework Python Environments
+          </CardTitle>
+          <CardDescription>
+            Per-framework interpreter overrides. Required for the PyTorch frameworks, because a
+            PaddlePaddle environment has no <code>torch</code> and the GPU mapping above normally
+            points at PaddlePaddle environments.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {config.frameworkPythonMappings.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No overrides configured. Jobs fall back to the per-GPU Python mapping.
+            </p>
+          )}
+
+          {config.frameworkPythonMappings.map((mapping, index) => (
+            <div key={index} className="flex gap-2 items-end">
+              <div className="space-y-2 w-56">
+                <Label>Framework</Label>
+                <Select
+                  value={mapping.framework}
+                  onValueChange={(value) => {
+                    const next = [...config.frameworkPythonMappings]
+                    next[index] = { ...next[index], framework: value }
+                    setConfig({ ...config, frameworkPythonMappings: next })
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select framework" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FRAMEWORK_LIST.map((f) => (
+                      <SelectItem key={f} value={f}>{f}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2 flex-1">
+                <Label>Python Executable</Label>
+                <Input
+                  value={mapping.pythonPath}
+                  onChange={(e) => {
+                    const next = [...config.frameworkPythonMappings]
+                    next[index] = { ...next[index], pythonPath: e.target.value }
+                    setConfig({ ...config, frameworkPythonMappings: next })
+                  }}
+                  placeholder="D:\\pythonEnvs\\torchEnv\\Scripts\\python.exe"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setConfig({
+                  ...config,
+                  frameworkPythonMappings: config.frameworkPythonMappings.filter((_, i) => i !== index),
+                })}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </div>
+          ))}
+
+          <Button
+            variant="outline"
+            onClick={() => {
+              // Default to the first framework that has no mapping yet, so
+              // clicking Add twice does not create a duplicate key.
+              const used = new Set(config.frameworkPythonMappings.map((m) => m.framework))
+              const next = FRAMEWORK_LIST.find((f) => !used.has(f)) ?? FRAMEWORK_LIST[0]
+              setConfig({
+                ...config,
+                frameworkPythonMappings: [
+                  ...config.frameworkPythonMappings,
+                  { framework: next, pythonPath: '' },
+                ],
+              })
+            }}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add Framework Environment
+          </Button>
         </CardContent>
       </Card>
 
@@ -559,24 +720,15 @@ export function SettingsPage() {
             <div className="space-y-2">
               <Label>Default Framework</Label>
               <div className="flex flex-wrap gap-3">
-                <Button
-                  variant={config.defaultFramework === 'PaddleDetection' ? 'default' : 'outline'}
-                  onClick={() => setConfig({ ...config, defaultFramework: 'PaddleDetection' })}
-                >
-                  PaddleDetection
-                </Button>
-                <Button
-                  variant={config.defaultFramework === 'PaddleClas' ? 'default' : 'outline'}
-                  onClick={() => setConfig({ ...config, defaultFramework: 'PaddleClas' })}
-                >
-                  PaddleClas
-                </Button>
-                <Button
-                  variant={config.defaultFramework === 'PaddleSeg' ? 'default' : 'outline'}
-                  onClick={() => setConfig({ ...config, defaultFramework: 'PaddleSeg' })}
-                >
-                  PaddleSeg
-                </Button>
+                {FRAMEWORK_LIST.map((f) => (
+                  <Button
+                    key={f}
+                    variant={config.defaultFramework === f ? 'default' : 'outline'}
+                    onClick={() => setConfig({ ...config, defaultFramework: f })}
+                  >
+                    {f}
+                  </Button>
+                ))}
               </div>
               <p className="text-xs text-muted-foreground">
                 Framework to use by default for new projects
@@ -595,21 +747,25 @@ export function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Reflects whether each framework's repository path is set. The
+              Dashboard's Environment Check verifies the contents; this card is
+              only a configuration summary, so it must not claim "Ready" for a
+              framework the admin never pointed anywhere. */}
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/50">
-              <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              <div>
-                <div className="font-medium text-sm">Python</div>
-                <div className="text-xs text-muted-foreground">Ready</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/50">
-              <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              <div>
-                <div className="font-medium text-sm">PaddleDetection</div>
-                <div className="text-xs text-muted-foreground">Ready</div>
-              </div>
-            </div>
+            {FRAMEWORK_LIST.map((f) => {
+              const configured = !!config[FRAMEWORK_META[f].pathField as keyof SystemConfig]
+              return (
+                <div key={f} className="flex items-center gap-3 p-3 rounded-lg border bg-muted/50">
+                  <div className={`w-2 h-2 rounded-full ${configured ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`} />
+                  <div>
+                    <div className="font-medium text-sm">{f}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {configured ? 'Path configured' : 'Path not set'}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </CardContent>
       </Card>

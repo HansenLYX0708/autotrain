@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
 import { logActivity } from '@/lib/activity-log';
+import { normalizeFramework, resolveTask } from '@/lib/frameworks';
 
 // GET /api/projects - Get all projects with counts (filtered by user for non-admins)
 export async function GET(request: NextRequest) {
@@ -57,18 +58,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, description, framework, task } = body;
 
-    // Resolve framework and task. PaddleSeg always uses semantic_segmentation;
-    // instance_segmentation is only meaningful for PaddleDetection.
+    // Resolve framework and task from the framework registry: segmentation
+    // frameworks always use semantic_segmentation, classification uses
+    // classification, and instance_segmentation is only meaningful for the
+    // detection frameworks. Unknown values normalise to PaddleDetection.
     const allowedTasks = ['detection', 'instance_segmentation'];
-    const resolvedFramework = framework || 'PaddleDetection';
-    let finalTask: string;
-    if (resolvedFramework === 'PaddleSeg') {
-      finalTask = 'semantic_segmentation';
-    } else if (resolvedFramework === 'PaddleDetection') {
-      finalTask = task && allowedTasks.includes(task) ? task : 'detection';
-    } else {
-      finalTask = 'detection';
-    }
+    const resolvedFramework = normalizeFramework(framework);
+    const finalTask = resolveTask(
+      resolvedFramework,
+      task && allowedTasks.includes(task) ? task : undefined,
+    );
 
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim() === '') {

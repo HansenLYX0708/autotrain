@@ -8,6 +8,7 @@ import { sessions } from '../../auth/route';
 import sharp from 'sharp';
 import { buildColorIndex } from '@/lib/seg-colors';
 import { parseListFile } from '@/lib/paddleseg-list';
+import { isSegmentation } from '@/lib/frameworks';
 
 const execAsync = promisify(exec);
 
@@ -156,7 +157,7 @@ export async function POST(request: NextRequest) {
 
     // PaddleSeg datasets: compute counts from list files and a sampled per-class
     // pixel/image distribution by decoding pseudo-color masks.
-    if ((dataset as any).project?.framework === 'PaddleSeg') {
+    if (isSegmentation((dataset as any).project?.framework)) {
       const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
         ? dataset.datasetDir
         : path.join(userDatabasePath, user.username, dataset.datasetDir || '');

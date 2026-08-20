@@ -76,8 +76,8 @@ figcaption{color:var(--dim);font-size:13px;margin-top:10px;text-align:center}
 .note{background:#141c26;border-color:#254058}
 .warn{background:#241d10;border-color:#5a4718}
 .tip{background:#122019;border-color:#1f4a3a}
-.note b,.warn b,.tip b{display:block;margin-bottom:4px}
-.warn b{color:var(--warn)} .tip b{color:var(--ok)} .note b{color:var(--accent)}
+.note > b:first-child,.warn > b:first-child,.tip > b:first-child{display:block;margin-bottom:4px}
+.warn > b:first-child{color:var(--warn)} .tip > b:first-child{color:var(--ok)} .note > b:first-child{color:var(--accent)}
 
 .pipe{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:22px 0}
 .pipe .step{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--line);
@@ -128,6 +128,7 @@ footer{color:var(--dim);font-size:13px;margin-top:60px;padding-top:20px;border-t
     </li>
     <li><a href="#s4">4. Measurements, one by one</a>
       <ol>
+        <li><a href="#req">4.0 The five requirements</a></li>
         <li><a href="#m1">M1 leveling</a></li>
         <li><a href="#m2">M2 mgo_c straightness</a></li>
         <li><a href="#m3">M3 interfaces offsets</a></li>
@@ -199,6 +200,10 @@ The approach is to let a segmentation model identify each layer first, then meas
 <tr><td>Results written back to the DB / shown in the web UI</td><td><span class="badge b-no">missing</span></td><td>The analysis tool is a standalone CLI</td></tr>
 </tbody>
 </table>
+
+<p>The table above is organised by <b>code module</b>. Mapped onto the <b>customer's five measurement
+requirements</b>: <b>1–4 are complete</b>, and <b>#5 (Junction Bottom Corners) already produces numbers but its
+definition still needs alignment</b> — the item-by-item comparison is in <a href="#req">§4.0</a>.</p>
 
 <!-- ============================================================ -->
 <h2 class="sec" id="s1"><span class="n">01</span>End-to-end pipeline</h2>
@@ -451,6 +456,83 @@ the tool self-checks that the rotation really did flatten it.</p>
 
 <!-- ============================================================ -->
 <h2 class="sec" id="s4"><span class="n">04</span>Measurements, one by one</h2>
+
+<h3 id="req">4.0 The five requirements → status</h3>
+
+<p>Four of the five requirements are complete and backed by measured data. The fifth already produces numbers,
+but <b>its definition and the choice of magnitude still need to be agreed</b>.</p>
+
+<table>
+<thead><tr>
+  <th style="width:3%">#</th><th style="width:18%">Requirement</th><th style="width:15%">Module(s)</th>
+  <th style="width:32%">Key outputs</th><th style="width:17%">Measured (median, n=26)</th><th style="width:9%">Status</th>
+</tr></thead>
+<tbody>
+<tr>
+  <td>1</td><td><b>Leveling &amp; Scale Calibration</b></td>
+  <td><a href="#m1">M1 <code>leveling</code></a> + scale resolution</td>
+  <td><code>angle_deg_image</code>, <code>angle_stderr_deg</code>, <code>rmse</code>, <code>residual_angle_deg_after_rotation</code>; <code>scale_nm_per_px</code>, <code>fov_nm</code>, <code>scale_source</code></td>
+  <td>tilt 0.259° (σ 0.63)<br>0.074580 nm/px</td>
+  <td><span class="badge b-ok">done</span></td>
+</tr>
+<tr>
+  <td>2</td><td><b>SAF Ru Tip ↔ MgO Alignment</b></td>
+  <td><a href="#m3">M3 <code>interfaces</code></a><br>(uses <a href="#m2">M2</a>'s b3/b4)</td>
+  <td><code>a1_b1</code>, <code>a1_b3</code>, <code>a2_b2</code>, <code>a2_b4</code>, each with <code>dx</code>/<code>dy</code>/<code>distance</code> (px + nm, plus <code>convention</code>)</td>
+  <td>dx +5.332 / −5.332 nm<br>(σ 0.61 / 0.50)</td>
+  <td><span class="badge b-ok">done</span></td>
+</tr>
+<tr>
+  <td>3</td><td><b>Ru Tip Waviness</b></td>
+  <td><a href="#m4">M4 <code>*_dip</code></a></td>
+  <td><code>max_downward_deviation</code>, <code>max_downward_arclength</code>, <code>max_abs_deviation</code>, full <code>deviation_profile</code></td>
+  <td>left 0.597 nm, right 0.709 nm</td>
+  <td><span class="badge b-ok">done</span></td>
+</tr>
+<tr>
+  <td>4</td><td><b>Sensor Barrier Waviness</b></td>
+  <td><a href="#m2">M2 <code>mgo_c</code></a></td>
+  <td><code>rmse</code>, <code>max_residual</code>, <code>perp_rmse</code>, <code>angle_deg_image</code>, <code>fit_length</code>, <code>residual_profile</code></td>
+  <td>rmse 0.045 nm<br>max_residual 0.126 nm</td>
+  <td><span class="badge b-ok">done</span></td>
+</tr>
+<tr>
+  <td>5</td><td><b>Junction Bottom Corners</b></td>
+  <td><a href="#m5">M5 <code>milling_l/r</code></a><br><a href="#m6">M6 <code>non_mag</code></a><br><a href="#m7">M7 <code>corner_offsets</code></a></td>
+  <td><code>m1</code>/<code>m2</code>, <code>local_circle.radius</code>, <code>tail_left/right</code>, <code>Non_mag1</code>/<code>Non_mag2</code>, corner <code>dx</code>/<code>dy</code>/<code>distance</code></td>
+  <td>R 4.835 / 5.329 nm<br>corner dx −1.251 / +1.288 nm</td>
+  <td><span class="badge b-mid">to refine</span></td>
+</tr>
+</tbody>
+</table>
+
+<div class="warn"><b>What requirement 5 still needs</b>
+<ol style="margin:6px 0 0 18px">
+<li><b>The definition of "corner" has not been confirmed with the customer.</b> Today it is the
+<b>curvature maximum</b> of the milled flank. If what is wanted is the <b>intersection of the two straight
+tails</b> (<code>tail_left</code> / <code>tail_right</code> already fit those lines), that definition is
+<b>insensitive to measurement scale and more stable</b>, but its numbers would differ systematically from the
+current ones. This is not an accuracy problem, it is a definition problem, and it has to be settled first.</li>
+<li><b>Curvature magnitude is scale-dependent.</b> The spline says 4.818 nm, the osculating circle 4.835 nm,
+and on synthetic ground truth the two differ by 15%. "Over what window is the radius defined" must be written
+into the spec, or two parties will quote two numbers that never reconcile.</li>
+<li><b><code>Block_D</code>'s lower edge (<code>blockD1</code>/<code>blockD2</code>) is not implemented</b> in
+the current tree; the old internal requirement 7 was superseded by <code>corner_offsets</code>. If the junction
+bottom still needs that edge, adding a module with the <a href="#s7">§7</a> template is cheap.</li>
+<li><b>There is no fallback when <code>local_circle.reliable = false</code></b> — the image is simply discarded.
+Falling back to the spline radius with a stated uncertainty would be better.</li>
+<li>All of the above are <b>definition alignment</b>, not algorithm defects. The first four can be called done
+precisely because their definitions are unambiguous.</li>
+</ol></div>
+
+<div class="note"><b>Two numbering schemes — do not mix them</b>
+The <code>Requirement 1–7</code> comments at the top of <code>measures/*.py</code> are an <b>older internal
+numbering</b> and do not map one-to-one onto the customer's five:
+<br>internal 1 → customer 1　|　internal 2, 3 → customer 2, 3　|　internal 4 → customer 4　|
+<b>internal 5, 6, 7 → all fold into customer #5</b>
+<br>Which also explains why #5 spans three modules and carries the most room for refinement.</div>
+
+<h3>4.1 Module execution order</h3>
 
 <p>The seven modules run in registry order, and later ones may read earlier results:
 <code>leveling → mgo_c → interfaces → milling_l → milling_r → non_mag → corner_offsets</code>.

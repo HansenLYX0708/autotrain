@@ -1,0 +1,20 @@
+# torchtrain runtime dependencies.
+#
+# torch / torchvision are intentionally unpinned here: the CUDA build must match
+# the machine's driver, so install them from the PyTorch index first, e.g.
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+torch>=1.13
+torchvision>=0.14
+numpy>=1.21
+opencv-python>=4.5
+Pillow>=9.0
+PyYAML>=5.4
+
+# Optional. Everything below degrades gracefully when absent:
+#   pycocotools  - use the reference COCO evaluator instead of the built-in one
+#                  (the built-in one is used automatically when this is missing)
+#   tensorboard  - required by --use_vdl
+#   onnx         - required by `tools/export.py --format onnx`
+# pycocotools>=2.0.6
+# tensorboard>=2.10
+# onnx>=1.13

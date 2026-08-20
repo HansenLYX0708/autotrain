@@ -35,6 +35,12 @@ export interface ParsedTrainLog {
   lossDfl?: number | null
   lossL1?: number | null
 
+  // ---- Detection eval metrics (COCO) -----------------------------------
+  /** AP @[IoU=0.50:0.95 | area=all | maxDets=100]. */
+  mAP?: number | null
+  /** AP @[IoU=0.50 | area=all | maxDets=100]. */
+  mAP50?: number | null
+
   // ---- Segmentation eval metrics ---------------------------------------
   mIoU?: number | null
   acc?: number | null
