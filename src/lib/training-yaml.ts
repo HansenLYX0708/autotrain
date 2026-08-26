@@ -27,7 +27,8 @@ export type ConfigFramework =
   | 'PaddleClas'
   | 'PaddleSeg'
   | 'TorchDet'
-  | 'TorchSeg';
+  | 'TorchSeg'
+  | 'TorchAnomaly';
 
 const CONFIG_FRAMEWORKS: ConfigFramework[] = [
   'PaddleDetection',
@@ -35,6 +36,7 @@ const CONFIG_FRAMEWORKS: ConfigFramework[] = [
   'PaddleSeg',
   'TorchDet',
   'TorchSeg',
+  'TorchAnomaly',
 ];
 
 export function asConfigFramework(value: string | null | undefined): ConfigFramework {
@@ -51,7 +53,7 @@ export function asConfigFramework(value: string | null | undefined): ConfigFrame
  * shared instead of forked, and a project can be migrated between runtimes by
  * changing `project.framework` alone.
  */
-type ConfigSchema = 'detection' | 'classification' | 'segmentation';
+type ConfigSchema = 'detection' | 'classification' | 'segmentation' | 'anomaly';
 
 const CONFIG_SCHEMA: Record<ConfigFramework, ConfigSchema> = {
   PaddleDetection: 'detection',
@@ -59,6 +61,11 @@ const CONFIG_SCHEMA: Record<ConfigFramework, ConfigSchema> = {
   PaddleSeg: 'segmentation',
   TorchDet: 'detection',
   TorchSeg: 'segmentation',
+  // TorchAnomaly is the exception to the "reuse a Paddle schema" rule: there is
+  // no Paddle anomaly-detection framework to mirror, so it emits anomalib's own
+  // `trainer:` / `data:` / `model:` shape. The three-config split still lines up
+  // one-to-one with those three blocks.
+  TorchAnomaly: 'anomaly',
 };
 
 export function configSchemaOf(framework: ConfigFramework): ConfigSchema {
@@ -66,12 +73,13 @@ export function configSchemaOf(framework: ConfigFramework): ConfigSchema {
 }
 
 export function isTorchConfigFramework(framework: ConfigFramework): boolean {
-  return framework === 'TorchDet' || framework === 'TorchSeg';
+  return framework === 'TorchDet' || framework === 'TorchSeg' || framework === 'TorchAnomaly';
 }
 
 /** True when the framework measures training length in iterations, not epochs. */
 export function countsIterations(framework: ConfigFramework): boolean {
-  return CONFIG_SCHEMA[framework] === 'segmentation';
+  const schema = CONFIG_SCHEMA[framework];
+  return schema === 'segmentation' || schema === 'anomaly';
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +156,28 @@ export interface TrainingParams {
   segAugScaleAspect: boolean;
   segAugBlur: boolean;
 
+  // Anomaly detection (TorchAnomaly / anomalib) ----------------------------
+  /**
+   * Input tiling. Keeps the effective resolution while feeding the model small
+   * crops, which is the only way small defects survive on a large image.
+   * Supported by PaDiM / PatchCore / ReverseDistillation / STFPM **only** —
+   * `ANOMALY_PRESETS[...].supportsTiling` gates the control.
+   */
+  adTileEnabled: boolean;
+  adTileSize: number;
+  adTileStride: number;
+  /**
+   * Validation cadence in steps. Not emitted as Lightning's
+   * `val_check_interval`, because an int larger than the number of training
+   * batches is a hard error unless `check_val_every_n_epoch` is None — and for
+   * a one-epoch model (PatchCore/PaDiM) disabling epoch-end validation would
+   * skip validation entirely. The adapter converts this into a safe pair of
+   * Trainer arguments once it knows the batch count and the model.
+   */
+  adValInterval: number;
+  /** Metric the best-checkpoint callback monitors, e.g. `image_AUROC`. */
+  adBestMetric: string;
+
   // Runtime ----------------------------------------------------------------
   useGpu: boolean;
   useAmp: boolean;
@@ -205,6 +235,12 @@ export const DEFAULT_TRAINING_PARAMS: TrainingParams = {
   segAugScaleAspect: false,
   segAugBlur: false,
 
+  adTileEnabled: false,
+  adTileSize: 512,
+  adTileStride: 256,
+  adValInterval: 500,
+  adBestMetric: 'image_AUROC',
+
   useGpu: true,
   useAmp: false,
   useEma: false,
@@ -258,6 +294,21 @@ const FRAMEWORK_DEFAULT_OVERRIDES: Record<ConfigFramework, Partial<TrainingParam
     normMean: [0.485, 0.456, 0.406],
     normStd: [0.229, 0.224, 0.225],
     segOverrideTransforms: true,
+  },
+  TorchAnomaly: {
+    // `iters` is anomalib's `trainer.max_steps` and is the knob that matters for
+    // the student-teacher models (EfficientAD's reference recipe is 70k steps).
+    // `epochs` is only a ceiling: the memory-bank models publish
+    // `trainer_arguments = {max_epochs: 1}` and anomalib's argument cache
+    // overrides whatever we pass, so an oversized value here is harmless.
+    iters: 8000,
+    epochs: 200,
+    trainBatchSize: 8,
+    evalBatchSize: 4,
+    workerNum: 4,
+    useGpu: true,
+    useAmp: false,
+    logIter: 20,
   },
   TorchDet: {
     // torchvision detectors resize internally to a [min_size, max_size] range,
@@ -341,13 +392,33 @@ const TORCH_DET_FIELDS: TrainingFieldKey[] = DETECTION_FIELDS.filter(
   (field) => !['regularizerType', 'normalizeType', 'normMean', 'normStd', 'saveDir'].includes(field),
 );
 
+// TorchAnomaly deliberately offers no optimizer / scheduler / normalisation
+// controls:
+//   - In anomalib the learning rate is a *constructor argument of the model*
+//     (`EfficientAd(lr=...)`), and the model config is merged last, so an lr set
+//     in the training config would be silently overridden. It therefore lives in
+//     the model config — the same reasoning that puts PaddleSeg's `loss:` there.
+//   - The memory-bank models (PatchCore, PaDiM) do no gradient descent at all,
+//     so an optimizer dropdown would be a no-op for half the algorithm list.
+//   - Input size and normalisation are part of the model's `PreProcessor`, which
+//     the model config owns.
+const ANOMALY_FIELDS: TrainingFieldKey[] = [
+  'iters', 'epochs', 'trainBatchSize', 'evalBatchSize', 'workerNum',
+  'useGpu', 'useAmp', 'logIter', 'saveDir',
+  'adTileEnabled', 'adTileSize', 'adTileStride', 'adValInterval', 'adBestMetric',
+];
+
 export const TRAINING_FIELD_SUPPORT: Record<ConfigFramework, Set<TrainingFieldKey>> = {
   PaddleDetection: new Set(DETECTION_FIELDS),
   PaddleClas: new Set(CLAS_FIELDS),
   PaddleSeg: new Set(SEG_FIELDS),
   TorchSeg: new Set(TORCH_SEG_FIELDS),
   TorchDet: new Set(TORCH_DET_FIELDS),
+  TorchAnomaly: new Set(ANOMALY_FIELDS),
 };
+
+/** Metrics the anomaly best-checkpoint callback can monitor. */
+export const ANOMALY_BEST_METRICS = ['image_AUROC', 'image_F1Score', 'pixel_AUROC', 'pixel_F1Score'];
 
 export function supportsField(framework: ConfigFramework, field: TrainingFieldKey): boolean {
   return TRAINING_FIELD_SUPPORT[framework].has(field);
@@ -361,6 +432,9 @@ export const OPTIMIZER_OPTIONS: Record<ConfigFramework, string[]> = {
   // Mirrors `build_optimizer` in `torchtrain/torchtrain/utils.py`.
   TorchSeg: ['SGD', 'Momentum', 'Adam', 'AdamW', 'RMSProp'],
   TorchDet: ['Momentum', 'SGD', 'Adam', 'AdamW', 'RMSProp'],
+  // Each anomalib model owns its optimizer (`configure_optimizers`), and the
+  // memory-bank models have none. Nothing to choose from.
+  TorchAnomaly: [],
 };
 
 export const SCHEDULER_OPTIONS: Record<ConfigFramework, string[]> = {
@@ -370,6 +444,7 @@ export const SCHEDULER_OPTIONS: Record<ConfigFramework, string[]> = {
   // Mirrors `LrScheduler.lr_at` in `torchtrain/torchtrain/utils.py`.
   TorchSeg: ['PolynomialDecay', 'CosineAnnealingDecay', 'PiecewiseDecay', 'StepDecay', 'ExponentialDecay'],
   TorchDet: ['CosineDecay', 'PiecewiseDecay', 'ExpDecay', 'ConstLR'],
+  TorchAnomaly: [],
 };
 
 /** Schedulers whose YAML carries `milestones` / boundary values. */
@@ -697,6 +772,73 @@ log_iters: ${num(p.logIter)}
 ${p.saveDir ? `save_dir: ${p.saveDir}\n` : ''}`;
 }
 
+/**
+ * anomalib training config: the `trainer:` block plus the two loader knobs that
+ * live on the datamodule, plus the platform's own `autotrain:` block.
+ *
+ * What is deliberately *not* here:
+ *
+ * - `val_check_interval`. Lightning rejects an int larger than the number of
+ *   training batches unless `check_val_every_n_epoch` is None, and setting it to
+ *   None would disable epoch-end validation — which is the *only* validation a
+ *   one-epoch memory-bank model ever gets. The intent is expressed as
+ *   `autotrain.val_interval` and converted by the adapter, which knows both the
+ *   batch count and the model.
+ * - The learning rate / optimizer, which anomalib models take as constructor
+ *   arguments; see the comment on `ANOMALY_FIELDS`.
+ */
+function generateAnomalyYaml(p: TrainingParams, name: string): string {
+  const tiling = p.adTileEnabled
+    ? `  callbacks:
+    - class_path: anomalib.callbacks.tiler_configuration.TilerConfigurationCallback
+      init_args:
+        enable: true
+        tile_size: [${num(p.adTileSize)}, ${num(p.adTileSize)}]
+        stride: ${num(p.adTileStride)}
+`
+    : '';
+
+  return `# ${name}
+# Training configuration generated by AutoTrain (TorchAnomaly / anomalib)
+#
+# Unlike the other frameworks this is anomalib's own schema, not a Paddle one:
+#   trainer:   Lightning Trainer arguments
+#   data:      refinements to the Folder datamodule the dataset config declares
+#   autotrain: read by torchtrain/torchtrain/ad/ and stripped before anomalib
+#              ever sees the config
+#
+# The learning rate is NOT set here. In anomalib \`lr\` is a constructor argument
+# of the model, and the model config is deep-merged last, so a value here would
+# be silently overridden. It belongs in the model config — the same reason
+# PaddleSeg's \`loss:\` lives there.
+
+trainer:
+  # max_steps is the real training length. max_epochs is only a ceiling: the
+  # memory-bank models (PatchCore, PaDiM) declare max_epochs=1 themselves and
+  # anomalib's argument cache overrides whatever we pass.
+  max_steps: ${num(p.iters)}
+  max_epochs: ${num(p.epochs)}
+  accelerator: ${p.useGpu ? 'gpu' : 'cpu'}
+  devices: 1
+  precision: ${p.useAmp ? '16-mixed' : '32-true'}
+  # The runner parses stdout to build TrainingLog rows; a rich progress bar
+  # would flood it with carriage returns and no parsable lines.
+  enable_progress_bar: false
+  num_sanity_val_steps: 0
+${tiling}
+data:
+  init_args:
+    train_batch_size: ${num(p.trainBatchSize)}
+    eval_batch_size: ${num(p.evalBatchSize)}
+    num_workers: ${num(p.workerNum)}
+
+autotrain:
+  log_iter: ${num(p.logIter)}
+  val_interval: ${num(p.adValInterval)}
+  best_metric: ${p.adBestMetric || 'image_AUROC'}
+${p.saveDir ? `  save_dir: ${p.saveDir}\n` : ''}`;
+}
+
 export function generateTrainingYaml(
   framework: ConfigFramework,
   params: TrainingParams,
@@ -707,6 +849,8 @@ export function generateTrainingYaml(
       return generateClasYaml(params, configName);
     case 'segmentation':
       return generateSegYaml(params, configName, framework);
+    case 'anomaly':
+      return generateAnomalyYaml(params, configName);
     default:
       return generateDetectionYaml(params, configName, framework);
   }
@@ -785,6 +929,9 @@ export function parseTrainingParams(
       break;
     case 'classification':
       parseClas(doc, out);
+      break;
+    case 'anomaly':
+      parseAnomaly(doc, out);
       break;
     default:
       parseDetection(doc, out, schedulerTags(parsed));
@@ -1002,6 +1149,54 @@ function parseSeg(doc: Record<string, any>, out: Partial<TrainingParams>): void 
   }
 }
 
+/**
+ * anomalib config -> parameters.
+ *
+ * Reads both the trainer block and the tiling callback, so a hand-written or
+ * imported anomalib config shows the right values in the edit dialog instead of
+ * silently reverting to defaults on the next save.
+ */
+function parseAnomaly(doc: Record<string, any>, out: Partial<TrainingParams>): void {
+  const trainer = doc.trainer ?? {};
+  // `-1` is Lightning's "unlimited" for max_steps; treat it as "not stated" so
+  // the default survives rather than persisting a nonsensical length.
+  const maxSteps = toNum(trainer.max_steps);
+  if (maxSteps !== undefined && maxSteps > 0) put(out, 'iters', maxSteps);
+  const maxEpochs = toNum(trainer.max_epochs);
+  if (maxEpochs !== undefined && maxEpochs > 0) put(out, 'epochs', maxEpochs);
+  if (typeof trainer.accelerator === 'string') out.useGpu = trainer.accelerator !== 'cpu';
+  if (typeof trainer.precision === 'string') out.useAmp = /^(16|bf16)/.test(trainer.precision);
+
+  const dataArgs = doc.data?.init_args ?? {};
+  put(out, 'trainBatchSize', toNum(dataArgs.train_batch_size));
+  put(out, 'evalBatchSize', toNum(dataArgs.eval_batch_size));
+  put(out, 'workerNum', toNum(dataArgs.num_workers));
+
+  const platform = doc.autotrain ?? {};
+  put(out, 'logIter', toNum(platform.log_iter));
+  put(out, 'adValInterval', toNum(platform.val_interval));
+  if (typeof platform.best_metric === 'string') put(out, 'adBestMetric', platform.best_metric);
+  if (typeof platform.save_dir === 'string') put(out, 'saveDir', platform.save_dir);
+
+  // `trainer.callbacks` may be a single mapping or a list of them.
+  const callbacks = Array.isArray(trainer.callbacks)
+    ? trainer.callbacks
+    : trainer.callbacks
+      ? [trainer.callbacks]
+      : [];
+  const tiler = callbacks.find(
+    (c: any) => typeof c?.class_path === 'string' && c.class_path.includes('TilerConfiguration'),
+  );
+  if (tiler) {
+    const args = tiler.init_args ?? {};
+    out.adTileEnabled = toBool(args.enable) ?? true;
+    const size = toNumList(args.tile_size) ?? (toNum(args.tile_size) !== undefined ? [toNum(args.tile_size)!] : undefined);
+    if (size && size.length > 0) put(out, 'adTileSize', size[0]);
+    const stride = toNumList(args.stride) ?? (toNum(args.stride) !== undefined ? [toNum(args.stride)!] : undefined);
+    if (stride && stride.length > 0) put(out, 'adTileStride', stride[0]);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Persistence helpers
 // ---------------------------------------------------------------------------
@@ -1024,6 +1219,19 @@ function parseSeg(doc: Record<string, any>, out: Partial<TrainingParams>): void 
 export function trainingParamsToColumns(framework: ConfigFramework, params: TrainingParams) {
   const isSeg = countsIterations(framework);
   const nativeLength = Math.max(1, Math.round(isSeg ? params.iters : params.epochs));
+  // The "checkpoint/eval cadence" column. Anomaly runs have no `save_interval`:
+  // checkpointing is driven by the monitored validation metric, so the closest
+  // honest value is how often validation happens.
+  const cadence = Math.max(
+    1,
+    Math.round(
+      CONFIG_SCHEMA[framework] === 'anomaly'
+        ? params.adValInterval
+        : isSeg
+          ? params.saveInterval
+          : params.snapshotEpoch,
+    ),
+  );
   return {
     epoch: nativeLength,
     batchSize: Math.max(1, Math.round(params.trainBatchSize)),
@@ -1034,13 +1242,13 @@ export function trainingParamsToColumns(framework: ConfigFramework, params: Trai
     warmupEpochs: Math.max(0, Math.round(isSeg ? params.warmupIters : params.warmupEpochs)),
     maxEpochs: isSeg ? nativeLength : Math.max(1, Math.round(params.maxEpochs)),
     iters: isSeg ? Math.max(1, Math.round(params.iters)) : null,
-    saveInterval: isSeg ? Math.max(1, Math.round(params.saveInterval)) : null,
+    saveInterval: isSeg ? cadence : null,
     workerNum: Math.max(0, Math.round(params.workerNum)),
     evalHeight: Math.max(1, Math.round(params.imageHeight)),
     evalWidth: Math.max(1, Math.round(params.imageWidth)),
     useGpu: params.useGpu,
     logIter: Math.max(1, Math.round(params.logIter)),
-    snapshotEpoch: Math.max(1, Math.round(isSeg ? params.saveInterval : params.snapshotEpoch)),
+    snapshotEpoch: cadence,
     saveDir: params.saveDir || null,
     outputDir: params.outputDir || null,
     weights: params.weights || null,

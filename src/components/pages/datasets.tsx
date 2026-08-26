@@ -1,7 +1,34 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { isSegmentation } from '@/lib/frameworks'
+import { frameworkMeta, isAnomaly, isSegmentation } from '@/lib/frameworks'
+
+/** Dataset layouts the importer understands; mirrors `FrameworkMeta.datasetFormat`. */
+type DatasetFormat = 'COCO' | 'PaddleSeg' | 'AnomalyFolder'
+
+/**
+ * Blank import form. Extracted so the three places that reset the dialog cannot
+ * drift apart — and so adding a field is one edit rather than four.
+ */
+const EMPTY_DATASET_FORM = {
+  name: '',
+  description: '',
+  projectId: '',
+  format: 'COCO' as DatasetFormat,
+  numClasses: 1,
+  trainImagePath: '',
+  trainAnnoPath: '',
+  evalImagePath: '',
+  evalAnnoPath: '',
+  datasetDir: '',
+  // AnomalyFolder only: directory names relative to datasetDir. Pre-filled with
+  // the layout the docs describe, since typing four paths from scratch is the
+  // most tedious part of creating an anomaly dataset.
+  normalDir: 'train_good',
+  normalTestDir: 'test_good',
+  abnormalDir: 'test_ng',
+  maskDir: 'test_ng_mask',
+}
 import { useAuth } from '@/contexts/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -94,6 +121,11 @@ interface Dataset {
   evalImagePath: string | null
   evalAnnoPath: string | null
   datasetDir: string | null
+  // AnomalyFolder only; null for every other format.
+  normalDir?: string | null
+  normalTestDir?: string | null
+  abnormalDir?: string | null
+  maskDir?: string | null
   numClasses: number
   numAnnotations: number
   numTrainImages: number
@@ -230,21 +262,14 @@ export function DatasetsPage() {
   const [confirmOverwriteOpen, setConfirmOverwriteOpen] = useState(false)
   const [confirmOverwriteMessage, setConfirmOverwriteMessage] = useState('')
   const [pendingUploadSession, setPendingUploadSession] = useState<any>(null)
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    projectId: '',
-    format: 'COCO' as 'COCO' | 'PaddleSeg',
-    numClasses: 1,
-    trainImagePath: '',
-    trainAnnoPath: '',
-    evalImagePath: '',
-    evalAnnoPath: '',
-    datasetDir: '',
-  })
+  const [formData, setFormData] = useState({ ...EMPTY_DATASET_FORM })
 
   // PaddleSeg datasets use list files (train.txt/val.txt) + num_classes instead of COCO annotations.
   const isSegDataset = isSegmentation(projects.find(p => p.id === formData.projectId)?.framework)
+
+  // Anomaly datasets are folders of images with no annotation file at all, so
+  // they bypass the annotation pickers entirely.
+  const isAnomalyDataset = isAnomaly(projects.find(p => p.id === formData.projectId)?.framework)
 
   // Whether the dataset currently selected for stats/preview is PaddleSeg.
   const isSegSelected = isSegmentation(selectedDataset?.project?.framework)
@@ -366,8 +391,9 @@ export function DatasetsPage() {
   // clean slate to reselect from the freshly-filtered dropdown.
   const handleProjectChange = (projectId: string) => {
     const newProject = projects.find(p => p.id === projectId)
-    const expectedFormat: 'COCO' | 'PaddleSeg' =
-      isSegmentation(newProject?.framework) ? 'PaddleSeg' : 'COCO'
+    // Derived from the framework registry rather than a local conditional, so a
+    // new framework's dataset layout is declared in exactly one place.
+    const expectedFormat = frameworkMeta(newProject?.framework).datasetFormat as DatasetFormat
     setFormData(prev => {
       const currentDs = availableDatasets.find(d => d.name === prev.name)
       const compatible = !currentDs || currentDs.format === expectedFormat
@@ -426,18 +452,7 @@ export function DatasetsPage() {
           toast({ title: 'Dataset created successfully' })
           fetchDatasets()
           setDialogOpen(false)
-          setFormData({
-            name: '',
-            description: '',
-            projectId: '',
-            format: 'COCO',
-            numClasses: 1,
-            trainImagePath: '',
-            trainAnnoPath: '',
-            evalImagePath: '',
-            evalAnnoPath: '',
-            datasetDir: '',
-          })
+          setFormData({ ...EMPTY_DATASET_FORM })
         } else {
           const err = await response.json().catch(() => ({}))
           toast({
@@ -514,16 +529,23 @@ export function DatasetsPage() {
   const openEditDialog = (dataset: Dataset) => {
     setEditingDataset(dataset)
     setFormData({
+      ...EMPTY_DATASET_FORM,
       name: dataset.name,
       description: dataset.description || '',
       projectId: dataset.projectId,
-      format: (dataset.format === 'PaddleSeg' ? 'PaddleSeg' : 'COCO') as 'COCO' | 'PaddleSeg',
+      format: (['PaddleSeg', 'AnomalyFolder'].includes(dataset.format)
+        ? dataset.format
+        : 'COCO') as DatasetFormat,
       numClasses: dataset.numClasses || 1,
       trainImagePath: dataset.trainImagePath || '',
       trainAnnoPath: dataset.trainAnnoPath || '',
       evalImagePath: dataset.evalImagePath || '',
       evalAnnoPath: dataset.evalAnnoPath || '',
       datasetDir: dataset.datasetDir || '',
+      normalDir: dataset.normalDir || EMPTY_DATASET_FORM.normalDir,
+      normalTestDir: dataset.normalTestDir ?? '',
+      abnormalDir: dataset.abnormalDir ?? '',
+      maskDir: dataset.maskDir ?? '',
     })
     setDialogOpen(true)
   }
@@ -1590,18 +1612,7 @@ export function DatasetsPage() {
           setDialogOpen(open)
           if (!open) {
             setEditingDataset(null)
-            setFormData({
-              name: '',
-              description: '',
-              projectId: '',
-              format: 'COCO',
-              numClasses: 1,
-              trainImagePath: '',
-              trainAnnoPath: '',
-              evalImagePath: '',
-              evalAnnoPath: '',
-              datasetDir: '',
-            })
+            setFormData({ ...EMPTY_DATASET_FORM })
           }
         }}>
           <DialogTrigger asChild>
@@ -1705,7 +1716,7 @@ export function DatasetsPage() {
                   <Label htmlFor="format">Dataset Format</Label>
                   <Select
                     value={formData.format}
-                    onValueChange={(value) => setFormData({ ...formData, format: value as 'COCO' | 'PaddleSeg' })}
+                    onValueChange={(value) => setFormData({ ...formData, format: value as DatasetFormat })}
                     disabled
                   >
                     <SelectTrigger>
@@ -1714,6 +1725,7 @@ export function DatasetsPage() {
                     <SelectContent>
                       <SelectItem value="COCO">COCO</SelectItem>
                       <SelectItem value="PaddleSeg">PaddleSeg</SelectItem>
+                      <SelectItem value="AnomalyFolder">AnomalyFolder</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">Determined by project framework.</p>
@@ -1724,19 +1736,105 @@ export function DatasetsPage() {
                     id="datasetDir"
                     value={formData.datasetDir}
                     onChange={(e) => setFormData({ ...formData, datasetDir: e.target.value })}
-                    disabled={!isSegDataset}
-                    className={isSegDataset ? '' : 'bg-muted'}
-                    placeholder={isSegDataset ? 'D:/datasets/my_seg_dataset' : undefined}
+                    disabled={!isSegDataset && !isAnomalyDataset}
+                    className={isSegDataset || isAnomalyDataset ? '' : 'bg-muted'}
+                    placeholder={
+                      isAnomalyDataset
+                        ? 'D:/datasets/slider_v1'
+                        : isSegDataset
+                          ? 'D:/datasets/my_seg_dataset'
+                          : undefined
+                    }
                   />
                   <p className="text-xs text-muted-foreground">
-                    {isSegDataset ? 'Absolute path to the segmentation dataset root (contains images, masks and list files).' : `COCO/${formData.name}/`}
+                    {isAnomalyDataset
+                      ? 'Absolute path to the folder that contains the directories below.'
+                      : isSegDataset
+                        ? 'Absolute path to the segmentation dataset root (contains images, masks and list files).'
+                        : `COCO/${formData.name}/`}
                   </p>
                 </div>
+                {/* Anomaly datasets: four directories, no annotation files.
+                    Only `normalDir` is trained on; the rest exist so the run can
+                    be evaluated and a score threshold can be chosen at all. */}
+                {isAnomalyDataset && (
+                  <>
+                    <div className="col-span-2 pt-2 border-t">
+                      <h4 className="text-sm font-medium text-muted-foreground mb-2">
+                        Image directories (relative to the dataset directory)
+                      </h4>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="normalDir">Normal images (training)</Label>
+                      <Input
+                        id="normalDir"
+                        value={formData.normalDir}
+                        onChange={(e) => setFormData({ ...formData, normalDir: e.target.value })}
+                        placeholder="train_good"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Required. The only directory the model trains on.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="normalTestDir">Normal images (evaluation)</Label>
+                      <Input
+                        id="normalTestDir"
+                        value={formData.normalTestDir}
+                        onChange={(e) => setFormData({ ...formData, normalTestDir: e.target.value })}
+                        placeholder="test_good"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Optional. Held-out OK images; without them a slice of the training
+                        images is used instead.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="abnormalDir">Defect images (evaluation only)</Label>
+                      <Input
+                        id="abnormalDir"
+                        value={formData.abnormalDir}
+                        onChange={(e) => setFormData({ ...formData, abnormalDir: e.target.value })}
+                        placeholder="test_ng"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Never trained on. Needed to compute AUROC and to pick the threshold.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="maskDir">Defect masks</Label>
+                      <Input
+                        id="maskDir"
+                        value={formData.maskDir}
+                        onChange={(e) => setFormData({ ...formData, maskDir: e.target.value })}
+                        placeholder="test_ng_mask"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Optional, one per defect image with the same file name. Required for
+                        pixel-level metrics.
+                      </p>
+                    </div>
+                    <div className="col-span-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+                      <p className="text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">How the split works.</span>{' '}
+                        anomalib builds the test set from the directories above and then takes
+                        half of it as the validation set, which is what the anomaly-score
+                        threshold is fitted on. Numbers reported on that half are therefore
+                        optimistic. Keep a separate batch of defect images out of this dataset
+                        and run a validation job against it for an unbiased figure.
+                      </p>
+                    </div>
+                  </>
+                )}
+
                 {/* Train Set Paths */}
+                {!isAnomalyDataset && (
                 <div className="col-span-2 pt-2 border-t">
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Train Set</h4>
                 </div>
-                {!isSegDataset && (
+                )}
+                {!isSegDataset && !isAnomalyDataset && (
                   <div className="space-y-2">
                     <Label htmlFor="trainImagePath">Train Images Path</Label>
                     <Input
@@ -1747,7 +1845,7 @@ export function DatasetsPage() {
                     />
                   </div>
                 )}
-                {isSegDataset ? (
+                {isAnomalyDataset ? null : isSegDataset ? (
                   <>
                     <div className="space-y-2">
                       <Label htmlFor="trainListPath">Train List File</Label>
@@ -1797,10 +1895,12 @@ export function DatasetsPage() {
                   </div>
                 )}
                 {/* Eval Set Paths */}
+                {!isAnomalyDataset && (
                 <div className="col-span-2 pt-2 border-t">
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Validation Set</h4>
                 </div>
-                {!isSegDataset && (
+                )}
+                {!isSegDataset && !isAnomalyDataset && (
                   <div className="space-y-2">
                     <Label htmlFor="evalImagePath">Eval Images Path</Label>
                     <Input
@@ -1811,7 +1911,7 @@ export function DatasetsPage() {
                     />
                   </div>
                 )}
-                {isSegDataset ? (
+                {isAnomalyDataset ? null : isSegDataset ? (
                   <div className="space-y-2">
                     <Label htmlFor="valListPath">Validation List File</Label>
                     <Input
@@ -1848,7 +1948,7 @@ export function DatasetsPage() {
                   </div>
                 )}
                 {/* Detected Classes Display */}
-                {!isSegDataset && formData.numClasses > 0 && (
+                {!isSegDataset && !isAnomalyDataset && formData.numClasses > 0 && (
                   <div className="col-span-2 pt-2">
                     <p className="text-sm text-green-600">
                       Detected {formData.numClasses} classes from train annotations
@@ -1857,7 +1957,15 @@ export function DatasetsPage() {
                 )}
               </div>
               <DialogFooter>
-                <Button type="submit" disabled={!editingDataset && !isSegDataset && availableDatasets.length === 0}>
+                {/* The "no folders scanned" guard only applies to COCO, which
+                    needs an annotation file picked from the scan. Segmentation
+                    and anomaly datasets are described by hand-typed paths. */}
+                <Button
+                  type="submit"
+                  disabled={
+                    !editingDataset && !isSegDataset && !isAnomalyDataset && availableDatasets.length === 0
+                  }
+                >
                   {editingDataset ? 'Update' : 'Import'}
                 </Button>
               </DialogFooter>

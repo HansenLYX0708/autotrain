@@ -55,6 +55,7 @@ import {
   generateTrainingYaml,
   parseTrainingParams,
   supportsField,
+  ANOMALY_BEST_METRICS,
   OPTIMIZER_OPTIONS,
   SCHEDULER_OPTIONS,
   TRAINING_FIELD_SUPPORT,
@@ -206,6 +207,9 @@ export function TrainingPage() {
 
   const dialogFramework = frameworkOf(configProjectId)
   const isSeg = countsIterations(dialogFramework)
+  // Several controls are shared with segmentation but need different wording:
+  // for an anomaly run `iters` is `trainer.max_steps` and there is no optimizer.
+  const isAnomalyConfig = dialogFramework === 'TorchAnomaly'
   const shows = (field: Parameters<typeof supportsField>[1]) => supportsField(dialogFramework, field)
 
   const generatedYaml = useMemo(
@@ -691,9 +695,9 @@ export function TrainingPage() {
                     </div>
 
                     <Tabs defaultValue="schedule" className="w-full">
-                      <TabsList className="grid w-full grid-cols-4">
+                      <TabsList className={`grid w-full ${isAnomalyConfig ? 'grid-cols-3' : 'grid-cols-4'}`}>
                         <TabsTrigger value="schedule">Schedule</TabsTrigger>
-                        <TabsTrigger value="optimizer">Optimizer</TabsTrigger>
+                        {!isAnomalyConfig && <TabsTrigger value="optimizer">Optimizer</TabsTrigger>}
                         <TabsTrigger value="data">Data</TabsTrigger>
                         <TabsTrigger value="runtime">Runtime</TabsTrigger>
                       </TabsList>
@@ -703,7 +707,7 @@ export function TrainingPage() {
                         <div className="grid grid-cols-2 gap-4">
                           {shows('iters') && (
                             <div className="space-y-2">
-                              <Label htmlFor="iters">Iterations</Label>
+                              <Label htmlFor="iters">{isAnomalyConfig ? 'Max steps' : 'Iterations'}</Label>
                               <Input
                                 id="iters"
                                 type="number"
@@ -713,13 +717,15 @@ export function TrainingPage() {
                                 onChange={(e) => setParam('iters', Number(e.target.value) || 1)}
                               />
                               <p className="text-xs text-muted-foreground">
-                                PaddleSeg trains by iteration, not epoch.
+                                {isAnomalyConfig
+                                  ? 'trainer.max_steps — the real training length. Ignored by PatchCore and PaDiM, which do a single pass over the normal images.'
+                                  : 'PaddleSeg trains by iteration, not epoch.'}
                               </p>
                             </div>
                           )}
                           {shows('epochs') && (
                             <div className="space-y-2">
-                              <Label htmlFor="epochs">Epochs</Label>
+                              <Label htmlFor="epochs">{isAnomalyConfig ? 'Max epochs (ceiling)' : 'Epochs'}</Label>
                               <Input
                                 id="epochs"
                                 type="number"
@@ -727,6 +733,12 @@ export function TrainingPage() {
                                 value={params.epochs}
                                 onChange={(e) => setParam('epochs', Number(e.target.value) || 1)}
                               />
+                              {isAnomalyConfig && (
+                                <p className="text-xs text-muted-foreground">
+                                  Whichever limit is reached first stops training. Memory-bank models
+                                  override this with 1.
+                                </p>
+                              )}
                             </div>
                           )}
                           {shows('saveInterval') && (
@@ -740,6 +752,46 @@ export function TrainingPage() {
                                 value={params.saveInterval}
                                 onChange={(e) => setParam('saveInterval', Number(e.target.value) || 1)}
                               />
+                            </div>
+                          )}
+                          {shows('adValInterval') && (
+                            <div className="space-y-2">
+                              <Label htmlFor="adValInterval">Validate every N steps</Label>
+                              <Input
+                                id="adValInterval"
+                                type="number"
+                                min={1}
+                                step={50}
+                                value={params.adValInterval}
+                                onChange={(e) => setParam('adValInterval', Number(e.target.value) || 1)}
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Each validation emits one metrics row and may update the best
+                                checkpoint. The adapter converts this into safe Lightning
+                                arguments, including for single-epoch models.
+                              </p>
+                            </div>
+                          )}
+                          {shows('adBestMetric') && (
+                            <div className="space-y-2">
+                              <Label htmlFor="adBestMetric">Best-checkpoint metric</Label>
+                              <Select
+                                value={params.adBestMetric}
+                                onValueChange={(v) => setParam('adBestMetric', v)}
+                              >
+                                <SelectTrigger id="adBestMetric">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {ANOMALY_BEST_METRICS.map((metric) => (
+                                    <SelectItem key={metric} value={metric}>{metric}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <p className="text-xs text-muted-foreground">
+                                Pixel metrics require masks for the defect images; without them the
+                                run falls back to image_AUROC.
+                              </p>
                             </div>
                           )}
                           {shows('snapshotEpoch') && (
@@ -756,6 +808,12 @@ export function TrainingPage() {
                           )}
                         </div>
 
+                        {/* No LR schedule for anomaly detection: each anomalib
+                            model builds its own optimizer and scheduler inside
+                            `configure_optimizers`, and half of them do no
+                            gradient descent at all. An empty dropdown here would
+                            imply a choice that does not exist. */}
+                        {!isAnomalyConfig && (
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <Label>LR Scheduler</Label>
@@ -835,7 +893,9 @@ export function TrainingPage() {
                             </div>
                           )}
                         </div>
+                        )}
 
+                        {!isAnomalyConfig && (
                         <div className="grid grid-cols-2 gap-4">
                           {shows('warmupEpochs') && (
                             <div className="space-y-2">
@@ -872,9 +932,19 @@ export function TrainingPage() {
                             />
                           </div>
                         </div>
+                        )}
+
+                        {isAnomalyConfig && (
+                          <p className="text-xs text-muted-foreground">
+                            The optimizer and learning rate are not configured here: in anomalib they
+                            are constructor arguments of the model, so they live in the model config.
+                            PatchCore and PaDiM have no optimizer at all.
+                          </p>
+                        )}
                       </TabsContent>
 
                       {/* ---- Optimizer ---- */}
+                      {!isAnomalyConfig && (
                       <TabsContent value="optimizer" className="space-y-4 mt-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
@@ -964,6 +1034,7 @@ export function TrainingPage() {
                           )}
                         </div>
                       </TabsContent>
+                      )}
 
                       {/* ---- Data ---- */}
                       <TabsContent value="data" className="space-y-4 mt-4">
@@ -1000,29 +1071,43 @@ export function TrainingPage() {
                               onChange={(e) => setParam('workerNum', Number(e.target.value) || 0)}
                             />
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="imageWidth">Image Width</Label>
-                            <Input
-                              id="imageWidth"
-                              type="number"
-                              step={32}
-                              min={32}
-                              value={params.imageWidth}
-                              onChange={(e) => setParam('imageWidth', Number(e.target.value) || 32)}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="imageHeight">Image Height</Label>
-                            <Input
-                              id="imageHeight"
-                              type="number"
-                              step={32}
-                              min={32}
-                              value={params.imageHeight}
-                              onChange={(e) => setParam('imageHeight', Number(e.target.value) || 32)}
-                            />
-                          </div>
+                          {/* Anomaly runs set the input size in the MODEL config:
+                              anomalib resizes inside the model's PreProcessor and
+                              each algorithm has its own recommended size (and, for
+                              EfficientAD, a hard rule against normalising). */}
+                          {shows('imageWidth') && (
+                            <div className="space-y-2">
+                              <Label htmlFor="imageWidth">Image Width</Label>
+                              <Input
+                                id="imageWidth"
+                                type="number"
+                                step={32}
+                                min={32}
+                                value={params.imageWidth}
+                                onChange={(e) => setParam('imageWidth', Number(e.target.value) || 32)}
+                              />
+                            </div>
+                          )}
+                          {shows('imageHeight') && (
+                            <div className="space-y-2">
+                              <Label htmlFor="imageHeight">Image Height</Label>
+                              <Input
+                                id="imageHeight"
+                                type="number"
+                                step={32}
+                                min={32}
+                                value={params.imageHeight}
+                                onChange={(e) => setParam('imageHeight', Number(e.target.value) || 32)}
+                              />
+                            </div>
+                          )}
                         </div>
+                        {isAnomalyConfig && (
+                          <p className="text-xs text-muted-foreground">
+                            Input size and normalisation belong to the model config for anomaly
+                            detection — anomalib applies them inside the model&apos;s pre-processor.
+                          </p>
+                        )}
 
                         {shows('multiScaleTrain') && (
                           <div className="space-y-3 rounded-lg border p-3">
@@ -1074,6 +1159,56 @@ export function TrainingPage() {
                                 </div>
                               ))}
                             </div>
+                          </div>
+                        )}
+
+                        {shows('adTileEnabled') && (
+                          <div className="space-y-3 rounded-lg border p-3">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <Label htmlFor="adTiling">Input tiling</Label>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Feed the model overlapping crops instead of a downscaled whole
+                                  image — the only way small defects survive on a large picture.
+                                  Supported by PatchCore, PaDiM and STFPM; <b>not</b> by EfficientAD.
+                                </p>
+                              </div>
+                              <Switch
+                                id="adTiling"
+                                checked={params.adTileEnabled}
+                                onCheckedChange={(v) => setParam('adTileEnabled', v)}
+                              />
+                            </div>
+                            {params.adTileEnabled && (
+                              <div className="grid grid-cols-2 gap-3 pt-2">
+                                <div className="space-y-2">
+                                  <Label htmlFor="adTileSize">Tile size</Label>
+                                  <Input
+                                    id="adTileSize"
+                                    type="number"
+                                    min={32}
+                                    step={32}
+                                    value={params.adTileSize}
+                                    onChange={(e) => setParam('adTileSize', Number(e.target.value) || 32)}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor="adTileStride">Stride</Label>
+                                  <Input
+                                    id="adTileStride"
+                                    type="number"
+                                    min={1}
+                                    step={16}
+                                    value={params.adTileStride}
+                                    onChange={(e) => setParam('adTileStride', Number(e.target.value) || 1)}
+                                  />
+                                  <p className="text-xs text-muted-foreground">
+                                    A stride below the tile size overlaps tiles, which costs compute
+                                    but avoids missing a defect that straddles a tile border.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
 

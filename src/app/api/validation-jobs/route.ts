@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
-import { frameworkMeta, getWorkDir, isSegmentation, resolvePythonPath } from '@/lib/frameworks';
+import { defaultInferOutputDir, frameworkMeta, getWorkDir, isAnomaly, isSegmentation, resolvePythonPath } from '@/lib/frameworks';
 import { buildEvalCommand, buildInferCommand } from '@/lib/job-commands';
 import { spawn, exec } from 'child_process';
-import { existsSync, readdirSync, statSync, mkdirSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync, mkdirSync } from 'fs';
 import { join, basename, extname, dirname } from 'path';
 import { promisify } from 'util';
 
@@ -163,6 +163,36 @@ function isImageFile(path: string): boolean {
  * `_input_staging` is skipped: those are the PNG copies of the *input* TIFFs
  * created for PaddleSeg, not results.
  */
+/**
+ * Read `scores.json` written by the anomaly predictor.
+ *
+ * Returns null (rather than throwing) when the file is absent or malformed: a
+ * missing score file must not turn a successful inference run into a failed
+ * validation job, since the heatmaps on disk are still useful.
+ */
+function readAnomalyScores(outputDir: string): Record<string, unknown> | null {
+  try {
+    const scoresPath = join(outputDir, 'scores.json');
+    if (!existsSync(scoresPath)) return null;
+    const parsed = JSON.parse(readFileSync(scoresPath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object') return null;
+    const images = Array.isArray(parsed.images) ? parsed.images : [];
+    return {
+      threshold: typeof parsed.threshold === 'number' ? parsed.threshold : null,
+      count: typeof parsed.count === 'number' ? parsed.count : images.length,
+      anomalous: typeof parsed.anomalous === 'number' ? parsed.anomalous : null,
+      model: typeof parsed.model === 'string' ? parsed.model : null,
+      // Cap the payload: a folder of 10k images would otherwise bloat every
+      // read of this row, and the UI only ever renders a page of them.
+      images: images.slice(0, 500),
+      truncated: images.length > 500,
+    };
+  } catch (error) {
+    console.error(`Failed to read anomaly scores from ${outputDir}:`, error);
+    return null;
+  }
+}
+
 function findInferenceImages(outputDir: string, depth = 1): string[] {
   const images: string[] = [];
   const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'];
@@ -324,8 +354,7 @@ export async function POST(request: NextRequest) {
         command = buildEvalCommand({ framework, configPath, weightsPath, python: pythonPath });
       } else if (body.type === 'infer') {
         const inputPath = body.inferInputPath || '';
-        const outputPath = body.inferOutputPath
-          || (isSegmentation(framework) ? 'output/predict_results' : 'output/infer_results');
+        const outputPath = body.inferOutputPath || defaultInferOutputDir(framework);
         command = buildInferCommand({
           framework,
           configPath,
@@ -474,7 +503,7 @@ function startValidationProcess(
   // argv array (rather than a shell string) is what makes paths with spaces work
   // without quoting, so this mirrors `@/lib/job-commands` rather than reusing it.
   const meta = frameworkMeta(framework);
-  const defaultOutput = isSegmentation(framework) ? 'output/predict_results' : 'output/infer_results';
+  const defaultOutput = defaultInferOutputDir(framework);
 
   if (meta.cliStyle === 'config-flags') {
     if (type === 'eval') {
@@ -547,7 +576,36 @@ function startValidationProcess(
     let resultJson: string | null = null;
     let resultPath: string | null = null;
 
-    if (type === 'eval' && status === 'completed' && isSegmentation(framework)) {
+    if (type === 'eval' && status === 'completed' && isAnomaly(framework)) {
+      // Anomaly eval prints a single line, e.g.
+      //   [EVAL] #Images: 40 image_auroc: 0.9812 image_f1: 0.9231 pixel_auroc: ... threshold: 12.3456
+      // Read every `key: value` pair rather than a fixed list: anomalib's
+      // Evaluator can be given any metric, and a hard-coded set would quietly
+      // drop the new one. See torchtrain/torchtrain/ad/logger.py.
+      const evalLine = fullOutput.match(/\[EVAL\][^\n]*#Images:[^\n]*/i);
+      const metrics: Record<string, number> = {};
+      if (evalLine) {
+        // The `#` of `#Images:` is captured so the sample count is skipped
+        // instead of being recorded as a metric named `images`.
+        const re = /(#?)([A-Za-z][A-Za-z0-9_]*)\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(evalLine[0])) !== null) {
+          if (m[1] === '#') continue;
+          const value = parseFloat(m[3]);
+          if (Number.isFinite(value)) metrics[m[2].toLowerCase()] = value;
+        }
+      }
+      resultJson = JSON.stringify({
+        taskKind: 'anomaly',
+        samplesCount: (evalLine && parseInt((evalLine[0].match(/#Images:\s*(\d+)/i) ?? [])[1] ?? '', 10)) || null,
+        imageAuroc: metrics.image_auroc ?? null,
+        imageF1: metrics.image_f1 ?? metrics.image_f1score ?? null,
+        pixelAuroc: metrics.pixel_auroc ?? null,
+        pixelF1: metrics.pixel_f1 ?? metrics.pixel_f1score ?? null,
+        threshold: metrics.threshold ?? null,
+        metrics,
+      });
+    } else if (type === 'eval' && status === 'completed' && isSegmentation(framework)) {
       // Segmentation eval prints: [EVAL] #Images: N mIoU: .. Acc: .. Kappa: .. Dice: ..
       // `torchtrain`'s val.py reproduces this line exactly (see
       // torchtrain/torchtrain/logger.py), so TorchSeg parses identically.
@@ -659,13 +717,19 @@ function startValidationProcess(
         // Parse detection results from log if available
         const boxMatch = fullOutput.match(/(\d+)\s*(?:bbox|bounding box|detections?)/gi);
         
-        if (inferImages.length > 0) {
+        // Anomaly inference also writes per-image scores, which no image can
+        // convey: the score, the threshold it was compared against, and the
+        // verdict. `tools/predict.py` writes it next to the heatmaps.
+        const anomalyScores = isAnomaly(framework) ? readAnomalyScores(outputDir) : null;
+
+        if (inferImages.length > 0 || anomalyScores) {
           resultPath = outputDir;
           resultJson = JSON.stringify({
             outputDir,
             images: inferImages,
             imageCount: inferImages.length,
-            detectionSummary: boxMatch ? boxMatch[0] : null
+            detectionSummary: boxMatch ? boxMatch[0] : null,
+            ...(anomalyScores ? { taskKind: 'anomaly', anomaly: anomalyScores } : {}),
           });
         } else {
           // Try to extract from log

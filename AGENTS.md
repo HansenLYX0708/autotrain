@@ -23,13 +23,20 @@ Supported frameworks (`project.framework` selects one):
 | `PaddleSeg` | PaddlePaddle | segmentation | external, `paddleSegPath` | iterations |
 | `TorchDet` | PyTorch | detection | bundled `torchtrain/`, `torchPath` | epochs |
 | `TorchSeg` | PyTorch | segmentation | bundled `torchtrain/`, `torchPath` | iterations |
+| `TorchAnomaly` | PyTorch + anomalib | unsupervised anomaly | bundled `torchtrain/`, `torchPath` | steps |
 
 `src/lib/frameworks.ts` is the **single source of truth**: `FRAMEWORK_META`
 declares each framework's repo path field, Python module, CLI dialect, script
 names, checkpoint layout, dataset format and step unit. Prefer the predicates
-(`isSegmentation`, `isDetection`, `isTorch`, `frameworkMeta`) over comparing
-framework names — the string comparisons are what made adding a framework a
-whole-codebase grep in the first place.
+(`isSegmentation`, `isDetection`, `isAnomaly`, `isTorch`, `tracksIterations`,
+`frameworkMeta`) over comparing framework names — the string comparisons are what
+made adding a framework a whole-codebase grep in the first place.
+
+In particular, **`isSegmentation()` is not a synonym for "counts iterations"**.
+It used to be, so it was used for both; `tracksIterations()` (i.e.
+`stepUnit === 'iter'`) is the right predicate for anything about progress,
+`currentEpoch`/`totalEpochs` or the epoch-named config columns, and
+`frameworkMeta(f).datasetFormat` is the right one for dataset layout.
 
 ## Commands
 
@@ -138,7 +145,8 @@ TorchSeg) that means `epoch`/`maxEpochs` carry `iters`, `warmupEpochs` carries
 `warmup_iters`, and `snapshotEpoch` carries `save_interval`. `iters`/`saveInterval`
 are segmentation-only and null for other frameworks. Use
 `countsIterations(framework)` from `src/lib/training-yaml.ts` when the unit
-matters.
+matters. TorchAnomaly also counts steps: `epoch` carries `trainer.max_steps` and
+`snapshotEpoch` carries the validation interval (it has no `save_interval`).
 
 The same applies to `TrainingJob.currentEpoch` / `totalEpochs`: for segmentation
 frameworks **both hold iterations**. `writeParsedLog` stores `log.iteration` (not
@@ -165,7 +173,7 @@ other way around:
   `TRAINING_FIELD_SUPPORT`
 - `src/lib/model-yaml.ts` — `generateModelYaml`, `parseModelParams`,
   `modelParamsToColumns`, `validateModelParams`, `SEG_ARCHITECTURES`,
-  `TORCH_SEG_ARCHITECTURES`, `TORCH_DET_PRESETS`
+  `TORCH_SEG_ARCHITECTURES`, `TORCH_DET_PRESETS`, `ANOMALY_PRESETS`
 - `src/lib/job-commands.ts` — `buildTrainCommand`, `buildEvalCommand`,
   `buildInferCommand`, `buildExportCommand`, `bestWeightsPath`
 
@@ -202,6 +210,51 @@ dataset block.
   The counts live in `SEG_ARCHITECTURES[].logits`. **`loss:` belongs in the
   model config**, never the training config.
 - `save_dir` / `save_interval` / `log_iters` are CLI arguments, not YAML keys.
+
+### Unsupervised anomaly detection (TorchAnomaly)
+
+New framework, backed by **anomalib** through a thin adapter at
+`torchtrain/torchtrain/ad/`. Full rationale and the config shapes are in
+`docs/ANOMALY_DETECTION_DESIGN.md`. The parts that will bite:
+
+- **It is the only framework that does not reuse a Paddle schema.** The merged job
+  config is anomalib's own `model:` / `data:` / `trainer:` (jsonargparse
+  `class_path` + `init_args`), plus an `autotrain:` block that is ours and is
+  stripped before anomalib sees it. The three-config split maps onto those three
+  blocks one-to-one, which is why this backend was chosen.
+- **anomalib's default `Evaluator` registers test metrics only.** A `fit()` run
+  therefore logs nothing during validation: no AUROC chart, and
+  `ModelCheckpoint(monitor=...)` has nothing to monitor.
+  `torchtrain/torchtrain/ad/evaluator.py` exists solely to fix that.
+- **`Engine.fit()` writes to a versioned directory of its own**
+  (`<root>/<Model>/<dataset>/<category>/vN`), so the adapter copies the best
+  checkpoint to `<save_dir>/best_model/model.ckpt` — note `.ckpt`, not `.pt`,
+  because only a Lightning checkpoint can be reloaded by anomalib.
+- **`trainer.global_step` stays 0 for PatchCore/PaDiM** (no optimizer steps), so
+  the progress logger counts batches instead. Their loss is a constant 0 by
+  design; a flat loss curve is not a stalled run.
+- **`val_check_interval` cannot be set from the YAML.** An int larger than the
+  batch count is a hard Lightning error unless `check_val_every_n_epoch=None`,
+  and that would disable the only validation a one-epoch model ever gets. The
+  training config states `autotrain.val_interval` and
+  `ad/config.py::resolve_val_args` converts it once the batch count is known.
+- **Tiling only works for PaDiM / PatchCore / ReverseDistillation / STFPM.**
+  EfficientAD has no `tiler`; the UI disables the combination and the adapter
+  refuses it with a message naming the alternatives.
+- **EfficientAD has two hard constraints** enforced by anomalib at train start:
+  `train_batch_size` must be 1, and the pre-processing transform must not
+  normalise. It also downloads a teacher checkpoint plus ImageNette (~1.5 GB) on
+  first run — pre-warm the cache on offline machines.
+- **Datasets are `AnomalyFolder`**: four directories (`normalDir` required;
+  `normalTestDir` / `abnormalDir` / `maskDir` optional) on the `Dataset` row. Only
+  `normalDir` is trained on. anomalib takes half the test split as validation and
+  fits the score threshold on it, so metrics from a training run are optimistic —
+  keep a separate batch of defect images for an unbiased validation job.
+- anomalib needs **its own venv** (`torchtrain/requirements-ad.txt`, pinned to
+  `anomalib==2.6.*`) registered under `frameworkPythonMappings.TorchAnomaly`. It
+  removes deprecated APIs every minor release, and the adapter depends on
+  `Engine.from_config`, `Engine._cache.args` and the model-side
+  `configure_pre_processor` / `configure_evaluator` hooks.
 
 ### PyTorch frameworks (TorchSeg / TorchDet)
 

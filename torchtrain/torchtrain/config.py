@@ -28,6 +28,7 @@ import yaml
 
 SEG = "seg"
 DET = "det"
+AD = "ad"
 
 
 class _TagTolerantLoader(yaml.SafeLoader):
@@ -84,12 +85,22 @@ def load_config(path: str) -> Dict[str, Any]:
 
 
 def detect_task(cfg: Dict[str, Any]) -> str:
-    """Infer whether a config describes segmentation or detection.
+    """Infer whether a config describes segmentation, detection or anomaly detection.
 
-    Segmentation markers win when both are present because a Seg config can
-    legitimately mention `num_classes` at the top level (a Detection marker),
-    while a Detection config never carries `train_dataset:`.
+    Segmentation markers win over detection when both are present because a Seg
+    config can legitimately mention `num_classes` at the top level (a Detection
+    marker), while a Detection config never carries `train_dataset:`.
+
+    Anomaly detection is checked first and is unambiguous: it is the only schema
+    where `model:` carries a `class_path` (anomalib is driven by jsonargparse),
+    and the only one with a top-level `trainer:` block.
     """
+    model = cfg.get("model")
+    if isinstance(model, dict) and "class_path" in model:
+        return AD
+    if isinstance(cfg.get("data"), dict) and isinstance(cfg.get("trainer"), dict):
+        return AD
+
     seg_markers = ("train_dataset", "val_dataset", "iters", "lr_scheduler")
     det_markers = ("TrainDataset", "EvalDataset", "architecture", "TrainReader", "LearningRate")
     if any(k in cfg for k in seg_markers):
@@ -102,8 +113,9 @@ def detect_task(cfg: Dict[str, Any]) -> str:
         return SEG
     raise ValueError(
         "Could not determine the task from the config. Expected either "
-        "segmentation keys (train_dataset / iters / model) or detection keys "
-        "(TrainDataset / architecture / LearningRate). Pass --task seg|det to override."
+        "segmentation keys (train_dataset / iters / model), detection keys "
+        "(TrainDataset / architecture / LearningRate), or anomalib keys "
+        "(model.class_path / data / trainer). Pass --task seg|det|ad to override."
     )
 
 

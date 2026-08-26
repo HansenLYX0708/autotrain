@@ -39,7 +39,11 @@ def main() -> None:
 
     L.log("torchtrain predict | task={} | input={} | save_dir={}".format(task, args.image_path, save_dir))
 
-    if task == cfgmod.SEG:
+    if task == cfgmod.AD:
+        from torchtrain.ad import runner as ad_runner
+
+        ad_runner.predict(cfg, args, weights, save_dir)
+    elif task == cfgmod.SEG:
         from torchtrain.seg import predictor, trainer
 
         model, setup, device = trainer.load_model_for_inference(cfg, args, weights)

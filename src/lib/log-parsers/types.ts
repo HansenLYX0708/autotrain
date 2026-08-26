@@ -50,9 +50,29 @@ export interface ParsedTrainLog {
   classIoU?: number[]
   classPrecision?: number[]
   classRecall?: number[]
+  // ---- Anomaly-detection eval metrics (TorchAnomaly) -------------------
+  /** Image-level AUROC: can the model tell a defective part from a good one. */
+  imageAuroc?: number | null
+  imageF1?: number | null
+  /** Pixel-level AUROC/F1: only present when the eval set carries masks. */
+  pixelAuroc?: number | null
+  pixelF1?: number | null
+  /** Anomaly-score cut-off chosen by anomalib's adaptive thresholding. */
+  threshold?: number | null
+  /**
+   * Any further `key: value` pairs the trainer printed on the EVAL line.
+   *
+   * anomalib names its metrics dynamically (an `Evaluator` can be given any
+   * `AnomalibMetric`), so the parser must not silently drop a metric it has no
+   * column for. These are persisted as JSON alongside the row instead.
+   */
+  extraMetrics?: Record<string, number>
+
   /** From "best mIoU (X) was saved at iter N". */
   bestIter?: number | null
   bestMetric?: number | null
+  /** Which metric the "best" line reported, e.g. `mIoU` or `image_auroc`. */
+  bestMetricName?: string | null
 
   /** Original line(s) that produced this record. */
   rawLog: string

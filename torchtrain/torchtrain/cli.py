@@ -50,7 +50,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Path to the merged job config YAML.",
     )
     parser.add_argument(
-        "--task", dest="task", default=None, choices=["seg", "det"],
+        "--task", dest="task", default=None, choices=["seg", "det", "ad"],
         help="Override task detection (normally inferred from the config keys).",
     )
     parser.add_argument(

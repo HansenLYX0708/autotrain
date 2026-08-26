@@ -52,10 +52,14 @@ import { toast } from '@/hooks/use-toast'
 import { ConfigYamlPane, yamlSyntaxError } from '@/components/config-yaml-pane'
 import { asConfigFramework, configSchemaOf, type ConfigFramework } from '@/lib/training-yaml'
 import {
+  ANOMALY_MODEL_SIZES,
+  ANOMALY_PRESETS,
+  ANOMALY_PRESET_KEYS,
   CLAS_ARCHITECTURES,
   DETECTION_PRESETS,
   DETECTION_PRESET_KEYS,
   SEG_LOSS_TYPES,
+  anomalyPreset,
   TORCH_DET_PRESETS,
   TORCH_DET_PRESET_KEYS,
   TORCH_PRETRAIN_OPTIONS,
@@ -196,6 +200,8 @@ export function ModelsPage() {
   const isSeg = configSchemaOf(dialogFramework) === 'segmentation'
   const isClas = dialogFramework === 'PaddleClas'
   const isTorchDet = dialogFramework === 'TorchDet'
+  const isAnomalyModel = dialogFramework === 'TorchAnomaly'
+  const anomalyPresetInfo = anomalyPreset(params.architecture)
   const preset = DETECTION_PRESETS[detectionPreset] ?? DETECTION_PRESETS['PP-YOLOE']
   // Architecture vocabularies are framework-specific: TorchSeg offers torchvision
   // networks (UNet / DeepLabV3+ / FCN / LR-ASPP), PaddleSeg offers Paddle's.
@@ -263,6 +269,27 @@ export function ModelsPage() {
         segLossCoef,
       }
     })
+  }
+
+  /**
+   * TorchAnomaly: switching algorithm resets the fields that are
+   * algorithm-specific, because carrying them over produces invalid configs —
+   * PatchCore's layers are not EfficientAD's (which has none at all), and a
+   * backbone name from one table is not in the other's.
+   */
+  const applyAnomalyArchitecture = (value: string) => {
+    const p = ANOMALY_PRESETS[value]
+    if (!p) return
+    setParams((prev) => ({
+      ...prev,
+      architecture: value,
+      backbone: p.backbones[0] ?? '',
+      adLayers: [...p.layers],
+      adImageWidth: p.imageSize[0],
+      adImageHeight: p.imageSize[1],
+      // The paper recipe for PatchCore crops 256 -> 224; nothing else uses it.
+      adCenterCrop: 0,
+    }))
   }
 
   /** TorchDet: architecture + backbone fully determine the torchvision builder. */
@@ -789,6 +816,15 @@ export function ModelsPage() {
                             rows={2}
                           />
                         </div>
+                        {/* Anomaly detection has no classes: it learns what
+                            "normal" looks like and scores deviation from it. */}
+                        {isAnomalyModel ? (
+                          <p className="text-sm text-muted-foreground">
+                            Unsupervised: the model is trained only on normal images and has no
+                            classes. Defect images are used for evaluation and for choosing the
+                            anomaly-score threshold.
+                          </p>
+                        ) : (
                         <div className="space-y-2">
                           <Label htmlFor="numClasses">Number of Classes</Label>
                           <Input
@@ -804,6 +840,7 @@ export function ModelsPage() {
                               : 'Must match the number of categories in the dataset.'}
                           </p>
                         </div>
+                        )}
                       </TabsContent>
 
                       <TabsContent value="architecture" className="space-y-4 mt-4">
@@ -918,6 +955,159 @@ export function ModelsPage() {
                               </SelectContent>
                             </Select>
                           </div>
+                        ) : isAnomalyModel ? (
+                          <>
+                            {/* Unsupervised: no classes, no head. The algorithm
+                                choice is the whole decision, and it determines
+                                which of the remaining controls mean anything. */}
+                            <div className="space-y-2">
+                              <Label>Algorithm</Label>
+                              <Select value={params.architecture} onValueChange={applyAnomalyArchitecture}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {ANOMALY_PRESET_KEYS.map((key) => (
+                                    <SelectItem key={key} value={key}>
+                                      {ANOMALY_PRESETS[key].label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <p className="text-xs text-muted-foreground">{anomalyPresetInfo.notes}</p>
+                            </div>
+
+                            {anomalyPresetInfo.backbones.length > 0 && (
+                              <div className="space-y-2">
+                                <Label>Backbone</Label>
+                                <Select
+                                  value={params.backbone}
+                                  onValueChange={(value) => setParam('backbone', value)}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {anomalyPresetInfo.backbones.map((b) => (
+                                      <SelectItem key={b} value={b}>{b}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                  Feature extractor, frozen and pretrained on ImageNet. Nothing is
+                                  trained on the defect images.
+                                </p>
+                              </div>
+                            )}
+
+                            <div className="grid grid-cols-3 gap-4">
+                              <div className="space-y-2">
+                                <Label htmlFor="adImageWidth">Input Width</Label>
+                                <Input
+                                  id="adImageWidth"
+                                  type="number"
+                                  step={32}
+                                  min={32}
+                                  value={params.adImageWidth}
+                                  onChange={(e) => setParam('adImageWidth', Number(e.target.value) || 32)}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="adImageHeight">Input Height</Label>
+                                <Input
+                                  id="adImageHeight"
+                                  type="number"
+                                  step={32}
+                                  min={32}
+                                  value={params.adImageHeight}
+                                  onChange={(e) => setParam('adImageHeight', Number(e.target.value) || 32)}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="adCenterCrop">Centre Crop (0 = off)</Label>
+                                <Input
+                                  id="adCenterCrop"
+                                  type="number"
+                                  min={0}
+                                  step={16}
+                                  value={params.adCenterCrop}
+                                  onChange={(e) => setParam('adCenterCrop', Number(e.target.value) || 0)}
+                                />
+                              </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              The whole image is resized to this before the model sees it, so a defect
+                              smaller than a couple of pixels at this scale becomes invisible. For
+                              small defects on a large image, enable tiling in the training config
+                              instead of raising this — and note that EfficientAD cannot tile.
+                            </p>
+
+                            {params.architecture === 'Patchcore' && (
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                  <Label htmlFor="adCoresetRatio">Coreset Ratio</Label>
+                                  <Input
+                                    id="adCoresetRatio"
+                                    type="number"
+                                    step={0.01}
+                                    min={0.001}
+                                    max={1}
+                                    value={params.adCoresetRatio}
+                                    onChange={(e) => setParam('adCoresetRatio', Number(e.target.value) || 0.1)}
+                                  />
+                                  <p className="text-xs text-muted-foreground">
+                                    Fraction of patch features kept in the memory bank. Lower it if
+                                    training runs out of memory.
+                                  </p>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor="adNumNeighbors">Neighbours (k)</Label>
+                                  <Input
+                                    id="adNumNeighbors"
+                                    type="number"
+                                    min={1}
+                                    value={params.adNumNeighbors}
+                                    onChange={(e) => setParam('adNumNeighbors', Number(e.target.value) || 1)}
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            {params.architecture === 'EfficientAd' && (
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                  <Label>Model Size</Label>
+                                  <Select
+                                    value={params.adModelSize}
+                                    onValueChange={(value) => setParam('adModelSize', value)}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {ANOMALY_MODEL_SIZES.map((size) => (
+                                        <SelectItem key={size} value={size}>{size}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor="adLr">Learning Rate</Label>
+                                  <Input
+                                    id="adLr"
+                                    type="number"
+                                    step={0.00001}
+                                    value={params.adLr}
+                                    onChange={(e) => setParam('adLr', Number(e.target.value))}
+                                  />
+                                  <p className="text-xs text-muted-foreground">
+                                    Lives here, not in the training config: anomalib takes it as a
+                                    model constructor argument.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+                          </>
                         ) : isTorchDet ? (
                           <>
                             {/* torchvision builds the full detector from
@@ -1107,6 +1297,27 @@ export function ModelsPage() {
                             PaddleClas model configs carry no additional structural options here. Use
                             the YAML editor for architecture-specific settings.
                           </p>
+                        ) : isAnomalyModel ? (
+                          <div className="space-y-3">
+                            <p className="text-sm text-muted-foreground">
+                              Every remaining knob for this algorithm is on the Architecture tab.
+                              Normalization, EMA and depth/width multipliers are PaddleDetection
+                              concepts and are not emitted.
+                            </p>
+                            {anomalyPresetInfo.downloadsAssets && (
+                              <p className="text-sm text-amber-600">
+                                First run downloads {anomalyPresetInfo.downloadsAssets}. Pre-warm the
+                                cache on machines without internet access.
+                              </p>
+                            )}
+                            {!anomalyPresetInfo.hasLoss && (
+                              <p className="text-sm text-muted-foreground">
+                                This algorithm does no gradient descent, so the training loss curve
+                                stays flat at zero — that is expected, not a stalled run. Progress is
+                                reported as memory-bank fill.
+                              </p>
+                            )}
+                          </div>
                         ) : isTorchDet ? (
                           <div className="space-y-3">
                             <p className="text-sm text-muted-foreground">

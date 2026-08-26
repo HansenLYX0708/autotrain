@@ -39,7 +39,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_dir", "--output_dir", dest="save_dir", default="export_model",
                         help="Directory to write the exported bundle into.")
     parser.add_argument("--format", dest="format", default="torchscript",
-                        choices=["torchscript", "onnx"], help="Serialization format.")
+                        choices=["torchscript", "onnx", "torch", "openvino"],
+                        help="Serialization format. `torch` / `openvino` are anomaly-detection only.")
     parser.add_argument("--input_shape", dest="input_shape", default=None,
                         help="Tracing shape as H,W (default: the config's eval size).")
     parser.add_argument("--opset", dest="opset", type=int, default=16, help="ONNX opset version.")
@@ -64,6 +65,15 @@ def main() -> None:
     weights = cli.resolve_weights(args, cfg)
     save_dir = args.save_dir or "export_model"
     os.makedirs(save_dir, exist_ok=True)
+
+    if task == cfgmod.AD:
+        # anomalib owns its own exporters (torch bundle / ONNX / OpenVINO IR) and
+        # they know how to package the post-processor and thresholds along with
+        # the weights, which a bare traced graph would lose.
+        from torchtrain.ad import runner as ad_runner
+
+        ad_runner.export(cfg, args, weights, save_dir)
+        return
 
     if task != cfgmod.SEG:
         # Detection models take a list of variable-size tensors and return a list

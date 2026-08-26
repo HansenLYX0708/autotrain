@@ -107,6 +107,13 @@ interface TrainingLog {
   // (PaddleDetection, TorchDet). mAP is AP@[0.50:0.95], mAP50 is AP@0.50.
   mAP: number | null
   mAP50: number | null
+  // Anomaly-detection metrics (TorchAnomaly). Pixel-level values are null when
+  // the dataset has no masks for its defect images.
+  imageAuroc: number | null
+  imageF1: number | null
+  pixelAuroc: number | null
+  pixelF1: number | null
+  threshold: number | null
   // JSON string: {"iou":[..],"precision":[..],"recall":[..]} — populated on
   // segmentation EVAL rows only. Kept as JSON to accommodate variable
   // num_classes without schema changes.
@@ -202,6 +209,29 @@ const detMetricChartConfig = {
   mAP50: {
     label: "mAP@0.5",
     color: "var(--chart-2)",
+  },
+} satisfies ChartConfig
+
+// Anomaly-detection metrics chart config (TorchAnomaly).
+// The threshold is deliberately not plotted here: it is an anomaly *score*
+// cut-off on an unbounded scale, and putting it on the same 0-1 axis as AUROC
+// would either squash the curves or be clipped away.
+const anomalyMetricChartConfig = {
+  imageAuroc: {
+    label: "Image AUROC",
+    color: "var(--chart-1)",
+  },
+  imageF1: {
+    label: "Image F1",
+    color: "var(--chart-2)",
+  },
+  pixelAuroc: {
+    label: "Pixel AUROC",
+    color: "var(--chart-3)",
+  },
+  pixelF1: {
+    label: "Pixel F1",
+    color: "var(--chart-4)",
   },
 } satisfies ChartConfig
 
@@ -377,6 +407,22 @@ export function MonitoringPage() {
       mAP: log.mAP,
       mAP50: log.mAP50,
     }))
+
+  // Anomaly-detection metrics over successive evaluations. `iteration` is kept
+  // as the x-axis label because an anomaly run is measured in steps, and the
+  // adapter records the step each evaluation happened at.
+  const anomalyMetricChartData = logs
+    .filter(log => log.imageAuroc !== null || log.pixelAuroc !== null)
+    .map((log, i) => ({
+      step: i + 1,
+      iteration: log.iteration,
+      imageAuroc: log.imageAuroc,
+      imageF1: log.imageF1,
+      pixelAuroc: log.pixelAuroc,
+      pixelF1: log.pixelF1,
+      threshold: log.threshold,
+    }))
+  const latestAnomalyEvalLog = anomalyMetricChartData[anomalyMetricChartData.length - 1]
 
   // Filter logs for raw log viewer
   const filteredLogs = logs.filter(log => {
@@ -731,6 +777,64 @@ export function MonitoringPage() {
                     <Legend />
                     <Line type="monotone" dataKey="mAP" stroke="var(--chart-1)" strokeWidth={2} dot={false} name="mAP@0.5:0.95" />
                     <Line type="monotone" dataKey="mAP50" stroke="var(--chart-2)" strokeWidth={1.5} dot={false} name="mAP@0.5" />
+                  </LineChart>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Anomaly Detection Metrics (TorchAnomaly) */}
+          {anomalyMetricChartData.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Anomaly Detection Metrics</CardTitle>
+                <CardDescription>
+                  Image / pixel AUROC and F1 across evaluations. Pixel metrics need masks
+                  for the defect images; they stay empty without them.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-4">
+                  <div className="p-4 rounded-lg border bg-muted/50">
+                    <div className="text-sm text-muted-foreground mb-1">Best monitored metric</div>
+                    <div className="text-2xl font-bold">
+                      {selectedJob?.bestMetric?.toFixed(4) ?? 'N/A'}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-lg border bg-muted/50">
+                    <div className="text-sm text-muted-foreground mb-1">Best Checkpoint</div>
+                    <div className="text-2xl font-bold">
+                      iter {selectedJob?.bestIter ?? '—'}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-lg border bg-muted/50">
+                    <div className="text-sm text-muted-foreground mb-1">Latest Image AUROC</div>
+                    <div className="text-2xl font-bold">
+                      {latestAnomalyEvalLog?.imageAuroc?.toFixed(4) ?? 'N/A'}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-lg border bg-muted/50">
+                    {/* The score threshold is what a deployed model actually
+                        compares against, so it is worth surfacing even though it
+                        is not plotted. */}
+                    <div className="text-sm text-muted-foreground mb-1">Score threshold</div>
+                    <div className="text-2xl font-bold">
+                      {latestAnomalyEvalLog?.threshold?.toFixed(4) ?? 'N/A'}
+                    </div>
+                  </div>
+                </div>
+
+                <ChartContainer config={anomalyMetricChartConfig} className="h-[300px] w-full">
+                  <LineChart data={anomalyMetricChartData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="step" className="text-xs" />
+                    <YAxis className="text-xs" domain={[0, 1]} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Legend />
+                    <Line type="monotone" dataKey="imageAuroc" stroke="var(--chart-1)" strokeWidth={2} dot={false} name="Image AUROC" />
+                    <Line type="monotone" dataKey="imageF1" stroke="var(--chart-2)" strokeWidth={1.5} dot={false} name="Image F1" />
+                    <Line type="monotone" dataKey="pixelAuroc" stroke="var(--chart-3)" strokeWidth={1.5} dot={false} name="Pixel AUROC" />
+                    <Line type="monotone" dataKey="pixelF1" stroke="var(--chart-4)" strokeWidth={1.5} dot={false} name="Pixel F1" />
                   </LineChart>
                 </ChartContainer>
               </CardContent>

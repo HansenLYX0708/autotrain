@@ -11,13 +11,19 @@
  *
  *   PaddlePaddle : PaddleDetection, PaddleClas, PaddleSeg
  *                  External repos; paths configured per framework in Settings.
- *   PyTorch      : TorchDet, TorchSeg
- *                  Both served by the `torchtrain/` repo bundled with this
+ *   PyTorch      : TorchDet, TorchSeg, TorchAnomaly
+ *                  All served by the `torchtrain/` repo bundled with this
  *                  project, so they share a single `torchPath`. It deliberately
  *                  mirrors the Paddle repo shape (`tools/train.py` + an
  *                  importable package) and emits Paddle-identical log lines, so
  *                  the log parsers, monitoring charts and progress tracking are
  *                  reused rather than duplicated.
+ *
+ * `TorchAnomaly` is the unsupervised member of the family: it trains on normal
+ * images only and is backed by `anomalib` through the thin adapter in
+ * `torchtrain/torchtrain/ad/`. It shares `torchPath` with the other torch
+ * frameworks but *not* their Python environment — anomalib pulls in Lightning
+ * and pins jsonargparse, so it gets its own `frameworkPythonMappings` entry.
  */
 
 export const FRAMEWORKS = {
@@ -26,6 +32,7 @@ export const FRAMEWORKS = {
   PaddleSeg: "PaddleSeg",
   TorchDet: "TorchDet",
   TorchSeg: "TorchSeg",
+  TorchAnomaly: "TorchAnomaly",
 } as const;
 
 export type Framework = (typeof FRAMEWORKS)[keyof typeof FRAMEWORKS];
@@ -36,13 +43,19 @@ export const FRAMEWORK_LIST: Framework[] = [
   "PaddleSeg",
   "TorchDet",
   "TorchSeg",
+  "TorchAnomaly",
 ];
 
 /** Which deep-learning runtime a framework belongs to. */
 export type FrameworkFamily = "paddle" | "torch";
 
-/** The kind of problem a framework solves. Drives dataset format + metrics. */
-export type FrameworkTaskKind = "detection" | "classification" | "segmentation";
+/**
+ * The kind of problem a framework solves. Drives dataset format + metrics.
+ *
+ * `anomaly` is unsupervised: training consumes normal images with no labels, and
+ * the reported metrics are image/pixel AUROC and F1 rather than mIoU or mAP.
+ */
+export type FrameworkTaskKind = "detection" | "classification" | "segmentation" | "anomaly";
 
 export interface FrameworkMeta {
   /** Human label for dropdowns and status cards. */
@@ -83,8 +96,12 @@ export interface FrameworkMeta {
   /** Weight file name (nested) or extension (flat). */
   weightFile: string;
   /** Dataset format this framework consumes. */
-  datasetFormat: "COCO" | "PaddleSeg";
-  /** Training length unit; segmentation frameworks count iterations. */
+  datasetFormat: "COCO" | "PaddleSeg" | "AnomalyFolder";
+  /**
+   * Training length unit. Segmentation and anomaly frameworks count iterations,
+   * which is also what `TrainingJob.currentEpoch/totalEpochs` then hold — see
+   * `tracksIterations` below.
+   */
   stepUnit: "epoch" | "iter";
 }
 
@@ -98,6 +115,13 @@ export interface FrameworkPaths {
 
 /** Weight file written by `torchtrain` (see `torchtrain/torchtrain/utils.py`). */
 export const TORCH_WEIGHT_FILE = "model.pt";
+
+/**
+ * Weight file written by the anomalib adapter. A Lightning checkpoint carries
+ * the hyper-parameters needed to rebuild the model, so it is kept as `.ckpt`
+ * rather than renamed to `model.pt`; `anomalib` can only reload the former.
+ */
+export const ANOMALY_WEIGHT_FILE = "model.ckpt";
 
 export const FRAMEWORK_META: Record<Framework, FrameworkMeta> = {
   PaddleDetection: {
@@ -189,6 +213,30 @@ export const FRAMEWORK_META: Record<Framework, FrameworkMeta> = {
     datasetFormat: "PaddleSeg",
     stepUnit: "iter",
   },
+  TorchAnomaly: {
+    label: "PyTorch Anomaly Detection",
+    family: "torch",
+    taskKind: "anomaly",
+    defaultTask: "anomaly_detection",
+    // The adapter is the only part of torchtrain that imports anomalib, and it
+    // does so lazily, so a plain torch env still runs TorchSeg/TorchDet.
+    pythonModule: "anomalib",
+    installHint:
+      "pip install anomalib==2.6.* in the environment mapped to TorchAnomaly " +
+      "(it needs its own venv: anomalib pins Lightning and jsonargparse)",
+    pathField: "torchPath",
+    requiredFiles: ["torchtrain", "tools/train.py", "tools/val.py"],
+    scripts: { train: "tools/train.py", eval: "tools/val.py", infer: "tools/predict.py", export: "tools/export.py" },
+    cliStyle: "config-flags",
+    saveDirOnCli: true,
+    checkpointLayout: "nested",
+    weightFile: ANOMALY_WEIGHT_FILE,
+    datasetFormat: "AnomalyFolder",
+    // Trained by step count: EfficientAD/STFPM run for `trainer.max_steps`, and
+    // the memory-bank models (PatchCore/PaDiM) report memory-bank fill progress
+    // in the same units so the progress bar still moves.
+    stepUnit: "iter",
+  },
 };
 
 /** Normalize an arbitrary value to a known framework, defaulting to PaddleDetection. */
@@ -222,6 +270,35 @@ export function isClassification(framework: string | null | undefined): boolean 
 
 export function isDetection(framework: string | null | undefined): boolean {
   return frameworkMeta(framework).taskKind === "detection";
+}
+
+/** Unsupervised anomaly detection: normal-only training, AUROC/F1 metrics. */
+export function isAnomaly(framework: string | null | undefined): boolean {
+  return frameworkMeta(framework).taskKind === "anomaly";
+}
+
+/**
+ * True when this framework's step columns hold **iterations** rather than epochs.
+ *
+ * `TrainingJob.currentEpoch`/`totalEpochs` and the epoch-named config columns
+ * are overloaded this way (see AGENTS.md). Several call sites used to ask
+ * `isSegmentation()` to decide it, which silently broke as soon as a
+ * non-segmentation framework counted iterations too.
+ */
+export function tracksIterations(framework: string | null | undefined): boolean {
+  return frameworkMeta(framework).stepUnit === "iter";
+}
+
+/**
+ * Default directory a framework's inference script writes to, used only as a
+ * fallback when the caller has no explicit output path. The `config-flags`
+ * frameworks all run a `predict.py` that defaults to `predict_results`.
+ */
+export function defaultInferOutputDir(framework: string | null | undefined): string {
+  const meta = frameworkMeta(framework);
+  return meta.taskKind === "segmentation" || meta.taskKind === "anomaly"
+    ? "output/predict_results"
+    : "output/infer_results";
 }
 
 export function isTorch(framework: string | null | undefined): boolean {

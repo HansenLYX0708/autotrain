@@ -4,7 +4,7 @@ import { spawn } from "child_process";
 import { exec } from "child_process";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentUser, notFoundOrDenied, requireOwnedScope } from "@/lib/auth";
-import { frameworkMeta, getWorkDir, isSegmentation, isTorch, resolvePythonPath } from "@/lib/frameworks";
+import { frameworkMeta, getWorkDir, isTorch, resolvePythonPath, tracksIterations } from "@/lib/frameworks";
 import * as path from "path";
 import {
   createParserState,
@@ -819,11 +819,12 @@ async function writeParsedLog(
     //    doesn't wipe the last known progress.
     const jobUpdate: Record<string, unknown> = {};
     // `currentEpoch` must be in the same unit as `totalEpochs`, which holds
-    // *iterations* for the segmentation frameworks (see `totalStepsFor`). The
-    // Seg log line carries both (`epoch: 2278, iter: 20500/160000`), and storing
-    // the epoch there made the progress bar read 2278/160000 instead of
-    // 20500/160000 — i.e. a run that was 13% done displayed as 1%.
-    if (isSegmentation(framework)) {
+    // *iterations* for every framework whose `stepUnit` is `iter` (segmentation
+    // and anomaly — see `totalStepsFor`). The Seg log line carries both
+    // (`epoch: 2278, iter: 20500/160000`), and storing the epoch there made the
+    // progress bar read 2278/160000 instead of 20500/160000 — i.e. a run that
+    // was 13% done displayed as 1%.
+    if (tracksIterations(framework)) {
       if (log.iteration) jobUpdate.currentEpoch = log.iteration;
     } else if (log.epoch) {
       jobUpdate.currentEpoch = log.epoch;
@@ -843,7 +844,10 @@ async function writeParsedLog(
     }
 
     // 2. Insert the detailed TrainingLog row. Per-class arrays are folded
-    //    into a JSON blob so num_classes doesn't leak into the schema.
+    //    into a JSON blob so num_classes doesn't leak into the schema. The same
+    //    column carries any anomaly metric that has no dedicated column (see
+    //    `ParsedTrainLog.extraMetrics`), which is how a newly added anomalib
+    //    metric survives instead of being silently dropped.
     const classMetrics =
       log.classIoU || log.classPrecision || log.classRecall
         ? JSON.stringify({
@@ -851,7 +855,9 @@ async function writeParsedLog(
             precision: log.classPrecision ?? null,
             recall: log.classRecall ?? null,
           })
-        : null;
+        : log.extraMetrics
+          ? JSON.stringify({ metrics: log.extraMetrics })
+          : null;
 
     await db.trainingLog.create({
       data: {
@@ -871,6 +877,11 @@ async function writeParsedLog(
         dice: log.dice ?? null,
         mAP: log.mAP ?? null,
         mAP50: log.mAP50 ?? null,
+        imageAuroc: log.imageAuroc ?? null,
+        imageF1: log.imageF1 ?? null,
+        pixelAuroc: log.pixelAuroc ?? null,
+        pixelF1: log.pixelF1 ?? null,
+        threshold: log.threshold ?? null,
         eta: log.eta,
         batchCost: log.batchCost,
         dataCost: log.dataCost,

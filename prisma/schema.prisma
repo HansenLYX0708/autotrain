@@ -89,6 +89,16 @@ model Dataset {
   evalImagePath   String?
   evalAnnoPath    String?
   datasetDir      String?
+
+  // Unsupervised anomaly datasets (format = "AnomalyFolder"). Directory names
+  // relative to `datasetDir`, mapped onto anomalib's Folder datamodule.
+  // Only `normalDir` is required: it is the *only* directory that is trained on.
+  // `abnormalDir` (+ optional `maskDir`) feed the validation/test split, which is
+  // also where the anomaly-score threshold is chosen — see docs/ANOMALY_DETECTION_DESIGN.md.
+  normalDir       String?
+  normalTestDir   String?
+  abnormalDir     String?
+  maskDir         String?
   
   // Statistics
   numClasses      Int      @default(0)
@@ -327,6 +337,16 @@ model TrainingLog {
   // PaddleDetection and TorchDet). mAP is AP@[0.50:0.95], mAP50 is AP@0.50.
   mAP         Float?
   mAP50       Float?
+
+  // Unsupervised anomaly-detection metrics (TorchAnomaly). AUROC/F1 are
+  // reported separately at image level (is this part defective?) and pixel
+  // level (where is the defect?); `threshold` is the anomaly score cut-off
+  // anomalib's adaptive thresholding picked on the validation split.
+  imageAuroc  Float?
+  imageF1     Float?
+  pixelAuroc  Float?
+  pixelF1     Float?
+  threshold   Float?
 
   eta         String?
   batchCost   Float?

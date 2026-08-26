@@ -14,10 +14,12 @@ torchtrain/                 <- repository root (SystemConfig.torchPath)
     cli.py                  shared argparse + Paddle-compatible flag aliases
     seg/                    semantic segmentation  (framework: TorchSeg)
     det/                    object detection       (framework: TorchDet)
+    ad/                     anomaly detection      (framework: TorchAnomaly)
   tools/
     train.py  val.py  predict.py  export.py
     eval.py  infer.py       aliases for the PaddleDetection spellings
   requirements.txt
+  requirements-ad.txt       anomalib, for TorchAnomaly only (separate venv!)
 ```
 
 ## Frameworks
@@ -26,6 +28,19 @@ torchtrain/                 <- repository root (SystemConfig.torchPath)
 |---|---|---|---|
 | `TorchSeg` | semantic segmentation | PaddleSeg's | iterations (`iters`) |
 | `TorchDet` | object detection | PaddleDetection's | epochs (`epoch`) |
+| `TorchAnomaly` | unsupervised anomaly detection | anomalib's | steps (`trainer.max_steps`) |
+
+`TorchAnomaly` is the odd one out and deliberately so: there is no Paddle
+anomaly-detection framework to mirror, so it consumes anomalib's own
+`model:` / `data:` / `trainer:` schema. See [`torchtrain/ad/`](torchtrain/ad/) and
+`docs/ANOMALY_DETECTION_DESIGN.md`. It is a **thin adapter**, not an
+implementation: anomalib does the modelling, and this package only translates the
+config, reproduces the Paddle log lines, restores validation metrics that
+anomalib's default evaluator omits, and puts the checkpoint where the platform
+looks for it.
+
+**It needs its own virtualenv.** anomalib pins Lightning and jsonargparse; do not
+install it into the environment TorchSeg/TorchDet use.
 
 ## Why the Paddle schemas and log formats are reused
 
@@ -55,7 +70,7 @@ spellings (`-o key=value`, `--infer_img`, `--infer_dir`, `--output_dir`) are
 accepted as aliases.
 
 ```bash
-# Train (task inferred from the config's keys; pass --task seg|det to override)
+# Train (task inferred from the config's keys; --task seg|det|ad overrides)
 python tools/train.py --config merged.yml --save_dir out --do_eval [--amp] [--use_vdl]
 
 # Evaluate
@@ -68,6 +83,17 @@ python tools/predict.py --config merged.yml --model_path out/best_model/model.pt
 # Export
 python tools/export.py --config merged.yml --model_path out/best_model/model.pt \
     --save_dir export_model/ [--format torchscript|onnx]
+```
+
+Anomaly jobs use the same flags, with `model.ckpt` instead of `model.pt`:
+
+```bash
+python tools/train.py   --config merged.yml --save_dir out --do_eval
+python tools/val.py     --config merged.yml --model_path out/best_model/model.ckpt
+python tools/predict.py --config merged.yml --model_path out/best_model/model.ckpt \
+    --image_path images/ --save_dir predictions/     # writes heatmaps/ + scores.json
+python tools/export.py  --config merged.yml --model_path out/best_model/model.ckpt \
+    --save_dir export_model/ --format onnx           # or torchscript / openvino
 ```
 
 The GPU comes from `CUDA_VISIBLE_DEVICES` (the platform sets it), so there is no
@@ -116,6 +142,22 @@ PaddleDetection families with no torchvision equivalent (`YOLOv3`/PP-YOLOE,
 `PicoDet`, `DETR`/RT-DETR, `CenterNet`) raise an error naming a comparable
 alternative instead of silently training a different network.
 
+### TorchAnomaly (`torchtrain/ad/`, models from anomalib)
+
+Keep in sync with `ANOMALY_PRESETS` in `src/lib/model-yaml.ts`.
+
+| `model.class_path` | Tiling | Loss curve | Notes |
+|---|---|---|---|
+| `anomalib.models.Patchcore` | yes | no | Memory bank; one pass, no backprop. Best few-shot baseline. |
+| `anomalib.models.Padim` | yes | no | Per-position Gaussians — needs a rigidly aligned part. |
+| `anomalib.models.Stfpm` | yes | yes | Student-teacher; optimizer fixed inside anomalib (SGD, lr 0.4). |
+| `anomalib.models.EfficientAd` | **no** | yes | Best accuracy/latency. Requires `train_batch_size: 1`, forbids `Normalize` in the transform, and downloads a teacher checkpoint + ImageNette on first run. |
+| `anomalib.models.Supersimplenet` | no | yes | Has a `supervised` flag upstream; anomalib wires only the unsupervised path. |
+
+Only PaDiM / PatchCore / ReverseDistillation / STFPM implement a `tiler`, so the
+adapter refuses a tiling request for anything else instead of letting anomalib
+raise a bare `ValueError: Model does not support tiling.`
+
 ## Deliberate differences from the Paddle frameworks
 
 | Topic | Behaviour |
@@ -138,6 +180,14 @@ alternative instead of silently training a different network.
   The two agree to 0.0 on all 12 stats and on per-class AP50; the fallback exists
   because `pycocotools` needs a C toolchain and is a recurring install problem on
   Windows.
+* **Anomaly detection** reports image and pixel AUROC/F1 from anomalib's metrics,
+  plus the adaptive score threshold. Two things to know:
+  * pixel metrics are non-strict, so they simply do not appear when the defect
+    images have no masks;
+  * anomalib's default evaluator registers *test* metrics only, so
+    `torchtrain/ad/evaluator.py` installs an evaluator that also reports during
+    validation. Without it a `fit()` run logs no metrics at all, the AUROC chart
+    stays empty and `ModelCheckpoint` has nothing to monitor.
 
 ## Installation
 
@@ -149,10 +199,20 @@ pip install -r requirements.txt
 Optional: `pycocotools` (reference COCO metrics), `tensorboard` (`--use_vdl`),
 `onnx` (`tools/export.py --format onnx`). All degrade gracefully when absent.
 
+For `TorchAnomaly`, in a **separate** virtualenv:
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+pip install -r requirements-ad.txt      # anomalib==2.6.*
+```
+
 Then in the app's **Settings**:
 
 1. **Framework Paths → PyTorch Trainer Path**: this folder (pre-filled by default).
+   All three torch frameworks share it.
 2. **Framework Python Environments**: add `TorchSeg` and `TorchDet` entries
-   pointing at the interpreter that has PyTorch. This is required — the per-GPU
-   mapping normally points at PaddlePaddle environments, which cannot run torch
-   jobs.
+   pointing at the interpreter that has PyTorch, and a separate `TorchAnomaly`
+   entry pointing at the anomalib venv. This is required — the per-GPU mapping
+   normally points at PaddlePaddle environments, which cannot run torch jobs, and
+   a TorchAnomaly job in a plain torch env fails with an actionable
+   "anomalib is not installed" message.

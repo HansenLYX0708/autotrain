@@ -1,0 +1,33 @@
+# Dependencies for the TorchAnomaly framework (unsupervised anomaly detection).
+#
+# INSTALL THESE IN A SEPARATE VIRTUAL ENVIRONMENT from the one TorchSeg/TorchDet
+# use. anomalib pins Lightning and jsonargparse and pulls in kornia/FrEIA; mixing
+# it into a working torch env is how a segmentation job that used to train starts
+# failing after an unrelated install.
+#
+# Then point Settings -> Framework Python Environments -> TorchAnomaly at this
+# interpreter. Without that entry a TorchAnomaly job fails fast with an
+# actionable message instead of importing torch from a PaddlePaddle env.
+#
+#   python -m venv D:\pythonEnvs\anomalibEnv
+#   D:\pythonEnvs\anomalibEnv\Scripts\pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+#   D:\pythonEnvs\anomalibEnv\Scripts\pip install -r requirements-ad.txt
+
+# Pinned to a minor version on purpose: anomalib removes deprecated APIs in every
+# minor release (2.6 dropped a batch of them), and the adapter in
+# torchtrain/torchtrain/ad/ depends on Engine.from_config, Engine._cache.args and
+# the model-side configure_pre_processor / configure_evaluator hooks. Treat an
+# upgrade as a task with a test run, not as a routine `pip install -U`.
+anomalib==2.6.*
+
+# anomalib requires Python >= 3.10, torch >= 2.6 and lightning >= 2.6; it will
+# pull lightning itself. torch is listed here only to make the requirement
+# explicit — install it from the PyTorch index first so the CUDA build matches.
+# torch>=2.6
+# torchvision>=0.21
+
+# Optional:
+#   openvino  - `tools/export.py --format openvino`
+#   onnx      - `tools/export.py --format onnx`
+# anomalib[openvino]==2.6.*
+# onnx>=1.16

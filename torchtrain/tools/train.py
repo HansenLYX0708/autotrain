@@ -5,9 +5,10 @@ Training entrypoint.
     python tools/train.py --config <merged.yml> --save_dir <out> --do_eval
     python tools/train.py -c <merged.yml> --amp --use_vdl
 
-The task (segmentation vs detection) is inferred from the config keys, so one
-entrypoint serves both `TorchSeg` and `TorchDet` jobs — exactly like PaddleSeg's
-and PaddleDetection's `tools/train.py` do for their own frameworks.
+The task (segmentation / detection / anomaly detection) is inferred from the
+config keys, so one entrypoint serves `TorchSeg`, `TorchDet` and `TorchAnomaly`
+jobs — exactly like PaddleSeg's and PaddleDetection's `tools/train.py` do for
+their own frameworks.
 """
 
 import argparse
@@ -35,7 +36,11 @@ def main() -> None:
 
     L.log("torchtrain train | task={} | config={}".format(task, os.path.abspath(args.config)))
 
-    if task == cfgmod.SEG:
+    if task == cfgmod.AD:
+        from torchtrain.ad import runner as ad_runner
+
+        ad_runner.train(cfg, args)
+    elif task == cfgmod.SEG:
         from torchtrain.seg import trainer
 
         trainer.train(cfg, args)

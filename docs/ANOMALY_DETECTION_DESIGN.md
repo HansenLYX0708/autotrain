@@ -1,6 +1,6 @@
 # 无监督异常检测框架接入方案（TorchAnomaly）
 
-状态：**待 review**，尚未写任何实现代码。
+状态：**已实现**（阶段 1、2 完成；阶段 0 的真机验证待数据到位）。落地与本方案的差异见文末 §11。
 适用场景：slider 外观检测 —— 正常样本充足，缺陷样本充足但**只用于验证、不进训练**，缺陷尺度大小都有，验收需要**像素级指标**。
 
 ---
@@ -276,5 +276,35 @@ torchtrain/
 2. **anomalib 版本策略。** 每个小版本都在删已弃用 API（2.6 就删了一批）。方案要求 `requirements-ad.txt` 里写死 `anomalib==2.6.x`，升级作为独立任务处理，不随手 `pip install -U`。
 3. **PatchCore 内存。** 记忆库大小随分辨率×tile 数×训练图数增长，高分辨率+大量正常图可能吃满显存/内存。`coreset_sampling_ratio` 是主要旋钮，阶段 0 记录实测占用。
 4. **图像位深/通道。** 16-bit 或灰度图能否被 anomalib 直读需实测；不行就在导入时统一转 8-bit 3 通道 PNG（现有链路已有 TIFF→PNG 暂存可参考）。
-5. **掩膜匹配规则**（§3.3）需实测。
+5. **掩膜匹配规则**（§3.3）需实测。适配层与预览页都按**同名 stem** 匹配，若 anomalib 实为按排序位置匹配，则导入时必须保证两个目录文件名一致。
 6. **阈值与数据泄漏**（§3.2）—— 需要产品上明确"哪批 NG 图用于定阈值、哪批用于报数"。
+
+---
+
+## 11. 实现状态与与方案的差异
+
+### 已落地
+
+| 层 | 文件 |
+|---|---|
+| 框架注册 | `src/lib/frameworks.ts`（`TorchAnomaly`、`taskKind: 'anomaly'`、`isAnomaly`、`tracksIterations`、`defaultInferOutputDir`） |
+| 配置生成/解析 | `src/lib/training-yaml.ts`（`anomaly` schema、tiling/val_interval/best_metric 字段）、`src/lib/model-yaml.ts`（`ANOMALY_PRESETS` 五个算法 + 校验） |
+| 数据集 | `Dataset.normalDir/normalTestDir/abnormalDir/maskDir`、`generateDatasetYaml` 的 AnomalyFolder 分支、导入时按目录计数并在正常图为空时拒绝、`/api/datasets/samples` 的预览分支 |
+| 日志 | `src/lib/log-parsers/anomaly.ts`、`ParsedTrainLog` 与 `TrainingLog` 的五个指标列 |
+| 适配层 | `torchtrain/torchtrain/ad/{config,logger,evaluator,runner}.py` + `tools/{train,val,predict,export}.py` 的 `--task ad` 分支 |
+| UI | 监控页异常指标卡片与曲线、验证页异常指标分支与逐图分数表、数据集导入四目录表单、训练/模型对话框的异常分支 |
+| 验证脚本 | `npx tsx scripts/check-anomaly-config-chain.ts` |
+
+### 与方案不同的地方
+
+1. **算法类名是 `Supersimplenet`，不是 `SuperSimpleNet`。** anomalib 的模块文档字符串写的是后者，但 `anomalib.models.__all__` 导出的是前者；照文档写会 import 失败。
+2. **`model_size` 的取值是 `small` / `medium`**（`EfficientAdModelSize.S == 'small'`），不是 `s` / `m`。
+3. **权重文件是 `model.ckpt`**，且必须用 anomalib 自己的 `ModelCheckpoint` 子类 —— `Engine._setup_anomalib_callbacks` 用 `isinstance` 判断是否已有 checkpoint 回调，传 Lightning 原版会导致挂上两个、各写各的目录。
+4. **推理热力图输出目录要显式设置**（`model.visualizer.output_dir = <save_dir>/heatmaps`）。默认会写到 `<save_dir>/<Model>/<dataset>/<category>/latest/images`，而平台的推理结果扫描只递归一层，会显示"无结果"。
+5. **EfficientAD 会在首次训练时联网下载** PDN 教师权重与 ImageNette（约 1.5 GB），模型对话框已就此给出警告。
+6. 数据集的四个目录用了**新增的专用列**，而不是复用 `trainAnnoPath` 等字段 —— 让"缺陷图目录"存进一个叫 anno 的列会长期误导人。
+
+### 尚未做
+
+- **阶段 0 的真机验证**：建 anomalib venv、在真实 slider 图上跑 PatchCore（+tiling）与 EfficientAD，确认小尺度缺陷在选定分辨率下可见、PatchCore 显存可控、16-bit/灰度图能直读。这一步只能在有数据和环境时做。
+- 半监督（`Supersimplenet(supervised=True)`）：anomalib 目前只接了无监督路径，等 NG 样本积累到可训练规模再评估。

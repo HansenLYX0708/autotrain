@@ -27,9 +27,10 @@
 
 import { parseDetectionLines, createDetState, type DetParserState } from './detection'
 import { parseSegLine, createSegState, type SegParserState } from './segmentation'
+import { parseAnomalyLine, createAnomalyState, type AnomalyParserState } from './anomaly'
 import { parseClassificationLine } from './classification'
 import type { ParsedTrainLog } from './types'
-import { isClassification, isSegmentation, normalizeFramework, type Framework } from '@/lib/frameworks'
+import { isAnomaly, isClassification, isSegmentation, normalizeFramework, type Framework } from '@/lib/frameworks'
 
 export type { ParsedTrainLog } from './types'
 
@@ -41,12 +42,15 @@ export interface JobParserState {
   segState?: SegParserState
   /** Detection needs multi-line COCO-block accumulation. */
   detState?: DetParserState
+  /** Anomaly detection accumulates a 2-line EVAL block. */
+  anomalyState?: AnomalyParserState
 }
 
 export function createParserState(framework: string | null | undefined): JobParserState {
   const fw = normalizeFramework(framework)
   const state: JobParserState = { framework: fw, buffer: '' }
   if (isSegmentation(fw)) state.segState = createSegState()
+  else if (isAnomaly(fw)) state.anomalyState = createAnomalyState()
   else if (!isClassification(fw)) state.detState = createDetState()
   return state
 }
@@ -63,6 +67,9 @@ export function parseLine(line: string, state: JobParserState): ParsedTrainLog[]
   // are shared rather than duplicated. See `torchtrain/torchtrain/logger.py`.
   if (isSegmentation(state.framework)) {
     return parseSegLine(line, state.segState!)
+  }
+  if (isAnomaly(state.framework)) {
+    return parseAnomalyLine(line, state.anomalyState ?? (state.anomalyState = createAnomalyState()))
   }
   if (isClassification(state.framework)) {
     const parsed = parseClassificationLine(line)
@@ -113,6 +120,10 @@ export function flush(state: JobParserState): ParsedTrainLog[] {
   // one) would be dropped whenever the process exits right after printing it.
   if (state.segState?.open) {
     const rows = parseSegLine('__eof_sentinel__', state.segState)
+    if (rows.length > 0) out.push(...rows)
+  }
+  if (state.anomalyState?.open) {
+    const rows = parseAnomalyLine('__eof_sentinel__', state.anomalyState)
     if (rows.length > 0) out.push(...rows)
   }
   if (state.detState?.open) {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { isSegmentation } from '@/lib/frameworks'
+import { defaultInferOutputDir } from '@/lib/frameworks'
 import { buildEvalCommand, buildExportCommand, buildInferCommand } from '@/lib/job-commands'
 import { useToast } from '@/hooks/use-toast'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -168,6 +168,32 @@ interface EvalMetrics {
   acc?: number | null
   kappa?: number | null
   dice?: number | null
+  // Unsupervised anomaly detection (TorchAnomaly). `taskKind` is written by the
+  // result parser so the display can branch on intent instead of guessing from
+  // which metric happens to be non-null.
+  taskKind?: string | null
+  imageAuroc?: number | null
+  imageF1?: number | null
+  pixelAuroc?: number | null
+  pixelF1?: number | null
+  threshold?: number | null
+  metrics?: Record<string, number> | null
+}
+
+/** Per-image anomaly scores, from `scores.json` written by tools/predict.py. */
+interface AnomalyScores {
+  threshold?: number | null
+  count?: number | null
+  anomalous?: number | null
+  model?: string | null
+  truncated?: boolean
+  images?: Array<{
+    image?: string
+    path?: string
+    score?: number | null
+    threshold?: number | null
+    pred_label?: boolean | null
+  }>
 }
 
 // Chart configurations
@@ -233,6 +259,52 @@ const getImageUrl = (imagePath: string): string => {
 
 // Metrics Display Component
 function MetricsDisplay({ result, compact = false }: { result: EvalMetrics; compact?: boolean }) {
+  // Anomaly detection: AUROC/F1 at image and pixel level, plus the score
+  // threshold. Checked first because it is the only branch with an explicit
+  // marker, and because a mask-less run has *only* image-level numbers, which
+  // would otherwise fall through to the detection layout and render as N/A mAP.
+  if (result.taskKind === 'anomaly' || result.imageAuroc != null || result.pixelAuroc != null) {
+    const items = [
+      { label: 'Image AUROC', value: result.imageAuroc },
+      { label: 'Image F1', value: result.imageF1 },
+      { label: 'Pixel AUROC', value: result.pixelAuroc },
+      { label: 'Pixel F1', value: result.pixelF1 },
+    ]
+    return (
+      <div className="space-y-3">
+        <div className={compact ? 'grid grid-cols-4 gap-2 text-center text-xs' : 'grid grid-cols-2 md:grid-cols-4 gap-3'}>
+          {items.map((it) => (
+            <div key={it.label} className="rounded-lg border p-3 text-center">
+              <div className="font-bold text-emerald-600">
+                {it.value != null ? `${(it.value * 100).toFixed(2)}%` : 'N/A'}
+              </div>
+              <div className="text-muted-foreground text-xs">{it.label}</div>
+            </div>
+          ))}
+        </div>
+        {!compact && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg border p-3 text-center">
+              {/* Not a percentage: this is a raw anomaly score cut-off. */}
+              <div className="font-bold">{result.threshold != null ? result.threshold.toFixed(4) : 'N/A'}</div>
+              <div className="text-muted-foreground text-xs">Score threshold</div>
+            </div>
+            <div className="rounded-lg border p-3 text-center">
+              <div className="font-bold">{result.samplesCount ?? 'N/A'}</div>
+              <div className="text-muted-foreground text-xs">Images evaluated</div>
+            </div>
+          </div>
+        )}
+        {!compact && result.pixelAuroc == null && (
+          <p className="text-xs text-muted-foreground">
+            Pixel metrics are absent because the dataset has no masks for its defect images.
+            Add a mask directory to measure localisation.
+          </p>
+        )}
+      </div>
+    )
+  }
+
   // PaddleSeg metrics (mIoU/Acc/Kappa/Dice) use a dedicated layout.
   if (result.mIoU != null || result.kappa != null || result.dice != null) {
     const segItems = [
@@ -488,6 +560,9 @@ export function ValidationPage() {
   const [inferRunning, setInferRunning] = useState(false)
   const [inferLog, setInferLog] = useState<string>('')
   const [inferImages, setInferImages] = useState<string[]>([])
+  // Anomaly runs additionally produce per-image scores; a heatmap alone cannot
+  // tell you whether an image was above or below the threshold.
+  const [inferAnomaly, setInferAnomaly] = useState<AnomalyScores | null>(null)
 
   // Result dialog
   const [resultDialogOpen, setResultDialogOpen] = useState(false)
@@ -757,8 +832,7 @@ export function ValidationPage() {
       configPath: selectedJob.absoluteConfigPath || selectedJob.configPath,
       weightsPath: selectedCheckpoint,
       inputPath: inferInputPath,
-      outputPath: inferOutputPath
-        || (isSegmentation(framework) ? 'output/predict_results' : 'output/infer_results'),
+      outputPath: inferOutputPath || defaultInferOutputDir(framework),
       inputIsFile: isImageFile(inferInputPath),
       python: getPythonPathForJob(selectedJob),
     })
@@ -810,6 +884,7 @@ export function ValidationPage() {
     setInferRunning(true)
     setInferLog('')
     setInferImages([])
+    setInferAnomaly(null)
 
     try {
       const response = await fetch('/api/validation-jobs', {
@@ -878,6 +953,9 @@ export function ValidationPage() {
                   const result = JSON.parse(job.resultJson)
                   if (result.images && Array.isArray(result.images)) {
                     setInferImages(result.images)
+                  }
+                  if (result.anomaly) {
+                    setInferAnomaly(result.anomaly as AnomalyScores)
                   }
                 } catch {
                   // Ignore parse errors
@@ -1469,10 +1547,80 @@ export function ValidationPage() {
               <CardHeader>
                 <CardTitle>Inference Results</CardTitle>
                 <CardDescription>
-                  Detection results with bounding boxes
+                  {inferAnomaly
+                    ? 'Anomaly heatmaps and per-image scores'
+                    : 'Detection results with bounding boxes'}
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                {inferAnomaly && (
+                  <div className="mb-4 space-y-3">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-lg border p-3">
+                        <div className="font-bold">{inferAnomaly.count ?? 0}</div>
+                        <div className="text-xs text-muted-foreground">Images</div>
+                      </div>
+                      <div className="rounded-lg border p-3">
+                        <div className="font-bold text-amber-600">{inferAnomaly.anomalous ?? 0}</div>
+                        <div className="text-xs text-muted-foreground">Flagged NG</div>
+                      </div>
+                      <div className="rounded-lg border p-3">
+                        <div className="font-bold">
+                          {inferAnomaly.threshold != null ? inferAnomaly.threshold.toFixed(4) : 'N/A'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">Threshold</div>
+                      </div>
+                    </div>
+
+                    {inferAnomaly.images && inferAnomaly.images.length > 0 && (
+                      <div>
+                        <div className="text-sm font-medium mb-2">Per-image scores</div>
+                        <ScrollArea className="h-[220px] w-full rounded border">
+                          <table className="w-full text-xs">
+                            <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                              <tr>
+                                <th className="text-left p-2 font-medium">Image</th>
+                                <th className="text-right p-2 font-medium">Score</th>
+                                <th className="text-right p-2 font-medium">Verdict</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {/* Highest score first: the images most likely to
+                                  be defective are the ones worth looking at. */}
+                              {[...inferAnomaly.images]
+                                .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))
+                                .map((row, idx) => (
+                                  <tr key={idx} className="border-t">
+                                    <td className="p-2 truncate max-w-[220px]" title={row.path || row.image}>
+                                      {row.image || row.path}
+                                    </td>
+                                    <td className="p-2 text-right font-mono">
+                                      {row.score != null ? row.score.toFixed(4) : '—'}
+                                    </td>
+                                    <td className="p-2 text-right">
+                                      {row.pred_label == null ? (
+                                        <span className="text-muted-foreground">—</span>
+                                      ) : row.pred_label ? (
+                                        <span className="text-amber-600 font-medium">NG</span>
+                                      ) : (
+                                        <span className="text-emerald-600">OK</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </ScrollArea>
+                        {inferAnomaly.truncated && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Showing the first 500 rows. The full list is in scores.json in the output directory.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {inferImages.length > 0 ? (
                   <div className="space-y-4">
                     <div className="text-sm text-muted-foreground">
@@ -1522,14 +1670,14 @@ export function ValidationPage() {
                       </div>
                     )}
                   </div>
-                ) : (
+                ) : !inferAnomaly ? (
                   <div className="flex flex-col items-center justify-center py-8 text-center">
                     <ImageIcon className="w-12 h-12 text-muted-foreground mb-4" />
                     <p className="text-muted-foreground">
                       Run inference to see results
                     </p>
                   </div>
-                )}
+                ) : null}
 
                 {inferLog && (
                   <div className="mt-4">

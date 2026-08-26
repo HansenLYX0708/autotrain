@@ -52,6 +52,27 @@ export interface ModelParams {
   segLossCoef: number[];
   segAlignCorners: boolean;
 
+  // Anomaly detection (TorchAnomaly / anomalib) -----------------------------
+  /**
+   * Network input size. Lives in the model config rather than the training
+   * config because in anomalib the resize is part of the model's
+   * `PreProcessor`, and the recommended size differs per algorithm.
+   */
+  adImageWidth: number;
+  adImageHeight: number;
+  /** Centre crop applied after the resize; 0 disables it (PatchCore: 256->224). */
+  adCenterCrop: number;
+  /** Feature layers to extract from the backbone. */
+  adLayers: string[];
+  /** Only meaningful for models that accept `lr` / `weight_decay` (EfficientAd). */
+  adLr: number;
+  adWeightDecay: number;
+  /** PatchCore: coreset subsampling ratio and kNN count. */
+  adCoresetRatio: number;
+  adNumNeighbors: number;
+  /** EfficientAd: `small` or `medium`. */
+  adModelSize: string;
+
   /** Backbone/whole-model pretrained weights. Empty string omits the key. */
   pretrainWeights: string;
 }
@@ -357,6 +378,137 @@ export const TORCH_PRETRAIN_OPTIONS = [
   { value: '', label: 'Random initialisation' },
 ];
 
+// ---------------------------------------------------------------------------
+// TorchAnomaly (anomalib) presets
+// ---------------------------------------------------------------------------
+
+/**
+ * One entry per anomalib algorithm the platform exposes.
+ *
+ * Every flag here was read off anomalib's source rather than its docs, because
+ * the docs are behind in places (the tiling tutorial still shows
+ * `Engine(image_metrics=...)`, which no longer exists). The class names are the
+ * exported symbols of `anomalib.models` — note `Supersimplenet`, which the
+ * module docstring spells `SuperSimpleNet` but does not export under that name.
+ */
+export interface AnomalyPreset {
+  label: string;
+  /** Import path used verbatim as `model.class_path`. */
+  classPath: string;
+  /** Selectable backbones; empty when the architecture is fixed. */
+  backbones: string[];
+  /** Default feature layers; empty when the model takes no `layers` argument. */
+  layers: string[];
+  /**
+   * Whether `TilerConfigurationCallback` works. Only PaDiM, PatchCore,
+   * ReverseDistillation and STFPM implement a `tiler` attribute; the callback
+   * raises `ValueError: Model does not support tiling` for anything else.
+   */
+  supportsTiling: boolean;
+  /** Whether training runs backprop, i.e. whether a loss curve exists. */
+  hasLoss: boolean;
+  /** Whether `lr` / `weight_decay` are constructor arguments. */
+  hasLr: boolean;
+  /** Recommended input size `[w, h]`. */
+  imageSize: [number, number];
+  /** Hard requirement: `data.train_batch_size` must be 1. */
+  requiresBatchSizeOne?: boolean;
+  /** Downloads extra assets on first train (offline machines need a warm cache). */
+  downloadsAssets?: string;
+  notes: string;
+}
+
+export const ANOMALY_PRESETS: Record<string, AnomalyPreset> = {
+  Patchcore: {
+    label: 'PatchCore (memory bank, best few-shot baseline)',
+    classPath: 'anomalib.models.Patchcore',
+    backbones: ['wide_resnet50_2', 'resnet18', 'resnet50'],
+    layers: ['layer2', 'layer3'],
+    supportsTiling: true,
+    hasLoss: false,
+    hasLr: false,
+    imageSize: [256, 256],
+    notes:
+      'No gradient descent: one pass fills a coreset memory bank, so training is ' +
+      'a single epoch and the loss curve stays flat at 0. Works with a few dozen ' +
+      'normal images. Memory grows with resolution x tiles x images — turn down ' +
+      'coreset_sampling_ratio if it runs out of memory.',
+  },
+  Padim: {
+    label: 'PaDiM (per-position Gaussian, fastest to train)',
+    classPath: 'anomalib.models.Padim',
+    backbones: ['resnet18', 'wide_resnet50_2'],
+    layers: ['layer1', 'layer2', 'layer3'],
+    supportsTiling: true,
+    hasLoss: false,
+    hasLr: false,
+    imageSize: [256, 256],
+    notes:
+      'Models each patch *position* separately, so it only works when the part is ' +
+      'rigidly aligned in the frame. If the slider shifts or rotates between ' +
+      'images, prefer PatchCore.',
+  },
+  Stfpm: {
+    label: 'STFPM (student-teacher, real loss curve)',
+    classPath: 'anomalib.models.Stfpm',
+    backbones: ['resnet18', 'wide_resnet50_2'],
+    layers: ['layer1', 'layer2', 'layer3'],
+    supportsTiling: true,
+    hasLoss: true,
+    hasLr: false,
+    imageSize: [256, 256],
+    notes:
+      'Trains a student to match a frozen teacher. Optimizer is fixed inside ' +
+      'anomalib (SGD, lr 0.4), which is why no learning-rate control is offered.',
+  },
+  EfficientAd: {
+    label: 'EfficientAD (best accuracy/latency, no tiling)',
+    classPath: 'anomalib.models.EfficientAd',
+    backbones: [],
+    layers: [],
+    // EfficientAd's torch model has no `tiler`, so enabling tiling is a hard
+    // error rather than a silent no-op.
+    supportsTiling: false,
+    hasLoss: true,
+    hasLr: true,
+    imageSize: [256, 256],
+    requiresBatchSizeOne: true,
+    downloadsAssets:
+      'pretrained PDN teacher weights (~40 MB, from GitHub releases) and the ' +
+      'ImageNette dataset (~1.5 GB, from AWS S3) on the first run',
+    notes:
+      'Two hard constraints enforced by anomalib at train start: train_batch_size ' +
+      'must be 1, and the pre-processing transform must NOT normalise (the ' +
+      'adapter uses the model\'s own configure_pre_processor, which honours this). ' +
+      'Does not support tiling, so very small defects need a smaller field of view ' +
+      'instead.',
+  },
+  Supersimplenet: {
+    label: 'SuperSimpleNet (fast, semi-supervised capable)',
+    classPath: 'anomalib.models.Supersimplenet',
+    // The upstream default; it must be a torchvision-V1 (`.tv`) weight name.
+    backbones: ['wide_resnet50_2.tv_in1k', 'resnet18.tv_in1k'],
+    layers: ['layer2', 'layer3'],
+    supportsTiling: false,
+    hasLoss: true,
+    hasLr: false,
+    imageSize: [256, 256],
+    notes:
+      'Discriminative model with synthetic feature-level anomalies. It has a ' +
+      '`supervised` flag for training on labelled defects, but anomalib currently ' +
+      'wires only the unsupervised path — keep the defect images in the validation ' +
+      'split.',
+  },
+};
+
+export const ANOMALY_PRESET_KEYS = Object.keys(ANOMALY_PRESETS);
+
+export function anomalyPreset(architecture: string): AnomalyPreset {
+  return ANOMALY_PRESETS[architecture] ?? ANOMALY_PRESETS.Patchcore;
+}
+
+export const ANOMALY_MODEL_SIZES = ['small', 'medium'];
+
 export const SEG_LOSS_TYPES = [
   'CrossEntropyLoss',
   'DiceLoss',
@@ -409,6 +561,54 @@ export function validateModelParams(
   params: ModelParams,
 ): ModelValidationIssue[] {
   const issues: ModelValidationIssue[] = [];
+
+  // Anomaly detection has no classes at all — checked before the shared
+  // num_classes rule so the dialog does not demand a value it never uses.
+  if (framework === 'TorchAnomaly') {
+    const preset = ANOMALY_PRESETS[params.architecture];
+    if (!preset) {
+      issues.push({
+        level: 'error',
+        message: `${params.architecture} is not available in TorchAnomaly. Choose one of: ${ANOMALY_PRESET_KEYS.join(', ')}.`,
+      });
+      return issues;
+    }
+    if (params.adImageWidth < 32 || params.adImageHeight < 32) {
+      issues.push({ level: 'error', message: 'Input size must be at least 32x32.' });
+    }
+    if (params.adCenterCrop > 0 &&
+        (params.adCenterCrop > params.adImageWidth || params.adCenterCrop > params.adImageHeight)) {
+      issues.push({
+        level: 'error',
+        message: `Centre crop (${params.adCenterCrop}) cannot exceed the input size (${params.adImageWidth}x${params.adImageHeight}); anomalib raises on this.`,
+      });
+    }
+    if (preset.backbones.length > 0 && params.backbone && !preset.backbones.includes(params.backbone)) {
+      issues.push({
+        level: 'warning',
+        message: `${params.backbone} is not a listed backbone for ${preset.label}; it will fall back to ${preset.backbones[0]}.`,
+      });
+    }
+    if (preset.requiresBatchSizeOne) {
+      issues.push({
+        level: 'warning',
+        message: `${params.architecture} requires train_batch_size = 1; anomalib raises "train_batch_size for EfficientAd should be 1" at train start otherwise. Set it in the training config.`,
+      });
+    }
+    if (!preset.supportsTiling) {
+      issues.push({
+        level: 'warning',
+        message: `${params.architecture} does not support input tiling. Leave tiling off in the training config, or pick PatchCore / PaDiM / STFPM for small defects on large images.`,
+      });
+    }
+    if (preset.downloadsAssets) {
+      issues.push({
+        level: 'warning',
+        message: `First run downloads ${preset.downloadsAssets}. Pre-warm the cache on machines without internet access.`,
+      });
+    }
+    return issues;
+  }
 
   if (!Number.isFinite(params.numClasses) || params.numClasses < 1) {
     issues.push({ level: 'error', message: 'num_classes must be at least 1.' });
@@ -489,6 +689,39 @@ export function validateModelParams(
 // Defaults
 // ---------------------------------------------------------------------------
 
+/**
+ * Baseline every framework's defaults are layered onto.
+ *
+ * Spelling out all fields in each branch meant a new parameter had to be added
+ * in five places or TypeScript rejected the object — and a forgotten branch is a
+ * silent `undefined` in a config generator.
+ */
+const BASE_MODEL_PARAMS: ModelParams = {
+  architecture: '',
+  backbone: '',
+  neck: '',
+  head: '',
+  numClasses: 1,
+  normType: 'bn',
+  useEma: false,
+  emaDecay: 0.9998,
+  depthMult: 1,
+  widthMult: 1,
+  segLossTypes: [],
+  segLossCoef: [],
+  segAlignCorners: false,
+  adImageWidth: 256,
+  adImageHeight: 256,
+  adCenterCrop: 0,
+  adLayers: [],
+  adLr: 0.0001,
+  adWeightDecay: 0.00001,
+  adCoresetRatio: 0.1,
+  adNumNeighbors: 9,
+  adModelSize: 'small',
+  pretrainWeights: '',
+};
+
 export function defaultModelParams(framework: ConfigFramework): ModelParams {
   if (framework === 'TorchSeg') {
     // UNet is the default rather than a pretrained backbone network: this
@@ -496,99 +729,68 @@ export function defaultModelParams(framework: ConfigFramework): ModelParams {
     // microscopy images, where an ImageNet ResNet overfits quickly.
     const arch = TORCH_SEG_ARCHITECTURES[0];
     return {
+      ...BASE_MODEL_PARAMS,
       architecture: arch.value,
       backbone: arch.backbones[0] ?? '',
-      neck: '',
-      head: '',
       numClasses: 2,
-      normType: 'bn',
-      useEma: false,
-      emaDecay: 0.9998,
-      depthMult: 1,
-      widthMult: 1,
       segLossTypes: Array.from({ length: arch.logits }, () => 'CrossEntropyLoss'),
       segLossCoef: [...arch.defaultCoef],
-      segAlignCorners: false,
-      pretrainWeights: '',
     };
   }
 
   if (framework === 'TorchDet') {
     const preset = TORCH_DET_PRESETS.FasterRCNN;
     return {
+      ...BASE_MODEL_PARAMS,
       architecture: preset.architecture,
       backbone: preset.backbones[0],
-      neck: '',
-      head: '',
-      numClasses: 1,
-      normType: 'bn',
-      useEma: false,
-      emaDecay: 0.9998,
-      depthMult: 1,
-      widthMult: 1,
-      segLossTypes: [],
-      segLossCoef: [],
-      segAlignCorners: false,
       // COCO transfer is the single biggest accuracy win on small datasets.
       pretrainWeights: 'COCO',
+    };
+  }
+
+  if (framework === 'TorchAnomaly') {
+    // PatchCore first: it needs no gradient descent, tolerates a few dozen
+    // normal images, and supports tiling — the safest way to find out whether a
+    // dataset is workable at all before spending time on a trained model.
+    const preset = ANOMALY_PRESETS.Patchcore;
+    return {
+      ...BASE_MODEL_PARAMS,
+      architecture: 'Patchcore',
+      backbone: preset.backbones[0] ?? '',
+      adLayers: [...preset.layers],
+      adImageWidth: preset.imageSize[0],
+      adImageHeight: preset.imageSize[1],
     };
   }
 
   if (framework === 'PaddleSeg') {
     const arch = SEG_ARCHITECTURES[0];
     return {
+      ...BASE_MODEL_PARAMS,
       architecture: arch.value,
       backbone: arch.backbones[1] ?? arch.backbones[0] ?? '',
-      neck: '',
-      head: '',
       numClasses: 2,
-      normType: 'bn',
-      useEma: false,
-      emaDecay: 0.9998,
-      depthMult: 1,
-      widthMult: 1,
       segLossTypes: Array.from({ length: arch.logits }, () => 'CrossEntropyLoss'),
       segLossCoef: [...arch.defaultCoef],
-      segAlignCorners: false,
-      pretrainWeights: '',
     };
   }
 
   if (framework === 'PaddleClas') {
-    return {
-      architecture: 'ResNet50',
-      backbone: '',
-      neck: '',
-      head: '',
-      numClasses: 2,
-      normType: 'bn',
-      useEma: false,
-      emaDecay: 0.9998,
-      depthMult: 1,
-      widthMult: 1,
-      segLossTypes: [],
-      segLossCoef: [],
-      segAlignCorners: false,
-      pretrainWeights: '',
-    };
+    return { ...BASE_MODEL_PARAMS, architecture: 'ResNet50', numClasses: 2 };
   }
 
   const preset = DETECTION_PRESETS['PP-YOLOE'];
   return {
+    ...BASE_MODEL_PARAMS,
     architecture: preset.architecture,
     backbone: preset.backbones[0],
     neck: preset.necks[0],
     head: preset.heads[0],
-    numClasses: 1,
     normType: 'sync_bn',
     useEma: true,
-    emaDecay: 0.9998,
     depthMult: 0.33,
     widthMult: 0.5,
-    segLossTypes: [],
-    segLossCoef: [],
-    segAlignCorners: false,
-    pretrainWeights: '',
   };
 }
 
@@ -743,6 +945,70 @@ Loss:
 `;
 }
 
+/**
+ * anomalib model config: the `model:` block plus the platform's `autotrain:`
+ * additions.
+ *
+ * `image_size` is deliberately *not* expressed as anomalib's own
+ * `model.init_args.pre_processor`. Doing that would mean nesting a
+ * `torchvision.transforms.v2.Compose` through jsonargparse's `class_path`
+ * plumbing, which is verbose, easy to get subtly wrong, and would let a user
+ * accidentally add a `Normalize` that makes EfficientAd refuse to train. Instead
+ * the adapter calls the model class's own `configure_pre_processor(image_size=)`,
+ * which is guaranteed to produce the transform that algorithm expects.
+ */
+function generateAnomalyModelYaml(p: ModelParams, name: string): string {
+  const preset = anomalyPreset(p.architecture);
+  const backbone = preset.backbones.length > 0
+    ? (preset.backbones.includes(p.backbone) ? p.backbone : preset.backbones[0])
+    : '';
+  const layers = p.adLayers.length > 0 ? p.adLayers : preset.layers;
+
+  const initArgs: string[] = [];
+  if (backbone) initArgs.push(`    backbone: ${backbone}`);
+  if (preset.layers.length > 0 && layers.length > 0) {
+    initArgs.push(`    layers: [${layers.join(', ')}]`);
+  }
+  if (p.architecture === 'Patchcore') {
+    initArgs.push(
+      '    pre_trained: true',
+      `    coreset_sampling_ratio: ${p.adCoresetRatio}`,
+      `    num_neighbors: ${Math.max(1, Math.round(p.adNumNeighbors))}`,
+    );
+  }
+  if (p.architecture === 'EfficientAd') {
+    initArgs.push(
+      `    model_size: ${ANOMALY_MODEL_SIZES.includes(p.adModelSize) ? p.adModelSize : 'small'}`,
+      `    teacher_out_channels: 384`,
+    );
+  }
+  if (preset.hasLr) {
+    initArgs.push(`    lr: ${p.adLr}`, `    weight_decay: ${p.adWeightDecay}`);
+  }
+
+  const notes = preset.notes
+    .split('\n')
+    .map((line) => `# ${line}`)
+    .join('\n');
+
+  return `# ${name}
+# Model configuration generated by AutoTrain (TorchAnomaly / anomalib)
+#
+# ${preset.label}
+${notes}
+#
+# Trains on normal images only. \`image_size\` lives here rather than in the
+# training config because anomalib applies the resize inside the model's
+# PreProcessor, and each algorithm has its own recommended size.
+${preset.supportsTiling ? '' : '#\n# NOTE: this model does not support input tiling; leave tiling off.\n'}
+model:
+  class_path: ${preset.classPath}
+${initArgs.length > 0 ? `  init_args:\n${initArgs.join('\n')}\n` : ''}
+autotrain:
+  image_size: [${Math.max(32, Math.round(p.adImageWidth))}, ${Math.max(32, Math.round(p.adImageHeight))}]
+${p.adCenterCrop > 0 ? `  center_crop_size: ${Math.round(p.adCenterCrop)}\n` : ''}`;
+}
+
 export function generateModelYaml(
   framework: ConfigFramework,
   params: ModelParams,
@@ -756,6 +1022,8 @@ export function generateModelYaml(
       return generateClasModelYaml(params, modelName);
     case 'TorchDet':
       return generateTorchDetModelYaml(params, modelName);
+    case 'TorchAnomaly':
+      return generateAnomalyModelYaml(params, modelName);
     default:
       return generateDetectionModelYaml(params, modelName);
   }
@@ -798,6 +1066,50 @@ export function parseModelParams(
   if (!doc || typeof doc !== 'object') return {};
 
   const out: Partial<ModelParams> = {};
+
+  // --- TorchAnomaly (anomalib) ---------------------------------------------
+  // Must be tested before PaddleSeg: both schemas use a top-level `model:` key,
+  // and only anomalib's carries `class_path`.
+  if (doc.model && typeof doc.model === 'object' && typeof doc.model.class_path === 'string') {
+    const args = doc.model.init_args ?? {};
+    // `anomalib.models.Patchcore` -> `Patchcore`
+    const className = doc.model.class_path.split('.').pop() ?? '';
+    if (className) out.architecture = className;
+    if (typeof args.backbone === 'string') out.backbone = args.backbone;
+    if (Array.isArray(args.layers)) {
+      out.adLayers = args.layers.filter((l: unknown): l is string => typeof l === 'string');
+    }
+    const coreset = toNum(args.coreset_sampling_ratio);
+    if (coreset !== undefined) out.adCoresetRatio = coreset;
+    const neighbors = toNum(args.num_neighbors);
+    if (neighbors !== undefined) out.adNumNeighbors = neighbors;
+    if (typeof args.model_size === 'string') out.adModelSize = args.model_size;
+    const lr = toNum(args.lr);
+    if (lr !== undefined) out.adLr = lr;
+    const wd = toNum(args.weight_decay);
+    if (wd !== undefined) out.adWeightDecay = wd;
+
+    const platform = doc.autotrain ?? {};
+    if (Array.isArray(platform.image_size)) {
+      const size = platform.image_size.map(toNum).filter((n: number | undefined): n is number => n !== undefined);
+      if (size.length >= 2) {
+        out.adImageWidth = size[0];
+        out.adImageHeight = size[1];
+      } else if (size.length === 1) {
+        out.adImageWidth = size[0];
+        out.adImageHeight = size[0];
+      }
+    } else {
+      const square = toNum(platform.image_size);
+      if (square !== undefined) {
+        out.adImageWidth = square;
+        out.adImageHeight = square;
+      }
+    }
+    const crop = toNum(platform.center_crop_size);
+    if (crop !== undefined) out.adCenterCrop = crop;
+    return out;
+  }
 
   // --- PaddleSeg -----------------------------------------------------------
   if (doc.model && typeof doc.model === 'object') {

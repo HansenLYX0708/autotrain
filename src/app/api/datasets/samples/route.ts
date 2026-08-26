@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 import { sessions } from '../../auth/route';
 import { getSegColorMap } from '@/lib/seg-colors';
 import { parseListFile } from '@/lib/paddleseg-list';
-import { isSegmentation } from '@/lib/frameworks';
+import { isAnomaly, isSegmentation } from '@/lib/frameworks';
 
 interface CocoAnnotation {
   id: number;
@@ -129,6 +129,85 @@ export async function GET(request: NextRequest) {
         { success: false, error: 'Dataset not found' },
         { status: 404 }
       );
+    }
+
+    // Anomaly datasets: plain image folders, no annotation file to parse. The
+    // preview shows normal images first, then defect ones, so a mislabelled
+    // directory is obvious before a job is ever started.
+    if (isAnomaly((dataset as any).project?.framework)) {
+      const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
+        ? dataset.datasetDir
+        : path.join(userDatabasePath, user.username, dataset.datasetDir || '');
+
+      const imageExts = ['.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff'];
+      const listDir = (rel: string | null | undefined): string[] => {
+        if (!rel) return [];
+        const dir = path.isAbsolute(rel) ? rel : path.join(root, rel);
+        if (!fs.existsSync(dir)) return [];
+        try {
+          return fs
+            .readdirSync(dir, { withFileTypes: true })
+            .filter((e) => e.isFile() && imageExts.includes(path.extname(e.name).toLowerCase()))
+            .map((e) => path.join(dir, e.name));
+        } catch {
+          return [];
+        }
+      };
+
+      const normal = listDir((dataset as any).normalDir || 'train_good');
+      const abnormal = listDir((dataset as any).abnormalDir);
+      const maskDirRel = (dataset as any).maskDir as string | null | undefined;
+      const maskDir = maskDirRel
+        ? (path.isAbsolute(maskDirRel) ? maskDirRel : path.join(root, maskDirRel))
+        : null;
+
+      // Interleave so the preview shows both kinds even with a small limit.
+      const half = Math.max(1, Math.floor(limit / 2));
+      const picked = [
+        ...normal.slice(0, limit - Math.min(half, abnormal.length)).map((p) => ({ p, anomalous: false })),
+        ...abnormal.slice(0, Math.min(half, abnormal.length)).map((p) => ({ p, anomalous: true })),
+      ];
+
+      const samples = picked.map(({ p, anomalous }, idx) => {
+        // anomalib matches masks to defect images by file name.
+        const stem = path.basename(p, path.extname(p));
+        let maskPath = '';
+        if (anomalous && maskDir && fs.existsSync(maskDir)) {
+          for (const ext of imageExts) {
+            const candidate = path.join(maskDir, `${stem}${ext}`);
+            if (fs.existsSync(candidate)) {
+              maskPath = candidate;
+              break;
+            }
+          }
+        }
+        return {
+          id: idx,
+          fileName: path.basename(p),
+          width: 0,
+          height: 0,
+          imagePath: p,
+          maskPath,
+          anomalous,
+          annotations: [],
+        };
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          type: 'anomaly',
+          samples,
+          categories: [
+            { id: 0, name: 'normal', color: [0, 160, 0] },
+            { id: 1, name: 'anomalous', color: [200, 60, 0] },
+          ],
+          totalImages: normal.length + abnormal.length,
+          normalImages: normal.length,
+          abnormalImages: abnormal.length,
+          totalAnnotations: 0,
+        },
+      });
     }
 
     // PaddleSeg datasets: list files (train.txt/val.txt) of "image mask" pairs.
