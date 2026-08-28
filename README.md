@@ -1,5 +1,7 @@
 # 🚀 Welcome to Z.ai Code Scaffold
 
+> Windows 10/11 全框架、完全离线的一键部署流程和打包脚本见 [deployment/windows-offline/README.md](deployment/windows-offline/README.md)。`docs/install.bat` 是早期在线安装脚本，不适用于当前完整平台。
+
 A modern, production-ready web application scaffold powered by cutting-edge technologies, designed to accelerate your development with [Z.ai](https://chat.z.ai)'s AI-powered coding assistance.
 
 ## ✨ Technology Stack

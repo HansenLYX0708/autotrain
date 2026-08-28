@@ -1,0 +1,26 @@
+{
+  "bundleName": "AutoTrain-Offline-Windows-x64",
+  "appSource": "../..",
+  "nodeArchive": "D:/offline-sources/node-v24-win-x64.zip",
+  "pythonInstaller": "D:/offline-sources/python-3.10.11-amd64.exe",
+  "vcRedistInstaller": "D:/offline-sources/VC_redist.x64.exe",
+  "builderPython": "C:/Python310/python.exe",
+  "frameworkSources": {
+    "PaddleDetection": "D:/frameworks/PaddleDetection",
+    "PaddleClas": "D:/frameworks/PaddleClas",
+    "PaddleSeg": "D:/frameworks/PaddleSeg"
+  },
+  "paddlePackage": "paddlepaddle-gpu==2.6.2",
+  "paddlePipArgs": [],
+  "torchPackages": [
+    "torch==2.6.0+cu118",
+    "torchvision==0.21.0+cu118"
+  ],
+  "torchIndexUrl": "https://download.pytorch.org/whl/cu118",
+  "pythonIndexUrl": "https://pypi.org/simple",
+  "cacheSources": {
+    "paddle": "",
+    "torch": "",
+    "anomalib": ""
+  }
+}

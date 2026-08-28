@@ -19,6 +19,8 @@ interface FrameworkSupport {
   torch: boolean;
   /** `import torchvision` succeeded; required by every torchtrain model. */
   torchvision: boolean;
+  /** `import anomalib` succeeded; required by TorchAnomaly. */
+  anomalib: boolean;
 }
 
 interface GpuEnvironmentCheck {
@@ -58,6 +60,7 @@ const MODULE_PROBES: Array<[keyof FrameworkSupport, string]> = [
   ['paddleSeg', 'paddleseg'],
   ['torch', 'torch'],
   ['torchvision', 'torchvision'],
+  ['anomalib', 'anomalib'],
 ];
 
 const NO_MODULES: FrameworkSupport = {
@@ -66,6 +69,7 @@ const NO_MODULES: FrameworkSupport = {
   paddleSeg: false,
   torch: false,
   torchvision: false,
+  anomalib: false,
 };
 
 /**

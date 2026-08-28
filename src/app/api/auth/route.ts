@@ -102,7 +102,9 @@ async function handleLogin({ username, password }: { username: string; password:
 
   response.cookies.set("auth-token", token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.AUTH_COOKIE_SECURE
+      ? process.env.AUTH_COOKIE_SECURE.toLowerCase() === "true"
+      : process.env.NODE_ENV === "production",
     sameSite: "strict",
     maxAge: 60 * 60 * 24 * 7, // 7 days
     path: "/",

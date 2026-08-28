@@ -1,5 +1,7 @@
 # Auto Training Platform 用户手册
 
+> 本手册中的安装章节是早期在线部署流程，只覆盖旧版 PaddleDetection/PaddleClas。当前 Windows 10/11 全框架完全离线部署请使用 [`deployment/windows-offline/README.md`](../deployment/windows-offline/README.md)，不要运行旧的 `docs/install.bat`。
+
 ## 目录
 
 1. [系统简介](#1-系统简介)
