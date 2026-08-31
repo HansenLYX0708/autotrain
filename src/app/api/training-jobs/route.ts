@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
-import { frameworkMeta, getWorkDir } from "@/lib/frameworks";
+import { getWorkDir, isClassification } from "@/lib/frameworks";
 import {
   bestWeightsPath,
   buildEvalCommand,
@@ -10,7 +10,9 @@ import {
   buildTrainCommand,
   joinPath,
 } from "@/lib/job-commands";
-import { mergeYamlConfigs } from "@/lib/yaml-merge";
+import { mergeYamlConfigs, setPaddleClasOutputDir, setTopLevelSaveDir } from "@/lib/yaml-merge";
+import { repairCocoAnnotationAreas } from "@/lib/coco-annotations";
+import { isInside } from "@/lib/safe-path";
 import {
   asConfigFramework,
   countsIterations,
@@ -181,8 +183,15 @@ export async function GET(request: NextRequest) {
       if (userConfigsPath && job.configPath && !path.isAbsolute(job.configPath)) {
         absoluteConfigPath = path.join(userConfigsPath, job.configPath);
       }
+      let trainingParams: Record<string, unknown> = {};
+      try {
+        trainingParams = job.trainingParams ? JSON.parse(job.trainingParams) : {};
+      } catch {
+        trainingParams = {};
+      }
       return {
         ...job,
+        trainingParams,
         absoluteConfigPath,
       };
     });
@@ -300,6 +309,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
+    if (dataset.format === "COCO" && dataset.datasetDir && userDatabasePath) {
+      const userDataRoot = path.join(userDatabasePath, currentUser.username);
+      const datasetRoot = path.isAbsolute(dataset.datasetDir)
+        ? dataset.datasetDir
+        : path.join(userDataRoot, dataset.datasetDir);
+      if (isInside(userDataRoot, datasetRoot)) {
+        try {
+          for (const annotationPath of [dataset.trainAnnoPath, dataset.evalAnnoPath]) {
+            if (!annotationPath) continue;
+            const fullPath = path.isAbsolute(annotationPath)
+              ? annotationPath
+              : path.join(datasetRoot, annotationPath);
+            if (!isInside(datasetRoot, fullPath) || !fs.existsSync(fullPath)) continue;
+            const result = await repairCocoAnnotationAreas(fullPath);
+            if (result.repaired > 0) {
+              console.log(`[training-jobs] Repaired ${result.repaired} non-positive COCO areas in ${fullPath}`);
+            }
+          }
+        } catch (error) {
+          return NextResponse.json(
+            {
+              error: "Failed to prepare COCO annotations",
+              message: error instanceof Error ? error.message : String(error),
+            },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
     // Check storage quota - training jobs need space for models, logs, etc.
     if (userDatabasePath) {
       const userFolderPath = path.join(userDatabasePath, currentUser.username);
@@ -369,16 +408,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update save_dir to absolute path: {userDatabasePath}/{username}/jobs/{job_name}
-    if (userDatabasePath && currentUser.username) {
-      const absoluteSaveDir = path.join(userDatabasePath, currentUser.username, 'jobs', jobName);
-      // Replace save_dir line with absolute path
-      mergedYaml = mergedYaml.replace(
-        /^save_dir:\s*.+$/gm,
-        `save_dir: ${absoluteSaveDir}`
-      );
-    }
-
     // Save to userConfigsPath/{username}/jobs folder, fallback to old path if not set
     let configFilePath: string;
     let configPath: string;
@@ -400,8 +429,6 @@ export async function POST(request: NextRequest) {
       configPath = `configs/autotrain/jobs/${configFileName}`;
     }
     
-    fs.writeFileSync(configFilePath, mergedYaml, 'utf-8');
-
     // Generate training command using absolute path
     // Always use paddle.distributed.launch --gpus for consistency with preview
     const gpuIds = sanitizeGpuIds(body.gpuIds);
@@ -424,14 +451,19 @@ export async function POST(request: NextRequest) {
     const projectSlug = toSafeSlug(project.name, 'project');
     const defaultOutputDir = `output/${projectSlug}/${jobName}`;
 
-    const meta = frameworkMeta(framework);
-    // Frameworks that take `save_dir` on the CLI (PaddleSeg, TorchSeg, TorchDet)
-    // get the user's absolute job folder; the others keep writing under the
-    // framework repo's relative `output/` tree, as they always have.
+    // Every framework writes to the user's managed job folder when one is configured;
+    // config-flags frameworks also receive the same path through `--save_dir`.
     const absoluteSaveDir = (userDatabasePath && currentUser.username)
       ? path.join(userDatabasePath, currentUser.username, 'jobs', jobName)
       : defaultOutputDir;
-    const saveDir = meta.saveDirOnCli ? absoluteSaveDir : defaultOutputDir;
+    const saveDir = absoluteSaveDir;
+
+    // Update save_dir to absolute path: {userDatabasePath}/{username}/jobs/{job_name}
+    // Replace save_dir line with absolute path
+    mergedYaml = isClassification(framework)
+      ? setPaddleClasOutputDir(mergedYaml, saveDir)
+      : setTopLevelSaveDir(mergedYaml, saveDir);
+    fs.writeFileSync(configFilePath, mergedYaml, 'utf-8');
 
     const command = buildTrainCommand({
       framework,

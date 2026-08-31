@@ -19,3 +19,4 @@ filelock
 scikit-image
 ujson
 requests
+pycocotools==2.0.7

@@ -8,7 +8,7 @@ $ServerPid = [int](Get-Content $PidFile -Raw)
 $Process = Get-Process -Id $ServerPid -ErrorAction SilentlyContinue
 if ($Process) {
     Stop-Process -Id $ServerPid
-    $Process.WaitForExit(10000)
+    [void]$Process.WaitForExit(10000)
 }
 Remove-Item $PidFile -Force
 Write-Host "AutoTrain stopped."

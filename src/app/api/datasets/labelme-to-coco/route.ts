@@ -312,14 +312,9 @@ export async function POST(request: NextRequest) {
 
         // Convert shapes to annotations
         for (const shape of labelmeData.shapes) {
-          // Get or create category
-          if (!categories.has(shape.label)) {
-            categories.set(shape.label, categoryId++);
-          }
-          const catId = categories.get(shape.label)!;
-
           // Calculate bbox from polygon points
           const points = shape.points;
+          if (!Array.isArray(points) || points.length < 2) continue;
           const xs = points.map(p => p[0]);
           const ys = points.map(p => p[1]);
           const minX = Math.min(...xs);
@@ -328,6 +323,16 @@ export async function POST(request: NextRequest) {
           const maxY = Math.max(...ys);
           const width = maxX - minX;
           const height = maxY - minY;
+          if (![minX, maxX, minY, maxY, width, height].every(Number.isFinite) || width <= 1e-5 || height <= 1e-5) {
+            console.warn(`Invalid bbox in ${file} for label "${shape.label}", skipping...`);
+            continue;
+          }
+
+          // Get or create category
+          if (!categories.has(shape.label)) {
+            categories.set(shape.label, categoryId++);
+          }
+          const catId = categories.get(shape.label)!;
 
           // Calculate polygon area using shoelace formula
           let area = 0;
@@ -336,7 +341,7 @@ export async function POST(request: NextRequest) {
             area += points[i][0] * points[j][1];
             area -= points[j][0] * points[i][1];
           }
-          area = Math.abs(area) / 2;
+          area = Math.abs(area) / 2 || width * height;
 
           // Build polygon segmentation for shapes that actually describe a
           // closed region (polygon / linestrip with >= 3 points). For pure

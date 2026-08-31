@@ -75,6 +75,12 @@ $AnomalyPython = Join-Path $InstallRoot "runtime\envs\anomaly\Scripts\python.exe
 Invoke-Python $PaddlePython (@("-m", "pip", "install", "--no-index", "--find-links", $Wheelhouse, [string]$Manifest.paddlePackage, "-r", (Join-Path $InstallRoot "runtime\requirements\requirements-paddle.txt")))
 Invoke-Python $TorchPython (@("-m", "pip", "install", "--no-index", "--find-links", $Wheelhouse) + @($Manifest.torchPackages) + @("-r", (Join-Path $InstallRoot "runtime\requirements\requirements-torch.txt")))
 Invoke-Python $AnomalyPython (@("-m", "pip", "install", "--no-index", "--find-links", $Wheelhouse) + @($Manifest.torchPackages) + @("-r", (Join-Path $InstallRoot "runtime\requirements\requirements-anomaly.txt")))
+$BundledAnomalyCache = Join-Path $Payload "cache\anomalib"
+if (Test-Path $BundledAnomalyCache) {
+    $AnomalyCacheRoot = (& $AnomalyPython -c "import platformdirs; print(platformdirs.user_cache_path('anomalib', ensure_exists=True))" | Select-Object -Last 1).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $AnomalyCacheRoot) { throw "Could not resolve the anomalib cache directory." }
+    Copy-Directory $BundledAnomalyCache $AnomalyCacheRoot
+}
 $SitePackages = Join-Path $InstallRoot "runtime\envs\paddle\Lib\site-packages"
 foreach ($Framework in @("PaddleDetection", "PaddleClas", "PaddleSeg")) {
     $Repository = Join-Path $InstallRoot "frameworks\$Framework"
@@ -84,6 +90,7 @@ Invoke-Python $BasePython @((Join-Path $InstallRoot "configure_db.py"), "--db", 
 $Settings = @{ port = $Port; installedAt = (Get-Date).ToString("o"); bundle = $Manifest.bundleName } | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $InstallRoot "install-settings.json"), $Settings, (New-Object Text.UTF8Encoding($false)))
 & (Join-Path $InstallRoot "Test-Installation.ps1") -RequireGpu:$RequireGpu
+if ($LASTEXITCODE -ne 0) { throw "Installation verification failed with exit code $LASTEXITCODE." }
 if (-not $NoStart) { & (Join-Path $InstallRoot "Start.ps1") -Port $Port }
 Write-Host "AutoTrain was installed to $InstallRoot" -ForegroundColor Green
 Write-Host "First registered account becomes the administrator."

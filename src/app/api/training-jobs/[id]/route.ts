@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { getCurrentUser, notFoundOrDenied, requireOwnedScope } from "@/lib/auth";
 import { frameworkMeta, getWorkDir, isTorch, resolvePythonPath, tracksIterations } from "@/lib/frameworks";
 import * as path from "path";
+import { existsSync } from "fs";
 import {
   createParserState,
   feed as feedParser,
@@ -600,14 +601,19 @@ function startTrainingProcess(
   // Collect stderr for error reporting
   let stderrCollector: string[] = [];
   
-  // Build environment with CUDA_VISIBLE_DEVICES
+  // Torch uses the first visible GPU; Paddle's launcher receives physical IDs via --gpus.
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
-    CUDA_VISIBLE_DEVICES: gpuIds,
   };
+  if (isTorch(framework)) {
+    env.CUDA_VISIBLE_DEVICES = gpuIds;
+  } else {
+    delete env.CUDA_VISIBLE_DEVICES;
+  }
   
   // Detect if python path is in a conda environment
+  const condaWasConfigured = Boolean(condaEnv);
   let detectedCondaEnv: string | null = condaEnv;
   let detectedCondaPath: string | null = condaPath;
   
@@ -653,6 +659,12 @@ function startTrainingProcess(
         }
         console.log(`[Job ${jobId}] Detected conda path: ${detectedCondaPath}`);
       }
+    }
+
+    if (!condaWasConfigured && detectedCondaEnv && (!detectedCondaPath || !existsSync(detectedCondaPath))) {
+      console.log(`[Job ${jobId}] Ignoring conda-like env path because conda executable was not found: ${detectedCondaPath || 'not detected'}`);
+      detectedCondaEnv = null;
+      detectedCondaPath = null;
     }
   }
   

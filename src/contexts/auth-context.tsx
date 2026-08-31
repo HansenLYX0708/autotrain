@@ -74,8 +74,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(data.error || 'Registration failed')
     }
 
-    // Auto login after registration
-    setUser(data.data)
   }
 
   async function logout() {

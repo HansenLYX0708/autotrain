@@ -29,6 +29,20 @@
 
 import { Document, isMap, isSeq, parseDocument, type Node, type YAMLMap } from 'yaml';
 
+export function setTopLevelSaveDir(yaml: string, saveDir: string): string {
+  if (/^save_dir:\s*.*$/m.test(yaml)) {
+    return yaml.replace(/^save_dir:\s*.*$/gm, `save_dir: ${saveDir}`);
+  }
+  return `${yaml.trimEnd()}\nsave_dir: ${saveDir}\n`;
+}
+
+export function setPaddleClasOutputDir(yaml: string, outputDir: string): string {
+  const doc = parseDocument(yaml, { logLevel: 'silent' });
+  if (doc.errors.length > 0 || !isMap(doc.contents)) return yaml;
+  doc.setIn(['Global', 'output_dir'], outputDir);
+  return doc.toString({ lineWidth: 0 });
+}
+
 export interface YamlSource {
   /** Human-readable label used in the emitted header comment and in errors. */
   label: string;

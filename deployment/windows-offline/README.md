@@ -10,7 +10,7 @@
 
 - Next.js standalone 生产服务和 Prisma Windows 引擎
 - Node.js Windows x64 便携运行时
-- Python Windows x64 官方安装器
+- Python Windows x64 私有便携基础运行时及官方备用安装器
 - 全部 Python wheel 及其传递依赖
 - PaddleDetection、PaddleClas、PaddleSeg 源码
 - TorchDet、TorchSeg、TorchAnomaly 共用的 `torchtrain`
@@ -197,7 +197,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 `
 
 1. 复制 Web 服务和框架源码目录。
 2. 安装 Microsoft Visual C++ x64 运行库。
-3. 静默安装包内 Python 到应用私有目录。
+3. 复制包内 Python 便携基础运行时到应用私有目录；如果旧包没有便携运行时才调用备用安装器。
 4. 创建 paddle、torch、anomaly 三个 venv。
 5. 只从本地 wheelhouse 安装依赖，禁止访问网络。
 6. 创建或保留 `data/autotrain.db`。
@@ -240,6 +240,8 @@ New-NetFirewallRule -DisplayName "AutoTrain TCP 3000" -Direction Inbound -Protoc
 ```
 
 平台当前通过 `AUTH_COOKIE_SECURE=false` 支持内网 HTTP 登录。HTTP 不加密，不要暴露到公网。需要跨不可信网络访问时，应在前面部署 HTTPS 反向代理，并把 `Start.ps1` 中该变量改为 `true`。
+
+Windows 自托管必须使用 Next.js 16.3.3 或更高的已修复版本；低于 16.3.3 的 Next.js 16 存在官方披露的 Windows 未认证远程代码执行漏洞，且没有规避方案。最终包的版本记录在 `manifest.json`。
 
 ## 8. 数据、备份与升级
 

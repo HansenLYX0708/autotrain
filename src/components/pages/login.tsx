@@ -53,6 +53,12 @@ export function LoginPage() {
     
     try {
       await register(registerUsername, registerPassword)
+      setLoginUsername(registerUsername)
+      setLoginPassword('')
+      setRegisterUsername('')
+      setRegisterPassword('')
+      setConfirmPassword('')
+      setActiveTab('login')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
     }

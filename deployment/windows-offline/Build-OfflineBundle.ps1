@@ -31,9 +31,11 @@ function Invoke-External([string]$Executable, [object[]]$Arguments, [string]$Wor
         if ($WorkingDirectory) { Pop-Location }
     }
 }
-function Copy-Tree([string]$Source, [string]$Destination) {
+function Copy-Tree([string]$Source, [string]$Destination, [bool]$ExcludeArtifacts = $false) {
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    & robocopy.exe $Source $Destination /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP /XD .git output log logs __pycache__ | Out-Null
+    $Arguments = @($Source, $Destination, "/E", "/R:2", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NP", "/XD", ".git", "__pycache__")
+    if ($ExcludeArtifacts) { $Arguments += @(".next", "node_modules", "output", "log", "logs") }
+    & robocopy.exe @Arguments | Out-Null
     if ($LASTEXITCODE -gt 7) { throw "Copy failed ($LASTEXITCODE): $Source" }
 }
 $AppSource = Resolve-ConfiguredPath ([string]$Config.appSource)
@@ -72,8 +74,8 @@ Invoke-External "npm.cmd" @("run", "db:generate") $AppSource
 Invoke-External "npm.cmd" @("run", "build") $AppSource
 Assert-File (Join-Path $AppSource ".next\standalone\server.js") "Next.js standalone server"
 Copy-Tree (Join-Path $AppSource ".next\standalone") (Join-Path $Payload "app")
-foreach ($Name in $FrameworkSources.Keys) { Copy-Tree $FrameworkSources[$Name] (Join-Path $Payload "frameworks\$Name") }
-Copy-Tree (Join-Path $AppSource "torchtrain") (Join-Path $Payload "frameworks\torchtrain")
+foreach ($Name in $FrameworkSources.Keys) { Copy-Tree $FrameworkSources[$Name] (Join-Path $Payload "frameworks\$Name") $true }
+Copy-Tree (Join-Path $AppSource "torchtrain") (Join-Path $Payload "frameworks\torchtrain") $true
 $NodeTemp = Join-Path $env:TEMP ("autotrain-node-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $NodeTemp | Out-Null
 try {
@@ -126,9 +128,12 @@ if ($Config.PSObject.Properties.Name -contains "cacheSources") {
         }
     }
 }
+$AppPackage = Get-Content (Join-Path $AppSource "package.json") -Raw | ConvertFrom-Json
 $Manifest = [ordered]@{
     bundleName = [string]$Config.bundleName
     createdAt = (Get-Date).ToUniversalTime().ToString("o")
+    nextVersion = [string]$AppPackage.dependencies.next
+    sharpVersion = [string]$AppPackage.dependencies.sharp
     paddlePackage = [string]$Config.paddlePackage
     torchPackages = @($Config.torchPackages)
     pythonInstaller = [IO.Path]::GetFileName($PythonInstaller)
@@ -136,10 +141,17 @@ $Manifest = [ordered]@{
 }
 [IO.File]::WriteAllText((Join-Path $BundleRoot "manifest.json"), ($Manifest | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
 Copy-Item (Join-Path $ScriptRoot "README.md") (Join-Path $BundleRoot "DEPLOYMENT.md")
+$ChecksumLines = Get-ChildItem $BundleRoot -File -Recurse | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | Sort-Object FullName | ForEach-Object {
+    $RelativePath = $_.FullName.Substring($BundleRoot.Length + 1).Replace("\", "/")
+    "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $RelativePath
+}
+[IO.File]::WriteAllLines((Join-Path $BundleRoot "SHA256SUMS.txt"), $ChecksumLines, (New-Object Text.UTF8Encoding($false)))
 if ($CreateArchive) {
     $Archive = Join-Path $OutputDirectory (([string]$Config.bundleName) + ".zip")
     if (Test-Path $Archive) { Remove-Item $Archive -Force }
     Invoke-External "tar.exe" @("-a", "-c", "-f", $Archive, "-C", $OutputDirectory, [string]$Config.bundleName)
+    $ArchiveChecksum = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLower()
+    [IO.File]::WriteAllText("$Archive.sha256", "$ArchiveChecksum  $([IO.Path]::GetFileName($Archive))`n", (New-Object Text.UTF8Encoding($false)))
     Write-Host "Offline archive created: $Archive" -ForegroundColor Green
 }
 Write-Host "Offline bundle created: $BundleRoot" -ForegroundColor Green

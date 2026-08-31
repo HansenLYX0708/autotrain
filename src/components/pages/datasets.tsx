@@ -172,6 +172,15 @@ const chartConfig = {
   },
 } satisfies ChartConfig
 
+interface LabelmeMergePreview {
+  canMerge: boolean
+  labelme: { name: string; categories: string[]; totalJson: number; validSamples: number; invalidSamples: string[] }
+  coco: { name: string; categories: string[]; trainCategories: string[]; valCategories: string[] }
+  differences: { matched: string[]; onlyInLabelme: string[]; onlyInCoco: string[]; missingFromTrain: string[]; missingFromVal: string[] }
+  before: { trainImages: number; valImages: number; trainAnnotations: number; valAnnotations: number }
+  planned: { trainAdd: number; valAdd: number; skipped: number; trainImages: number; valImages: number }
+}
+
 export function DatasetsPage() {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -180,6 +189,11 @@ export function DatasetsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [labelmeDialogOpen, setLabelmeDialogOpen] = useState(false)
   const [converting, setConverting] = useState(false)
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false)
+  const [verifyingMerge, setVerifyingMerge] = useState(false)
+  const [mergingDatasets, setMergingDatasets] = useState(false)
+  const [mergePreview, setMergePreview] = useState<LabelmeMergePreview | null>(null)
+  const [mergeFormData, setMergeFormData] = useState({ labelmeDataset: '', cocoDataset: '', trainRatio: 0.7, valRatio: 0.2 })
   const [labelmeFormData, setLabelmeFormData] = useState({
     name: '',
     description: '',
