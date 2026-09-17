@@ -16,6 +16,7 @@ import {
   type ParsedTrainLog,
 } from "@/lib/log-parsers";
 import { promisify } from "util";
+import { StringDecoder } from "string_decoder";
 
 const execAsync = promisify(exec);
 
@@ -64,6 +65,18 @@ async function checkFrameworkModuleAvailable(
 
 // Store running processes
 const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
+
+/**
+ * Jobs the user asked to stop, so the `close` handler can tell "killed on
+ * purpose" from "crashed".
+ *
+ * Without this the stop path was self-defeating: `PUT {status:"stopped"}` wrote
+ * `stopped`, then `taskkill` made the child exit non-zero, and the `close`
+ * handler unconditionally overwrote the row with
+ * `failed` + "Training failed with exit code 1". Every manually stopped job
+ * ended up looking like a crash.
+ */
+const stoppingJobs = new Set<string>();
 
 // Per-job log parser state. Mirrors the lifetime of `runningProcesses`
 // entries (created when a process is spawned, deleted on close/error).
@@ -304,6 +317,13 @@ export async function PUT(
     // Handle status change to running - start actual training
     if (body.status === "running" && existingJob.status !== "running") {
       updateData.startedAt = new Date();
+      // Clear the previous run's failure. Without this a job that failed once
+      // kept its old `errorMessage` forever, so the UI showed
+      // "Training failed with exit code 1" next to a job that had since
+      // completed successfully.
+      updateData.errorMessage = null;
+      updateData.completedAt = null;
+      stoppingJobs.delete(id);
       
       // Log activity
       const user = await getCurrentUser(request);
@@ -431,13 +451,37 @@ export async function PUT(
         });
       }
       
+      // Record the intent *before* killing, so the `close` handler that fires
+      // moments later reports "stopped" instead of "failed".
+      stoppingJobs.add(id);
+
       const process = runningProcesses.get(id);
       if (process) {
         if (process?.pid) {
           killProcessTree(process.pid);
         }
         runningProcesses.delete(id);
+      } else {
+        // No handle: this server process did not spawn the job (it was
+        // restarted since). The row can still be marked stopped, but the OS
+        // process — if any — is outside our reach, so say so rather than
+        // implying we killed it.
+        console.warn(
+          `[Job ${id}] Stop requested but no child process is tracked in this ` +
+            `server instance. Marking the job stopped; if a training process is ` +
+            `still running it must be killed manually.`,
+        );
+        updateData.errorMessage =
+          "Marked as stopped, but this server instance had no handle on the training " +
+          "process (the server was restarted since the job started). Verify with " +
+          "nvidia-smi that no orphaned process is still using the GPU.";
       }
+      const stopParser = jobParserStates.get(id);
+      if (stopParser) {
+        disposeParserState(stopParser);
+        jobParserStates.delete(id);
+      }
+      updateData.completedAt = new Date();
     }
 
     const job = await db.trainingJob.update({
@@ -605,6 +649,12 @@ function startTrainingProcess(
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
+    // Force UTF-8 on the child's stdio. When Python's stdout is a pipe it falls
+    // back to the locale encoding, which on a Chinese Windows install is GBK —
+    // and we decode these bytes as UTF-8 below. The result was mojibake in
+    // `TrainingLog.rawLog` and, worse, in `TrainingJob.errorMessage`: the one
+    // thing a user reads when a run dies came out as "ѵ����ʼ".
+    PYTHONIOENCODING: "utf-8",
   };
   if (isTorch(framework)) {
     env.CUDA_VISIBLE_DEVICES = gpuIds;
@@ -716,8 +766,16 @@ function startTrainingProcess(
   const parserState = createParserState(framework);
   jobParserStates.set(jobId, parserState);
 
+  // `Buffer.toString()` on a chunk that ends mid-character replaces the split
+  // bytes with U+FFFD. A StringDecoder holds the incomplete sequence back until
+  // the next chunk completes it, which matters as soon as the log contains any
+  // non-ASCII text (Paddle prints Chinese warnings on a zh-CN install).
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stderrDecoder = new StringDecoder("utf8");
+
   childProcess.stdout?.on("data", async (data: Buffer) => {
-    const output = data.toString();
+    const output = stdoutDecoder.write(data);
+    if (!output) return;
     console.log(`[Job ${jobId}] ${output}`);
 
     // Split chunk into complete lines and dispatch each to the appropriate
@@ -729,7 +787,8 @@ function startTrainingProcess(
   });
 
   childProcess.stderr?.on("data", (data: Buffer) => {
-    const stderrOutput = data.toString();
+    const stderrOutput = stderrDecoder.write(data);
+    if (!stderrOutput) return;
     console.error(`[Job ${jobId} ERROR] ${stderrOutput}`);
     // Collect stderr for error message
     stderrCollector.push(stderrOutput);
@@ -756,14 +815,20 @@ function startTrainingProcess(
       jobParserStates.delete(jobId);
     }
 
-    // Update job status
-    const status = code === 0 ? "completed" : "failed";
+    // Update job status.
+    //
+    // A job the user stopped exits non-zero because we killed it, so exit code
+    // alone cannot distinguish "stopped" from "failed" — `stoppingJobs` carries
+    // that intent. Reporting a deliberate stop as a crash (with a stderr dump
+    // as the "error") is misleading and used to happen every single time.
+    const wasStopped = stoppingJobs.delete(jobId);
+    const status = wasStopped ? "stopped" : code === 0 ? "completed" : "failed";
     try {
       const updateData: Record<string, unknown> = {
         status,
         completedAt: new Date(),
       };
-      
+
       // If failed, capture stderr and exit code for error message
       if (status === "failed") {
         const stderrSummary = stderrCollector.slice(-10).join('\n').trim();
@@ -772,8 +837,12 @@ function startTrainingProcess(
         } else {
           updateData.errorMessage = `Training process exited with code ${code}. Check logs for details.`;
         }
+      } else {
+        // A completed (or cleanly stopped) run must not keep a stale failure
+        // from an earlier attempt.
+        updateData.errorMessage = null;
       }
-      
+
       await db.trainingJob.update({
         where: { id: jobId },
         data: updateData,
@@ -908,171 +977,5 @@ async function writeParsedLog(
   } catch (error) {
     // Non-fatal — one lost log line shouldn't kill the training run.
     console.error(`[Job ${jobId}] writeParsedLog failed:`, error);
-  }
-}
-
-// Legacy inline parser retained for git-blame context; new code uses the
-// framework-aware dispatcher in `@/lib/log-parsers` via writeParsedLog above.
-// TODO(cleanup): delete once we're confident no code paths still call this.
-async function parseAndUpdateProgress(jobId: string, output: string) {
-  try {
-    // ---- PaddleSeg log format ----
-    const segFloat = (re: RegExp): number | null => {
-      const m = output.match(re);
-      return m ? parseFloat(m[1]) : null;
-    };
-
-    // [EVAL] #Images: 76 mIoU: 0.8923 Acc: 0.9856 Kappa: 0.8123 Dice: 0.9234
-    if (/\[EVAL\]/i.test(output) && /mIoU/i.test(output)) {
-      const mIoU = segFloat(/mIoU:\s*([\d.]+)/i);
-      const acc = segFloat(/Acc:\s*([\d.]+)/i);
-      const kappa = segFloat(/Kappa:\s*([\d.]+)/i);
-      const dice = segFloat(/Dice:\s*([\d.]+)/i);
-      await db.trainingLog.create({
-        data: {
-          jobId,
-          epoch: 0,
-          iteration: 0,
-          totalIter: 0,
-          mIoU,
-          acc,
-          kappa,
-          dice,
-          rawLog: output.slice(0, 2000),
-        },
-      });
-      return;
-    }
-
-    // [TRAIN] epoch: 1, iter: 10/1000, loss: 0.5234, lr: 0.009910, batch_cost: 0.34, reader_cost: 0.01, ips: 11.5 samples/sec | ETA 00:05:23
-    if (/\[TRAIN\]/i.test(output)) {
-      const segEpochMatch = output.match(/epoch:\s*(\d+)/i);
-      const segEpoch = segEpochMatch ? parseInt(segEpochMatch[1], 10) : 0;
-      const segIterMatch = output.match(/iter:\s*(\d+)\/(\d+)/i);
-      const segIteration = segIterMatch ? parseInt(segIterMatch[1], 10) : 0;
-      const segTotalIter = segIterMatch ? parseInt(segIterMatch[2], 10) : 0;
-      const segLoss = segFloat(/loss:\s*([\d.]+)/i);
-      const segLr = segFloat(/lr:\s*([\d.e-]+)/i);
-      const segBatchCost = segFloat(/batch_cost:\s*([\d.]+)/i);
-      const segReaderCost = segFloat(/reader_cost:\s*([\d.]+)/i);
-      const segIps = segFloat(/ips:\s*([\d.]+)/i);
-      const segEtaMatch = output.match(/ETA\s*(\d+:\d{2}:\d{2})/i);
-
-      const segUpdate: Record<string, unknown> = {};
-      if (segEpoch) segUpdate.currentEpoch = segEpoch;
-      if (segLoss !== null) segUpdate.currentLoss = segLoss;
-      if (segLr !== null) segUpdate.currentLr = segLr;
-      if (Object.keys(segUpdate).length > 0) {
-        await db.trainingJob.update({ where: { id: jobId }, data: segUpdate });
-      }
-
-      await db.trainingLog.create({
-        data: {
-          jobId,
-          epoch: segEpoch,
-          iteration: segIteration,
-          totalIter: segTotalIter,
-          loss: segLoss,
-          learningRate: segLr,
-          batchCost: segBatchCost,
-          readerCost: segReaderCost,
-          ips: segIps,
-          eta: segEtaMatch ? segEtaMatch[1] : null,
-          rawLog: output.slice(0, 2000),
-        },
-      });
-      return;
-    }
-
-    // PaddleDetection log format:
-    // Epoch: [8] [60/79] learning_rate: 0.000996 loss: 4.193813 loss_cls: 1.671748 ...
-    
-    // Match epoch: Epoch: [8]
-    const epochMatch = output.match(/Epoch:\s*\[(\d+)\]/i);
-    
-    // Match iteration: [iter/total] - find all patterns, use the last one (after epoch)
-    const iterPatterns = output.matchAll(/\[(\d+)\/(\d+)\]/g);
-    const iterMatches = Array.from(iterPatterns);
-    let iteration = 0;
-    let totalIter = 0;
-    if (iterMatches.length > 0) {
-      // Use the last [x/y] pattern (which is the iteration, after epoch)
-      const lastMatch = iterMatches[iterMatches.length - 1];
-      iteration = parseInt(lastMatch[1], 10);
-      totalIter = parseInt(lastMatch[2], 10);
-    }
-
-    // Extract metrics - support both "learning_rate" and "lr"
-    const lrMatch = output.match(/learning_rate:\s*([\d.e-]+)/i) || output.match(/lr[:\s]+([\d.e-]+)/i);
-    // Match "loss:" but NOT "loss_cls:", "loss_iou:", etc. (use negative lookahead for underscore)
-    const lossMatch = output.match(/(?:^|\s)loss:\s*([\d.]+)(?!\w)/i);
-    const lossClsMatch = output.match(/loss_cls:\s*([\d.]+)/i);
-    const lossIouMatch = output.match(/loss_iou:\s*([\d.]+)/i);
-    const lossDflMatch = output.match(/loss_dfl:\s*([\d.]+)/i);
-    const lossL1Match = output.match(/loss_l1:\s*([\d.]+)/i);
-    
-    // Extract ETA: eta: 0:02:24
-    const etaMatch = output.match(/eta:\s*(\d+:\d{2}:\d{2})/i);
-    
-    // Extract costs
-    const batchCostMatch = output.match(/batch_cost:\s*([\d.]+)/i);
-    const dataCostMatch = output.match(/data_cost:\s*([\d.]+)/i);
-    
-    // Extract IPS
-    const ipsMatch = output.match(/ips:\s*([\d.]+)/i);
-    
-    // Extract memory info (MB)
-    const memReservedMatch = output.match(/max_mem_reserved:\s*(\d+)/i);
-    const memAllocatedMatch = output.match(/max_mem_allocated:\s*(\d+)/i);
-
-    // Skip if no training metrics found
-    if (!epochMatch && !lossMatch && !lrMatch) {
-      return;
-    }
-
-    // Update job progress
-    const updateData: Record<string, unknown> = {};
-    
-    if (epochMatch) {
-      updateData.currentEpoch = parseInt(epochMatch[1], 10);
-    }
-    if (lossMatch) {
-      updateData.currentLoss = parseFloat(lossMatch[1]);
-    }
-    if (lrMatch) {
-      updateData.currentLr = parseFloat(lrMatch[1]);
-    }
-
-    if (Object.keys(updateData).length > 0) {
-      await db.trainingJob.update({
-        where: { id: jobId },
-        data: updateData,
-      });
-    }
-
-    // Save detailed log entry
-    await db.trainingLog.create({
-      data: {
-        jobId,
-        epoch: epochMatch ? parseInt(epochMatch[1], 10) : 0,
-        iteration,
-        totalIter,
-        loss: lossMatch ? parseFloat(lossMatch[1]) : null,
-        lossCls: lossClsMatch ? parseFloat(lossClsMatch[1]) : null,
-        lossIou: lossIouMatch ? parseFloat(lossIouMatch[1]) : null,
-        lossDfl: lossDflMatch ? parseFloat(lossDflMatch[1]) : null,
-        lossL1: lossL1Match ? parseFloat(lossL1Match[1]) : null,
-        learningRate: lrMatch ? parseFloat(lrMatch[1]) : null,
-        eta: etaMatch ? etaMatch[1] : null,
-        batchCost: batchCostMatch ? parseFloat(batchCostMatch[1]) : null,
-        dataCost: dataCostMatch ? parseFloat(dataCostMatch[1]) : null,
-        ips: ipsMatch ? parseFloat(ipsMatch[1]) : null,
-        memReserved: memReservedMatch ? parseInt(memReservedMatch[1], 10) : null,
-        memAllocated: memAllocatedMatch ? parseInt(memAllocatedMatch[1], 10) : null,
-        rawLog: output.slice(0, 2000),
-      },
-    });
-  } catch (error) {
-    // Silently ignore parsing errors
   }
 }

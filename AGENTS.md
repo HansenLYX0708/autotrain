@@ -2,6 +2,20 @@
 
 Project knowledge for anyone (human or agent) working on this repo.
 
+This file is the **gotcha list**: things that are non-obvious, that have already
+bitten someone, and that a grep will not tell you. It deliberately does not
+re-explain the system. For that, see `docs/`:
+
+| Doc | Contents |
+|---|---|
+| [docs/README.md](docs/README.md) | Documentation index, per audience |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Framework abstraction, three-config merge, command generation, job lifecycle, log parsing, auth, paths/quota, known limits |
+| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Prisma schema field by field, relations, delete semantics, unit conventions |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | All 46 REST routes: method, auth, params, behaviour |
+| [docs/FEATURES.md](docs/FEATURES.md) | What each UI module does, and a troubleshooting table |
+
+When you change behaviour, update the matching doc in the same change.
+
 ## What this is
 
 A Next.js 16 (App Router, Turbopack) + Prisma/SQLite web app that drives
@@ -355,9 +369,10 @@ render *wider* than intended, so fixing those makes them smaller.)
 ### Known remaining issues (not yet fixed)
 
 - `/api/system/environment-check`, `/api/system/gpu`, `/api/system/gpu-usage`,
-  `/api/images`, `/api/datasets/image`, `/api/checkpoints`, `/api/annotation/save`
-  are unauthenticated. The login screen polls the `system/*` ones, so adding
-  auth requires a UI change first.
+  `/api/images`, `/api/datasets/image`, `/api/annotation/save` are
+  unauthenticated. The login screen polls the `system/*` ones, so adding auth
+  requires a UI change first. (`/api/checkpoints` **has** been fixed: it now
+  calls `requireAuth`, and `?dir=` is confined to the caller's own storage.)
 - Paths are interpolated into a shell string in the TIFF-staging helper in
   `src/app/api/validation-jobs/route.ts`. Should use `spawn` with an argv array
   instead of `exec`. (`checkpoints/export` was converted to argv and is fine.)

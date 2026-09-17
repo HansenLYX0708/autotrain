@@ -40,6 +40,20 @@ interface OpenEval {
   /** Which `Class <kind>:` header we most recently saw; the *next* `[..]`
    *  array line is consumed into that slot. */
   expectClassArray: 'iou' | 'precision' | 'recall' | null
+  /**
+   * Partially-read float array, for the case where numpy wrapped it.
+   *
+   * PaddleSeg prints these arrays with `str(np.round(class_iou, 4))`, and
+   * numpy breaks its output at `linewidth` (75 by default). From roughly ten
+   * classes on, a single logical array therefore arrives as two or more
+   * physical lines:
+   *
+   *     [0.9952 0.3447 0.6496 0.2887 0.1234 0.5678 0.9012 0.3456 0.789  0.1234
+   *      0.4567 0.6789]
+   *
+   * Lines are concatenated here until the closing `]` shows up.
+   */
+  pendingArray: string | null
   rawLines: string[]
   /** Snapshot of the current train iter/epoch when EVAL opened, so the eval
    *  row can be plotted on the same x-axis. Populated by the dispatcher
@@ -66,16 +80,31 @@ function segFloat(line: string, re: RegExp): number | null {
   return m ? parseFloat(m[1]) : null
 }
 
-/** Parse a `[a b c d]` style whitespace-separated float array. Returns
- *  `null` if the line does not look like a float array. */
-function parseFloatArray(line: string): number[] | null {
-  const stripped = line.trim()
+/** Parse a complete `[a b c d]` whitespace-separated float array. Returns
+ *  `null` if the text is not a closed float array. */
+function parseFloatArray(text: string): number[] | null {
+  const stripped = text.trim()
   if (!stripped.startsWith('[') || !stripped.endsWith(']')) return null
   const inner = stripped.slice(1, -1).trim()
   if (!inner) return null
   const nums = inner.split(/\s+/).map((tok) => parseFloat(tok))
   if (nums.some((n) => Number.isNaN(n))) return null
   return nums
+}
+
+/**
+ * Could `line` be the start (or continuation) of a numpy float array that has
+ * not been closed yet? Used to decide whether to keep buffering instead of
+ * treating the line as "not part of this EVAL block".
+ *
+ * Deliberately strict: only digits, dots, signs, exponents, whitespace and a
+ * single leading `[` are allowed, so a genuine log line never gets swallowed.
+ */
+function isOpenArrayFragment(text: string): boolean {
+  const stripped = text.trim()
+  if (!stripped || stripped.endsWith(']')) return false
+  const body = stripped.startsWith('[') ? stripped.slice(1) : stripped
+  return body.length > 0 && /^[\d.eE+\-\s]+$/.test(body)
 }
 
 function finalizeOpenEval(open: OpenEval): ParsedTrainLog {
@@ -186,6 +215,7 @@ export function parseSegLine(
       kappa: segFloat(trimmed, /Kappa:\s*([\d.]+)/i),
       dice: segFloat(trimmed, /Dice:\s*([\d.]+)/i),
       expectClassArray: null,
+      pendingArray: null,
       rawLines: [trimmed],
       epochAtOpen: state.lastEpoch,
       iterAtOpen: state.lastIter,
@@ -199,26 +229,48 @@ export function parseSegLine(
     const m = trimmed.match(/Class\s+(IoU|Precision|Recall):/i)!
     const which = m[1].toLowerCase() as 'iou' | 'precision' | 'recall'
     state.open.expectClassArray = which
+    // A new header always starts a fresh array, even if the previous one was
+    // left unterminated by a truncated log.
+    state.open.pendingArray = null
     state.open.rawLines.push(trimmed)
     return results
   }
 
   // --- 4. EVAL block: `[a b c d]` array payload -----------------------
+  // The array may be spread over several physical lines, because numpy wraps
+  // at `linewidth=75` (so ~10 classes and up always wrap). Accumulate until
+  // the closing `]` arrives; only then assign it to its slot.
   if (state.open && state.open.expectClassArray) {
-    const arr = parseFloatArray(trimmed)
+    const candidate =
+      state.open.pendingArray === null ? trimmed : `${state.open.pendingArray} ${trimmed.trim()}`
+
+    const arr = parseFloatArray(candidate)
     if (arr) {
       const slot = state.open.expectClassArray
       if (slot === 'iou') state.open.classIoU = arr
       else if (slot === 'precision') state.open.classPrecision = arr
       else if (slot === 'recall') state.open.classRecall = arr
       state.open.expectClassArray = null
+      state.open.pendingArray = null
       state.open.rawLines.push(trimmed)
       return results
     }
-    // Array line didn't parse — fall through, let closing-line / TRAIN
-    // logic decide what to do. Clear the expectation so a bogus line
-    // doesn't hijack the next `[..]`.
+
+    if (isOpenArrayFragment(candidate)) {
+      // Still waiting for the closing bracket — keep buffering. Without this
+      // the wrapped array fell through to case 6, which closed the block and
+      // silently discarded every per-class metric *and* the trailing
+      // "best validation mIoU" line (so bestIter/bestMetric stayed null).
+      state.open.pendingArray = candidate
+      state.open.rawLines.push(trimmed)
+      return results
+    }
+
+    // Not an array at all — fall through and let the closing-line / TRAIN
+    // logic decide. Clear the expectation so a bogus line doesn't hijack the
+    // next `[..]`.
     state.open.expectClassArray = null
+    state.open.pendingArray = null
   }
 
   // --- 5. EVAL block: closing "best mIoU" line ------------------------

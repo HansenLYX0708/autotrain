@@ -3,6 +3,8 @@ import { db } from '@/lib/db';
 import * as fs from 'fs';
 import * as path from 'path';
 import { frameworkMeta, getWorkDir } from '@/lib/frameworks';
+import { notFoundOrDenied, requireAuth, requireOwnedScope } from '@/lib/auth';
+import { isInside } from '@/lib/safe-path';
 
 // Simple YAML parser for save_dir extraction (avoiding js-yaml dependency issues)
 function extractSaveDir(yamlContent: string): string | null {
@@ -42,6 +44,26 @@ function extractSaveDirFromCommand(cmd: string | null | undefined): string | nul
   return null;
 }
 
+/**
+ * Storage root the caller is allowed to point `?dir=` at.
+ *
+ * Returns null for an admin (unrestricted) and null-with-`denied` when the
+ * platform has no user storage configured, in which case an explicit directory
+ * cannot be authorised at all.
+ */
+async function allowedDirRoot(
+  userId: string,
+  role: string,
+): Promise<{ root: string | null; denied: boolean }> {
+  if (role === 'admin') return { root: null, denied: false };
+  const [user, config] = await Promise.all([
+    db.user.findUnique({ where: { id: userId }, select: { username: true } }),
+    db.systemConfig.findFirst({ select: { userDatabasePath: true } }),
+  ]);
+  if (!user || !config?.userDatabasePath) return { root: null, denied: true };
+  return { root: path.join(config.userDatabasePath, user.username), denied: false };
+}
+
 // GET /api/checkpoints - Get checkpoints from a directory or training job
 export async function GET(request: NextRequest) {
   try {
@@ -53,10 +75,37 @@ export async function GET(request: NextRequest) {
     let saveDir = customDir;
     let framework: string = 'PaddleDetection';
 
+    // Authenticate before touching the database or the filesystem.
+    //
+    // This endpoint used to be completely open: `?jobId=` returned any user's
+    // absolute save_dir plus a full checkpoint inventory (names, sizes, mtimes),
+    // and `?dir=` turned it into an unauthenticated existence oracle for any
+    // path on the host. `requireOwnedScope` is the same guard every other
+    // `[id]` route uses — see its docstring in `@/lib/auth`.
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+
+    if (customDir) {
+      // An explicit directory is only honoured inside the caller's own storage.
+      const { root, denied } = await allowedDirRoot(auth.userId, auth.role);
+      if (denied) {
+        return NextResponse.json(
+          { error: 'User storage is not configured, so an explicit directory cannot be authorised.' },
+          { status: 400 },
+        );
+      }
+      if (root && (!path.isAbsolute(customDir) || !isInside(root, customDir))) {
+        return notFoundOrDenied('Directory');
+      }
+    }
+
     // If jobId is provided, get the save_dir from the job's yaml config
     if (jobId && !customDir) {
-      const job = await db.trainingJob.findUnique({
-        where: { id: jobId },
+      const scope = await requireOwnedScope(request, jobId);
+      if (scope instanceof NextResponse) return scope;
+
+      const job = await db.trainingJob.findFirst({
+        where: scope.where,
         select: {
           yamlConfig: true,
           outputDir: true,
@@ -65,12 +114,7 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      if (!job) {
-        return NextResponse.json(
-          { error: 'Training job not found' },
-          { status: 404 }
-        );
-      }
+      if (!job) return notFoundOrDenied('Training job');
 
       framework = job.project?.framework || 'PaddleDetection';
 
@@ -199,9 +243,13 @@ export async function GET(request: NextRequest) {
     let exportModelDir = '';
     
     if (checkExported && jobId) {
-      // 重新获取 job 信息以确定正确的 job name
-      const jobForExport = await db.trainingJob.findUnique({
-        where: { id: jobId },
+      // 重新获取 job 信息以确定正确的 job name。
+      // Scoped like the lookup above: a bare `{ id }` here would leak another
+      // user's job name and export directory even when `?dir=` was supplied.
+      const exportScope = await requireOwnedScope(request, jobId);
+      if (exportScope instanceof NextResponse) return exportScope;
+      const jobForExport = await db.trainingJob.findFirst({
+        where: exportScope.where,
         select: { name: true, project: { select: { user: { select: { username: true } } } } }
       });
       

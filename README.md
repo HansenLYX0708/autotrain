@@ -1,143 +1,105 @@
-# 🚀 Welcome to Z.ai Code Scaffold
+# Hawkeye+ AutoTrain Platform
 
-> Windows 10/11 全框架、完全离线的一键部署流程和打包脚本见 [deployment/windows-offline/README.md](deployment/windows-offline/README.md)。`docs/install.bat` 是早期在线安装脚本，不适用于当前完整平台。
+面向工业视觉的深度学习训练平台。用浏览器完成 **数据集管理 → 模型/训练配置 → 启动训练 → 实时监控 → 评估/推理 → 模型发布** 的全流程，无需手写 YAML、无需记 CLI 参数。
 
-A modern, production-ready web application scaffold powered by cutting-edge technologies, designed to accelerate your development with [Z.ai](https://chat.z.ai)'s AI-powered coding assistance.
+平台本身不实现训练算法：它把三份独立编写的 YAML 配置深度合并成一份任务配置，然后以子进程方式调用对应框架的 `tools/train.py`，再把子进程 stdout 解析成结构化的训练日志入库、绘图。
 
-## ✨ Technology Stack
-
-This scaffold provides a robust foundation built with:
-
-### 🎯 Core Framework
-- **⚡ Next.js 16** - The React framework for production with App Router
-- **📘 TypeScript 5** - Type-safe JavaScript for better developer experience
-- **🎨 Tailwind CSS 4** - Utility-first CSS framework for rapid UI development
-
-### 🧩 UI Components & Styling
-- **🧩 shadcn/ui** - High-quality, accessible components built on Radix UI
-- **🎯 Lucide React** - Beautiful & consistent icon library
-- **🌈 Framer Motion** - Production-ready motion library for React
-- **🎨 Next Themes** - Perfect dark mode in 2 lines of code
-
-### 📋 Forms & Validation
-- **🎣 React Hook Form** - Performant forms with easy validation
-- **✅ Zod** - TypeScript-first schema validation
-
-### 🔄 State Management & Data Fetching
-- **🐻 Zustand** - Simple, scalable state management
-- **🔄 TanStack Query** - Powerful data synchronization for React
-- **🌐 Fetch** - Promise-based HTTP request
-
-### 🗄️ Database & Backend
-- **🗄️ Prisma** - Next-generation TypeScript ORM
-- **🔐 NextAuth.js** - Complete open-source authentication solution
-
-### 🎨 Advanced UI Features
-- **📊 TanStack Table** - Headless UI for building tables and datagrids
-- **🖱️ DND Kit** - Modern drag and drop toolkit for React
-- **📊 Recharts** - Redefined chart library built with React and D3
-- **🖼️ Sharp** - High performance image processing
-
-### 🌍 Internationalization & Utilities
-- **🌍 Next Intl** - Internationalization library for Next.js
-- **📅 Date-fns** - Modern JavaScript date utility library
-- **🪝 ReactUse** - Collection of essential React hooks for modern development
-
-## 🎯 Why This Scaffold?
-
-- **🏎️ Fast Development** - Pre-configured tooling and best practices
-- **🎨 Beautiful UI** - Complete shadcn/ui component library with advanced interactions
-- **🔒 Type Safety** - Full TypeScript configuration with Zod validation
-- **📱 Responsive** - Mobile-first design principles with smooth animations
-- **🗄️ Database Ready** - Prisma ORM configured for rapid backend development
-- **🔐 Auth Included** - NextAuth.js for secure authentication flows
-- **📊 Data Visualization** - Charts, tables, and drag-and-drop functionality
-- **🌍 i18n Ready** - Multi-language support with Next Intl
-- **🚀 Production Ready** - Optimized build and deployment settings
-- **🤖 AI-Friendly** - Structured codebase perfect for AI assistance
-
-## 🚀 Quick Start
-
-```bash
-# Install dependencies
-bun install
-
-# Start development server
-bun run dev
-
-# Build for production
-bun run build
-
-# Start production server
-bun start
+```
+数据集配置 ─┐
+训练配置   ─┼─► 深度合并的 YAML ─► <框架>/tools/train.py ─► stdout ─► TrainingLog 行 ─► 图表/进度
+模型配置   ─┘
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to see your application running.
+## 支持的框架
 
-## 🤖 Powered by Z.ai
+`project.framework` 选定一个框架，其余行为（配置模式、CLI 方言、检查点布局、数据集格式、进度单位）全部由 `src/lib/frameworks.ts` 中的 `FRAMEWORK_META` 推导。
 
-This scaffold is optimized for use with [Z.ai](https://chat.z.ai) - your AI assistant for:
+| Framework | 运行时 | 任务 | 代码库 | 训练长度单位 |
+|---|---|---|---|---|
+| `PaddleDetection` | PaddlePaddle | 目标检测 / 实例分割 | 外部，`paddleDetectionPath` | epoch |
+| `PaddleClas` | PaddlePaddle | 图像分类 | 外部，`paddleClasPath` | epoch |
+| `PaddleSeg` | PaddlePaddle | 语义分割 | 外部，`paddleSegPath` | iter |
+| `TorchDet` | PyTorch | 目标检测 | 内置 `torchtrain/`，`torchPath` | epoch |
+| `TorchSeg` | PyTorch | 语义分割 | 内置 `torchtrain/`，`torchPath` | iter |
+| `TorchAnomaly` | PyTorch + anomalib | 无监督异常检测 | 内置 `torchtrain/`，`torchPath` | step |
 
-- **💻 Code Generation** - Generate components, pages, and features instantly
-- **🎨 UI Development** - Create beautiful interfaces with AI assistance  
-- **🔧 Bug Fixing** - Identify and resolve issues with intelligent suggestions
-- **📝 Documentation** - Auto-generate comprehensive documentation
-- **🚀 Optimization** - Performance improvements and best practices
+## 技术栈
 
-Ready to build something amazing? Start chatting with Z.ai at [chat.z.ai](https://chat.z.ai) and experience the future of AI-powered development!
+- **Next.js 16**（App Router + Turbopack）、React 19、TypeScript 5
+- **Tailwind CSS 4** + shadcn/ui（Radix UI）、Recharts、Framer Motion
+- **Prisma 6 + SQLite** 作为唯一持久层
+- **yaml**（`parseDocument` AST 级合并，保留 PaddleDetection 自定义标签）
+- Node `child_process.spawn` 驱动 Python 训练进程
 
-## 📁 Project Structure
+前端是**单页应用**：只有 `src/app/page.tsx` 一个路由，侧边栏在 `src/components/pages/*` 之间切换，所有数据经 `/api/*` 读写。
+
+## 快速开始
+
+```bash
+npm install                 # 或 bun install
+npx prisma generate         # 生成 Prisma Client
+npm run db:push             # 按 schema 建/更新表（本项目用 db push，不用 migrate）
+npm run dev                 # http://localhost:3000
+```
+
+首次启动后：
+
+1. 注册第一个账号 —— **第一个注册的用户自动成为 admin**。
+2. 以 admin 登录，进入 **Settings** 填写框架仓库路径、Python 解释器映射、用户配置目录与用户数据目录。
+3. 可选：调用 `POST /api/init-defaults` 或在 Dashboard 点击初始化，生成一套示例项目/数据集/模型/训练配置。
+
+> Windows 10/11 全框架、完全离线的一键部署流程与打包脚本见
+> [deployment/windows-offline/README.md](deployment/windows-offline/README.md)。
+
+### 常用命令
+
+```bash
+npm run dev          # next dev -p 3000
+npm run build        # next build && node copy.js（standalone 产物）
+npm run lint         # eslint .
+npm run db:push      # prisma db push
+npm run db:generate  # prisma generate
+npx tsc --noEmit     # 单独类型检查
+```
+
+注意 `next.config.ts` 设置了 `typescript.ignoreBuildErrors: true`——**构建成功不代表类型检查通过**，务必单独跑 `tsc`。
+
+### 数据库位置
+
+`DATABASE_URL` 必须是**完全限定路径**（如 `file:D:/path/to/custom.db`）。相对路径 `file:./x.db` 会相对 `prisma/` 目录解析，而 `file:/foo/bar` 在 Windows 上相对**当前盘符**解析——两种情况 SQLite 都会静默新建一个空库。`src/lib/db.ts` 会在文件不存在时打印醒目告警。详情见 [AGENTS.md](AGENTS.md#database-location)。
+
+## 目录结构
 
 ```
 src/
-├── app/                 # Next.js App Router pages
-├── components/          # Reusable React components
-│   └── ui/             # shadcn/ui components
-├── hooks/              # Custom React hooks
-└── lib/                # Utility functions and configurations
+├── middleware.ts             # 仅用于吞掉 /socket.io 轮询请求
+├── app/
+│   ├── page.tsx              # 唯一页面：侧边栏 + 页面切换
+│   ├── layout.tsx            # 根布局、主题
+│   └── api/                  # REST 路由（见 docs/API_REFERENCE.md）
+├── components/
+│   ├── pages/                # 每个侧边栏条目一个大组件
+│   ├── ui/                   # shadcn/ui 基础组件
+│   └── *.tsx                 # 跨页共享组件
+├── contexts/auth-context.tsx # 登录态
+└── lib/                      # 框架注册表、YAML 生成/合并、日志解析、鉴权
+torchtrain/                   # 内置 PyTorch 训练器（TorchDet/TorchSeg/TorchAnomaly）
+prisma/schema.prisma          # 数据模型
+tools/                        # 独立 Python 工具（napari 标注、TEM 分析）
+scripts/                      # 一次性维护/校验脚本
+deployment/windows-offline/   # 离线部署打包与安装脚本
+docs/                         # 全部文档
 ```
 
-## 🎨 Available Features & Components
+## 文档
 
-This scaffold includes a comprehensive set of modern web development tools:
+完整文档索引见 **[docs/README.md](docs/README.md)**。最常用的几篇：
 
-### 🧩 UI Components (shadcn/ui)
-- **Layout**: Card, Separator, Aspect Ratio, Resizable Panels
-- **Forms**: Input, Textarea, Select, Checkbox, Radio Group, Switch
-- **Feedback**: Alert, Toast (Sonner), Progress, Skeleton
-- **Navigation**: Breadcrumb, Menubar, Navigation Menu, Pagination
-- **Overlay**: Dialog, Sheet, Popover, Tooltip, Hover Card
-- **Data Display**: Badge, Avatar, Calendar
-
-### 📊 Advanced Data Features
-- **Tables**: Powerful data tables with sorting, filtering, pagination (TanStack Table)
-- **Charts**: Beautiful visualizations with Recharts
-- **Forms**: Type-safe forms with React Hook Form + Zod validation
-
-### 🎨 Interactive Features
-- **Animations**: Smooth micro-interactions with Framer Motion
-- **Drag & Drop**: Modern drag-and-drop functionality with DND Kit
-- **Theme Switching**: Built-in dark/light mode support
-
-### 🔐 Backend Integration
-- **Authentication**: Ready-to-use auth flows with NextAuth.js
-- **Database**: Type-safe database operations with Prisma
-- **API Client**: HTTP requests with Fetch + TanStack Query
-- **State Management**: Simple and scalable with Zustand
-
-### 🌍 Production Features
-- **Internationalization**: Multi-language support with Next Intl
-- **Image Optimization**: Automatic image processing with Sharp
-- **Type Safety**: End-to-end TypeScript with Zod validation
-- **Essential Hooks**: 100+ useful React hooks with ReactUse for common patterns
-
-## 🤝 Get Started with Z.ai
-
-1. **Clone this scaffold** to jumpstart your project
-2. **Visit [chat.z.ai](https://chat.z.ai)** to access your AI coding assistant
-3. **Start building** with intelligent code generation and assistance
-4. **Deploy with confidence** using the production-ready setup
-
----
-
-Built with ❤️ for the developer community. Supercharged by [Z.ai](https://chat.z.ai) 🚀
+| 文档 | 内容 |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构与实现原理：配置三段合并、训练进程生命周期、日志解析、路径与存储、鉴权模型 |
+| [docs/FEATURES.md](docs/FEATURES.md) | 按页面讲每个功能模块能做什么、怎么操作 |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | 全部 REST 接口：方法、入参、鉴权要求、返回结构 |
+| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Prisma 数据模型逐字段说明与单位约定 |
+| [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | 面向使用者的安装与操作手册 |
+| [AGENTS.md](AGENTS.md) | 开发者必读：踩坑清单、验证流程、代码约定 |

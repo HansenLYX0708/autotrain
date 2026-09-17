@@ -753,6 +753,46 @@ export function DatasetsPage() {
     }
   }
 
+  const requestMergePreview = async (action: 'verify' | 'merge') => {
+    const total = mergeFormData.trainRatio + mergeFormData.valRatio
+    if (!mergeFormData.labelmeDataset || !mergeFormData.cocoDataset) {
+      toast({ title: 'Select both datasets', variant: 'destructive' })
+      return
+    }
+    if (mergeFormData.trainRatio < 0 || mergeFormData.valRatio < 0 || mergeFormData.trainRatio > 1 || mergeFormData.valRatio > 1 || total > 1.000001) {
+      toast({ title: 'Invalid ratios', description: 'Train + val must be less than or equal to 1.', variant: 'destructive' })
+      return
+    }
+    if (action === 'verify') setVerifyingMerge(true)
+    else setMergingDatasets(true)
+    try {
+      const response = await fetch('/api/datasets/merge-labelme', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...mergeFormData }),
+      })
+      const result = await response.json()
+      if (!response.ok || !result.success) throw new Error(result.error || 'Dataset merge failed')
+      if (action === 'verify') {
+        setMergePreview(result.data)
+      } else {
+        toast({
+          title: 'Datasets merged',
+          description: `Added ${result.data.added.train} train and ${result.data.added.val} val images; skipped ${result.data.added.skipped}.`,
+        })
+        setMergeDialogOpen(false)
+        setMergePreview(null)
+        setMergeFormData({ labelmeDataset: '', cocoDataset: '', trainRatio: 0.7, valRatio: 0.2 })
+        await Promise.all([fetchAvailableDatasets(), fetchDatasets()])
+      }
+    } catch (error) {
+      toast({ title: action === 'verify' ? 'Verification failed' : 'Merge failed', description: error instanceof Error ? error.message : 'Unknown error', variant: 'destructive' })
+    } finally {
+      setVerifyingMerge(false)
+      setMergingDatasets(false)
+    }
+  }
+
   // Chunked upload functions
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1183,7 +1223,167 @@ export function DatasetsPage() {
             Manage your training datasets
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Dialog open={mergeDialogOpen} onOpenChange={(open) => {
+            setMergeDialogOpen(open)
+            setMergePreview(null)
+            if (open) fetchAvailableDatasets()
+          }}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Layers className="w-4 h-4 mr-2" />
+                Merge Labelme
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[min(1100px,94vw)] max-h-[90vh] flex flex-col overflow-hidden">
+              <DialogHeader>
+                <DialogTitle>Merge Labelme into COCO</DialogTitle>
+                <DialogDescription>
+                  Verify category names and preview the change before adding uploaded Labelme samples to an existing COCO dataset.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 overflow-y-auto pr-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Labelme source</Label>
+                    <Select
+                      value={mergeFormData.labelmeDataset}
+                      onValueChange={(value) => { setMergeFormData(prev => ({ ...prev, labelmeDataset: value })); setMergePreview(null) }}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Select uploaded Labelme dataset" /></SelectTrigger>
+                      <SelectContent>
+                        {availableDatasets.filter(dataset => dataset.format === 'labelme').map(dataset => (
+                          <SelectItem key={dataset.name} value={dataset.name}>{dataset.name} ({dataset.jsons.length} JSON)</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>COCO target</Label>
+                    <Select
+                      value={mergeFormData.cocoDataset}
+                      onValueChange={(value) => { setMergeFormData(prev => ({ ...prev, cocoDataset: value })); setMergePreview(null) }}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Select existing COCO dataset" /></SelectTrigger>
+                      <SelectContent>
+                        {availableDatasets.filter(dataset => dataset.format === 'COCO' && dataset.hasTrain && dataset.hasVal && dataset.hasAnnotations).map(dataset => (
+                          <SelectItem key={dataset.name} value={dataset.name}>{dataset.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="merge-train-ratio">Add to train ratio</Label>
+                    <Input
+                      id="merge-train-ratio"
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={mergeFormData.trainRatio}
+                      onChange={(event) => { setMergeFormData(prev => ({ ...prev, trainRatio: Number(event.target.value) })); setMergePreview(null) }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="merge-val-ratio">Add to val ratio</Label>
+                    <Input
+                      id="merge-val-ratio"
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={mergeFormData.valRatio}
+                      onChange={(event) => { setMergeFormData(prev => ({ ...prev, valRatio: Number(event.target.value) })); setMergePreview(null) }}
+                    />
+                  </div>
+                  <div className="md:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm">
+                    <span>Ratio sum: {(mergeFormData.trainRatio + mergeFormData.valRatio).toFixed(2)} / 1.00</span>
+                    <span className="text-muted-foreground">The unallocated remainder is skipped. Either ratio may be 1.</span>
+                  </div>
+                </div>
+
+                {mergePreview && (
+                  <div className="space-y-4 pb-4">
+                    <Alert variant={mergePreview.canMerge ? 'default' : 'destructive'}>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        {mergePreview.canMerge
+                          ? 'Category verification passed. The merge can proceed.'
+                          : 'Category verification failed. Labelme categories must exist in both target train and val annotations.'}
+                      </AlertDescription>
+                    </Alert>
+
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Train images</p><p className="text-xl font-semibold">{mergePreview.before.trainImages} → {mergePreview.planned.trainImages}</p><p className="text-xs text-green-600">+{mergePreview.planned.trainAdd}</p></CardContent></Card>
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Val images</p><p className="text-xl font-semibold">{mergePreview.before.valImages} → {mergePreview.planned.valImages}</p><p className="text-xs text-green-600">+{mergePreview.planned.valAdd}</p></CardContent></Card>
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Valid source</p><p className="text-xl font-semibold">{mergePreview.labelme.validSamples}</p><p className="text-xs text-muted-foreground">of {mergePreview.labelme.totalJson} JSON</p></CardContent></Card>
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Skipped by ratio</p><p className="text-xl font-semibold">{mergePreview.planned.skipped}</p><p className="text-xs text-muted-foreground">not copied</p></CardContent></Card>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div className="rounded-md border p-3 space-y-2 min-w-0">
+                        <div className="flex items-center justify-between"><h4 className="font-medium">Labelme categories</h4><Badge variant="secondary">{mergePreview.labelme.categories.length}</Badge></div>
+                        <div className="max-h-36 overflow-y-auto flex flex-wrap gap-1 content-start">
+                          {mergePreview.labelme.categories.map(name => <Badge key={name} variant="outline" className="max-w-full truncate">{name}</Badge>)}
+                        </div>
+                      </div>
+                      <div className="rounded-md border p-3 space-y-2 min-w-0">
+                        <div className="flex items-center justify-between"><h4 className="font-medium">COCO categories</h4><Badge variant="secondary">{mergePreview.coco.categories.length}</Badge></div>
+                        <div className="max-h-36 overflow-y-auto flex flex-wrap gap-1 content-start">
+                          {mergePreview.coco.categories.map(name => <Badge key={name} variant="outline" className="max-w-full truncate">{name}</Badge>)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="rounded-md border border-green-500/40 p-3 min-w-0">
+                        <p className="text-sm font-medium mb-2">Matched ({mergePreview.differences.matched.length})</p>
+                        <div className="max-h-32 overflow-y-auto text-xs break-words">{mergePreview.differences.matched.join(', ') || 'None'}</div>
+                      </div>
+                      <div className="rounded-md border border-red-500/40 p-3 min-w-0">
+                        <p className="text-sm font-medium mb-2 text-red-600">Only in Labelme ({mergePreview.differences.onlyInLabelme.length})</p>
+                        <div className="max-h-32 overflow-y-auto text-xs break-words">{mergePreview.differences.onlyInLabelme.join(', ') || 'None'}</div>
+                      </div>
+                      <div className="rounded-md border border-amber-500/40 p-3 min-w-0">
+                        <p className="text-sm font-medium mb-2 text-amber-600">Only in COCO ({mergePreview.differences.onlyInCoco.length})</p>
+                        <div className="max-h-32 overflow-y-auto text-xs break-words">{mergePreview.differences.onlyInCoco.join(', ') || 'None'}</div>
+                      </div>
+                    </div>
+
+                    {(mergePreview.differences.missingFromTrain.length > 0 || mergePreview.differences.missingFromVal.length > 0) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="rounded-md border border-red-500/40 p-3 min-w-0">
+                          <p className="text-sm font-medium mb-2">Missing from target train ({mergePreview.differences.missingFromTrain.length})</p>
+                          <div className="max-h-28 overflow-y-auto text-xs break-words">{mergePreview.differences.missingFromTrain.join(', ') || 'None'}</div>
+                        </div>
+                        <div className="rounded-md border border-red-500/40 p-3 min-w-0">
+                          <p className="text-sm font-medium mb-2">Missing from target val ({mergePreview.differences.missingFromVal.length})</p>
+                          <div className="max-h-28 overflow-y-auto text-xs break-words">{mergePreview.differences.missingFromVal.join(', ') || 'None'}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {mergePreview.labelme.invalidSamples.length > 0 && (
+                      <div className="rounded-md border border-amber-500/40 p-3">
+                        <p className="text-sm font-medium mb-2">Invalid source files ({mergePreview.labelme.invalidSamples.length})</p>
+                        <div className="max-h-32 overflow-y-auto space-y-1 text-xs text-muted-foreground break-all">
+                          {mergePreview.labelme.invalidSamples.map(item => <p key={item}>{item}</p>)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <DialogFooter className="border-t pt-4">
+                <Button variant="outline" onClick={() => requestMergePreview('verify')} disabled={verifyingMerge || mergingDatasets}>
+                  {verifyingMerge ? 'Verifying...' : 'Verify'}
+                </Button>
+                <Button onClick={() => requestMergePreview('merge')} disabled={!mergePreview?.canMerge || mergingDatasets || mergePreview.planned.trainAdd + mergePreview.planned.valAdd === 0}>
+                  {mergingDatasets ? 'Merging...' : 'Merge into COCO'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           {/* Labelme to COCO Dialog */}
           <Dialog open={labelmeDialogOpen} onOpenChange={(open) => {
               setLabelmeDialogOpen(open)

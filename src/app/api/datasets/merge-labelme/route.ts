@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { resolveWithin, toSafeSlug } from "@/lib/safe-path";
-import { copyFile, readFile, readdir, rename, writeFile } from "fs/promises";
+import { copyFile, readFile, readdir, rename, stat, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import * as path from "path";
 import { randomInt } from "crypto";
+import { assessLabelmeMerge, convertLabelmeShapes } from "@/lib/labelme-coco-merge";
 
 interface CocoCategory { id: number; name: string; supercategory?: string }
 interface CocoImage { id: number; file_name: string; width: number; height: number }
@@ -18,15 +19,6 @@ interface SourceSample { jsonPath: string; imagePath: string; imageName: string;
 function ratio(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : null;
-}
-
-function names(categories: CocoCategory[]): string[] {
-  return [...new Set(categories.map((category) => category.name.trim()).filter(Boolean))].sort();
-}
-
-function difference(left: string[], right: string[]): string[] {
-  const rightSet = new Set(right);
-  return left.filter((name) => !rightSet.has(name));
 }
 
 function shuffle<T>(items: T[]): T[] {
@@ -56,37 +48,6 @@ function classStats(document: CocoDocument) {
     count: counts.get(category.id) || 0,
     imageCount: imageIds.get(category.id)?.size || 0,
   }));
-}
-
-function convertShapes(shapes: LabelmeShape[], categoryIds: Map<string, number>, imageId: number, firstAnnotationId: number) {
-  const annotations: CocoAnnotation[] = [];
-  let annotationId = firstAnnotationId;
-  for (const shape of shapes || []) {
-    const categoryId = categoryIds.get(shape.label?.trim());
-    const points = shape.points;
-    if (!categoryId || !Array.isArray(points) || points.length < 2) continue;
-    const xs = points.map((point) => Number(point[0]));
-    const ys = points.map((point) => Number(point[1]));
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const width = maxX - minX;
-    const height = maxY - minY;
-    if (![minX, maxX, minY, maxY, width, height].every(Number.isFinite) || width <= 1e-5 || height <= 1e-5) continue;
-    let area = 0;
-    for (let i = 0; i < points.length; i++) {
-      const j = (i + 1) % points.length;
-      area += Number(points[i][0]) * Number(points[j][1]);
-      area -= Number(points[j][0]) * Number(points[i][1]);
-    }
-    area = Math.abs(area) / 2 || width * height;
-    const segmentation = shape.shape_type === "polygon" && points.length >= 3
-      ? points.flat().map(Number)
-      : [minX, minY, maxX, minY, maxX, maxY, minX, maxY];
-    annotations.push({ id: annotationId++, image_id: imageId, category_id: categoryId, bbox: [minX, minY, width, height], area, iscrowd: 0, segmentation: [segmentation] });
-  }
-  return annotations;
 }
 
 async function readCoco(filePath: string): Promise<CocoDocument> {
@@ -147,6 +108,15 @@ function uniqueImageName(original: string, sourceName: string, used: Set<string>
   return candidate;
 }
 
+async function folderSize(directory: string): Promise<number> {
+  let total = 0;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name);
+    total += entry.isDirectory() ? await folderSize(fullPath) : (await stat(fullPath)).size;
+  }
+  return total;
+}
+
 async function atomicWrite(filePath: string, document: CocoDocument) {
   const temporary = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporary, JSON.stringify(document, null, 2), "utf-8");
@@ -168,7 +138,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Train ratio + val ratio must be less than or equal to 1." }, { status: 400 });
     }
 
-    const user = await db.user.findUnique({ where: { id: auth.userId }, select: { id: true, username: true } });
+    const user = await db.user.findUnique({ where: { id: auth.userId }, select: { id: true, username: true, maxStorageQuota: true } });
     const config = await db.systemConfig.findFirst();
     if (!user || !config?.userDatabasePath) return NextResponse.json({ success: false, error: "User storage is not configured." }, { status: 400 });
     const userRoot = path.join(config.userDatabasePath, user.username);
@@ -184,30 +154,30 @@ export async function POST(request: NextRequest) {
       readCoco(files.train),
       readCoco(files.val),
     ]);
-    const trainCategories = names(trainDocument.categories);
-    const valCategories = names(valDocument.categories);
-    const cocoCategories = [...new Set([...trainCategories, ...valCategories])].sort();
-    const onlyInLabelme = difference(source.categories, cocoCategories);
-    const missingFromTrain = difference(source.categories, trainCategories);
-    const missingFromVal = difference(source.categories, valCategories);
-    const canMerge = onlyInLabelme.length === 0 && missingFromTrain.length === 0 && missingFromVal.length === 0 && source.samples.length > 0;
-    const trainAdd = Math.floor(source.samples.length * trainRatio);
-    const valAdd = Math.floor(source.samples.length * valRatio);
+    const trainCategories = trainDocument.categories.map((category) => category.name);
+    const valCategories = valDocument.categories.map((category) => category.name);
+    const before = { trainImages: trainDocument.images.length, valImages: valDocument.images.length, trainAnnotations: trainDocument.annotations.length, valAnnotations: valDocument.annotations.length };
+    const assessment = assessLabelmeMerge(source.categories, trainCategories, valCategories, source.samples.length, trainRatio, valRatio, before);
     const preview = {
-      canMerge,
+      canMerge: assessment.canMerge,
       labelme: { name: body.labelmeDataset, categories: source.categories, totalJson: source.totalJson, validSamples: source.samples.length, invalidSamples: source.invalid },
-      coco: { name: body.cocoDataset, categories: cocoCategories, trainCategories, valCategories },
-      differences: { matched: source.categories.filter((name) => cocoCategories.includes(name)), onlyInLabelme, onlyInCoco: difference(cocoCategories, source.categories), missingFromTrain, missingFromVal },
-      before: { trainImages: trainDocument.images.length, valImages: valDocument.images.length, trainAnnotations: trainDocument.annotations.length, valAnnotations: valDocument.annotations.length },
-      planned: { trainAdd, valAdd, skipped: source.samples.length - trainAdd - valAdd, trainImages: trainDocument.images.length + trainAdd, valImages: valDocument.images.length + valAdd },
+      coco: { name: body.cocoDataset, categories: assessment.cocoCategories, trainCategories, valCategories },
+      differences: assessment.differences,
+      before,
+      planned: assessment.planned,
     };
     if (action === "verify") return NextResponse.json({ success: true, data: preview });
-    if (!canMerge) return NextResponse.json({ success: false, error: "Category verification failed. Resolve category differences before merging.", data: preview }, { status: 400 });
-    if (trainAdd + valAdd === 0) return NextResponse.json({ success: false, error: "The selected ratios add zero samples." }, { status: 400 });
+    if (!assessment.canMerge) return NextResponse.json({ success: false, error: "Category verification failed. Resolve category differences before merging.", data: preview }, { status: 400 });
+    if (assessment.planned.trainAdd + assessment.planned.valAdd === 0) return NextResponse.json({ success: false, error: "The selected ratios add zero samples." }, { status: 400 });
 
     const selected = shuffle(source.samples);
-    const trainSamples = selected.slice(0, trainAdd);
-    const valSamples = selected.slice(trainAdd, trainAdd + valAdd);
+    const trainSamples = selected.slice(0, assessment.planned.trainAdd);
+    const valSamples = selected.slice(assessment.planned.trainAdd, assessment.planned.trainAdd + assessment.planned.valAdd);
+    const additionalSize = (await Promise.all([...trainSamples, ...valSamples].map(async (sample) => (await stat(sample.imagePath)).size))).reduce((sum, size) => sum + size, 0);
+    const usedStorage = await folderSize(userRoot);
+    if (usedStorage + additionalSize > Number(user.maxStorageQuota)) {
+      return NextResponse.json({ success: false, error: "Storage quota exceeded by this merge." }, { status: 403 });
+    }
     const append = async (document: CocoDocument, samples: SourceSample[], imageDirectory: string) => {
       const categoryIds = new Map(document.categories.map((category) => [category.name.trim(), category.id]));
       const usedNames = new Set(document.images.map((image) => image.file_name.toLowerCase()));
@@ -215,7 +185,7 @@ export async function POST(request: NextRequest) {
       let annotationId = nextId(document.annotations);
       for (const sample of samples) {
         const fileName = uniqueImageName(sample.imageName, String(body.labelmeDataset), usedNames);
-        const annotations = convertShapes(sample.data.shapes, categoryIds, imageId, annotationId);
+        const annotations = convertLabelmeShapes(sample.data.shapes, categoryIds, imageId, annotationId);
         await copyFile(sample.imagePath, path.join(imageDirectory, fileName));
         document.images.push({ id: imageId, file_name: fileName, width: Number(sample.data.imageWidth) || 0, height: Number(sample.data.imageHeight) || 0 });
         document.annotations.push(...annotations);
