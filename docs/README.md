@@ -41,6 +41,9 @@ Hawkeye+ AutoTrain Platform 的全部文档。项目总览见 [../README.md](../
 
 | 文档 | 内容 |
 |---|---|
+| [Architecture_Visuals/Joint_Platform/index.html](Architecture_Visuals/Joint_Platform/index.html) | **SwiftFlow + HawkeyePlus 完整汇报**：正式封面、可点击目录、四章过渡、平台内容、总结与结束；中英文每版 20 页，原生分节、可编辑 PPT / PDF / 4K 图片 |
+| [Architecture_Visuals/index.html](Architecture_Visuals/index.html) | **HawkeyePlus 中英文架构与模型图册**：架构、研发流程、Detection、分割、分类与异常检测；每版 5 页，深蓝/明色 4K 图片、可编辑 PPT、PDF 和 SVG |
+| [Architecture_Visuals/Supported_Models.md](Architecture_Visuals/Supported_Models.md) | 当前训练模型与骨干清单：按六个框架列出界面预设，说明 TorchDet 与 PaddleDetection 的区别、SSD/SSDLite 变体及 TorchSeg 命名差异 |
 | [Hawkeye_Plus_Overview.md](Hawkeye_Plus_Overview.md) | Executive briefing（幻灯片式）：项目背景、平台定位、端到端流程、价值总结，附技术实现备份页 |
 
 > 注意：该文档的 "Real-Time Training Channel (Socket.io)" 一节描述的是**设想中的**实时通道。当前代码**没有** WebSocket，实时性靠前端轮询（Monitoring 5 秒、Dashboard 30 秒）实现，`mini-services/training-service/` 只是一个生成合成日志的未接入原型。

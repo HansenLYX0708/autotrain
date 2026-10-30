@@ -1,0 +1,429 @@
+{
+  "scope": "Current platform UI presets, not the entire upstream framework catalog or a record of completed training runs.",
+  "source": "src/lib/model-yaml.ts",
+  "source_sha256": "d00567f5d691d8a48b95de7e0d11967ac968c6f2a07c04fad5ca74778afa6c4e",
+  "frameworks": {
+    "PaddleDetection": [
+      {
+        "key": "PP-YOLOE",
+        "display": "PP-YOLOE",
+        "backbones": [
+          "CSPResNet"
+        ],
+        "source_label": "PP-YOLOE (YOLOv3 meta-arch)",
+        "architecture": "YOLOv3",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "YOLOv3",
+        "display": "YOLOv3",
+        "backbones": [
+          "DarkNet",
+          "MobileNetV1",
+          "MobileNetV3",
+          "ResNet"
+        ],
+        "source_label": "YOLOv3 (classic)",
+        "architecture": "YOLOv3",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "PicoDet",
+        "display": "PicoDet",
+        "backbones": [
+          "LCNet",
+          "ESNet"
+        ],
+        "source_label": "PicoDet",
+        "architecture": "PicoDet",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "RT-DETR",
+        "display": "RT-DETR",
+        "backbones": [
+          "ResNet",
+          "HGNetv2"
+        ],
+        "source_label": "RT-DETR (DETR meta-arch)",
+        "architecture": "DETR",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "FasterRCNN",
+        "display": "Faster R-CNN",
+        "backbones": [
+          "ResNet",
+          "ResNeXt"
+        ],
+        "source_label": "Faster R-CNN",
+        "architecture": "FasterRCNN",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "RetinaNet",
+        "display": "RetinaNet",
+        "backbones": [
+          "ResNet"
+        ],
+        "source_label": "RetinaNet",
+        "architecture": "RetinaNet",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "CenterNet",
+        "display": "CenterNet",
+        "backbones": [
+          "DLA",
+          "ResNet"
+        ],
+        "source_label": "CenterNet",
+        "architecture": "CenterNet",
+        "class_path": null,
+        "supports_coco_transfer": null
+      }
+    ],
+    "TorchDet": [
+      {
+        "key": "FasterRCNN",
+        "display": "Faster R-CNN",
+        "backbones": [
+          "ResNet50-FPN",
+          "ResNet50-FPN-v2",
+          "MobileNetV3-Large-FPN",
+          "MobileNetV3-Large-320-FPN"
+        ],
+        "source_label": "Faster R-CNN (two-stage, best accuracy)",
+        "architecture": "FasterRCNN",
+        "class_path": null,
+        "supports_coco_transfer": true,
+        "runtime_builders": {
+          "ResNet50-FPN": "fasterrcnn_resnet50_fpn",
+          "ResNet50-FPN-v2": "fasterrcnn_resnet50_fpn_v2",
+          "MobileNetV3-Large-FPN": "fasterrcnn_mobilenet_v3_large_fpn",
+          "MobileNetV3-Large-320-FPN": "fasterrcnn_mobilenet_v3_large_320_fpn"
+        }
+      },
+      {
+        "key": "RetinaNet",
+        "display": "RetinaNet",
+        "backbones": [
+          "ResNet50-FPN",
+          "ResNet50-FPN-v2"
+        ],
+        "source_label": "RetinaNet (one-stage, focal loss)",
+        "architecture": "RetinaNet",
+        "class_path": null,
+        "supports_coco_transfer": true,
+        "runtime_builders": {
+          "ResNet50-FPN": "retinanet_resnet50_fpn",
+          "ResNet50-FPN-v2": "retinanet_resnet50_fpn_v2"
+        }
+      },
+      {
+        "key": "FCOS",
+        "display": "FCOS",
+        "backbones": [
+          "ResNet50-FPN"
+        ],
+        "source_label": "FCOS (anchor-free)",
+        "architecture": "FCOS",
+        "class_path": null,
+        "supports_coco_transfer": true,
+        "runtime_builders": {
+          "ResNet50-FPN": "fcos_resnet50_fpn"
+        }
+      },
+      {
+        "key": "SSD",
+        "display": "SSD / SSDLite",
+        "backbones": [
+          "VGG16",
+          "MobileNetV3-Large"
+        ],
+        "source_label": "SSD (fastest, lower accuracy)",
+        "architecture": "SSD",
+        "class_path": null,
+        "supports_coco_transfer": false,
+        "runtime_builders": {
+          "VGG16": "ssd300_vgg16",
+          "MobileNetV3-Large": "ssdlite320_mobilenet_v3_large"
+        }
+      }
+    ],
+    "PaddleSeg": [
+      {
+        "key": "PPLiteSeg",
+        "display": "PP-LiteSeg",
+        "backbones": [
+          "STDC1",
+          "STDC2"
+        ],
+        "source_label": "PP-LiteSeg",
+        "architecture": "PPLiteSeg",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "BiSeNetV2",
+        "display": "BiSeNetV2",
+        "backbones": [],
+        "source_label": "BiSeNetV2",
+        "architecture": "BiSeNetV2",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "OCRNet",
+        "display": "OCRNet",
+        "backbones": [
+          "HRNet_W18",
+          "HRNet_W48"
+        ],
+        "source_label": "OCRNet",
+        "architecture": "OCRNet",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "UNet",
+        "display": "UNet",
+        "backbones": [],
+        "source_label": "UNet",
+        "architecture": "UNet",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "DeepLabV3P",
+        "display": "DeepLabV3+",
+        "backbones": [
+          "ResNet50_vd",
+          "ResNet101_vd"
+        ],
+        "source_label": "DeepLabV3+",
+        "architecture": "DeepLabV3P",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "SegFormer_B0",
+        "display": "SegFormer-B0",
+        "backbones": [],
+        "source_label": "SegFormer-B0",
+        "architecture": "SegFormer_B0",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "FCN",
+        "display": "FCN",
+        "backbones": [
+          "HRNet_W18",
+          "HRNet_W48"
+        ],
+        "source_label": "FCN",
+        "architecture": "FCN",
+        "class_path": null,
+        "supports_coco_transfer": null
+      }
+    ],
+    "TorchSeg": [
+      {
+        "key": "UNet",
+        "display": "UNet",
+        "backbones": [],
+        "source_label": "UNet (from scratch)",
+        "architecture": "UNet",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "DeepLabV3P",
+        "display": "DeepLabV3 (UI: DeepLabV3+)",
+        "backbones": [
+          "ResNet50",
+          "ResNet101",
+          "MobileNetV3-Large"
+        ],
+        "source_label": "DeepLabV3+ (torchvision, aux head)",
+        "architecture": "DeepLabV3P",
+        "class_path": null,
+        "supports_coco_transfer": null,
+        "runtime_note": "DeepLabV3P is a config alias for torchvision DeepLabV3; it is not a DeepLabV3+ decoder."
+      },
+      {
+        "key": "FCN",
+        "display": "FCN",
+        "backbones": [
+          "ResNet50",
+          "ResNet101"
+        ],
+        "source_label": "FCN (torchvision, aux head)",
+        "architecture": "FCN",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "LRASPP",
+        "display": "LR-ASPP",
+        "backbones": [
+          "MobileNetV3-Large"
+        ],
+        "source_label": "LR-ASPP (torchvision, lightweight)",
+        "architecture": "LRASPP",
+        "class_path": null,
+        "supports_coco_transfer": null
+      }
+    ],
+    "PaddleClas": [
+      {
+        "key": "ResNet18",
+        "display": "ResNet18",
+        "backbones": [],
+        "source_label": "ResNet18",
+        "architecture": "ResNet18",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "ResNet34",
+        "display": "ResNet34",
+        "backbones": [],
+        "source_label": "ResNet34",
+        "architecture": "ResNet34",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "ResNet50",
+        "display": "ResNet50",
+        "backbones": [],
+        "source_label": "ResNet50",
+        "architecture": "ResNet50",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "ResNet101",
+        "display": "ResNet101",
+        "backbones": [],
+        "source_label": "ResNet101",
+        "architecture": "ResNet101",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "MobileNetV3_small_x1_0",
+        "display": "MobileNetV3_small_x1_0",
+        "backbones": [],
+        "source_label": "MobileNetV3_small_x1_0",
+        "architecture": "MobileNetV3_small_x1_0",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "MobileNetV3_large_x1_0",
+        "display": "MobileNetV3_large_x1_0",
+        "backbones": [],
+        "source_label": "MobileNetV3_large_x1_0",
+        "architecture": "MobileNetV3_large_x1_0",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "PPLCNet_x1_0",
+        "display": "PPLCNet_x1_0",
+        "backbones": [],
+        "source_label": "PPLCNet_x1_0",
+        "architecture": "PPLCNet_x1_0",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "PPHGNet_small",
+        "display": "PPHGNet_small",
+        "backbones": [],
+        "source_label": "PPHGNet_small",
+        "architecture": "PPHGNet_small",
+        "class_path": null,
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "SwinTransformer_tiny_patch4_window7_224",
+        "display": "SwinTransformer_tiny_patch4_window7_224",
+        "backbones": [],
+        "source_label": "SwinTransformer_tiny_patch4_window7_224",
+        "architecture": "SwinTransformer_tiny_patch4_window7_224",
+        "class_path": null,
+        "supports_coco_transfer": null
+      }
+    ],
+    "TorchAnomaly": [
+      {
+        "key": "Patchcore",
+        "display": "PatchCore",
+        "backbones": [
+          "wide_resnet50_2",
+          "resnet18",
+          "resnet50"
+        ],
+        "source_label": "PatchCore (memory bank, best few-shot baseline)",
+        "architecture": "Patchcore",
+        "class_path": "anomalib.models.Patchcore",
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "Padim",
+        "display": "PaDiM",
+        "backbones": [
+          "resnet18",
+          "wide_resnet50_2"
+        ],
+        "source_label": "PaDiM (per-position Gaussian, fastest to train)",
+        "architecture": "Padim",
+        "class_path": "anomalib.models.Padim",
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "Stfpm",
+        "display": "STFPM",
+        "backbones": [
+          "resnet18",
+          "wide_resnet50_2"
+        ],
+        "source_label": "STFPM (student-teacher, real loss curve)",
+        "architecture": "Stfpm",
+        "class_path": "anomalib.models.Stfpm",
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "EfficientAd",
+        "display": "EfficientAD",
+        "backbones": [],
+        "source_label": "EfficientAD (best accuracy/latency, no tiling)",
+        "architecture": "EfficientAd",
+        "class_path": "anomalib.models.EfficientAd",
+        "supports_coco_transfer": null
+      },
+      {
+        "key": "Supersimplenet",
+        "display": "SuperSimpleNet",
+        "backbones": [
+          "wide_resnet50_2.tv_in1k",
+          "resnet18.tv_in1k"
+        ],
+        "source_label": "SuperSimpleNet (fast, semi-supervised capable)",
+        "architecture": "Supersimplenet",
+        "class_path": "anomalib.models.Supersimplenet",
+        "supports_coco_transfer": null
+      }
+    ]
+  }
+}

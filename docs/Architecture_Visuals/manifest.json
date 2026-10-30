@@ -1,0 +1,269 @@
+{
+  "platform": "HawkeyePlus",
+  "decks": [
+    {
+      "file": "HawkeyePlus_Architecture_Dark_Editable.pptx",
+      "language": "zh",
+      "theme": "dark",
+      "slides": [
+        {
+          "Connector": 10,
+          "Circle": 4,
+          "Panel": 17,
+          "Text": 41,
+          "Picture": 11,
+          "Node group": 11
+        },
+        {
+          "Connector": 14,
+          "Circle": 3,
+          "Panel": 15,
+          "Text": 37,
+          "Picture": 6,
+          "Node group": 9
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 24,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 23,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 6,
+          "Circle": 3,
+          "Panel": 3,
+          "Text": 21,
+          "Picture": 3,
+          "Node group": 2
+        }
+      ]
+    },
+    {
+      "file": "HawkeyePlus_Architecture_Light_Editable.pptx",
+      "language": "zh",
+      "theme": "light",
+      "slides": [
+        {
+          "Connector": 10,
+          "Circle": 4,
+          "Panel": 17,
+          "Text": 41,
+          "Picture": 11,
+          "Node group": 11
+        },
+        {
+          "Connector": 14,
+          "Circle": 3,
+          "Panel": 15,
+          "Text": 37,
+          "Picture": 6,
+          "Node group": 9
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 24,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 23,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 6,
+          "Circle": 3,
+          "Panel": 3,
+          "Text": 21,
+          "Picture": 3,
+          "Node group": 2
+        }
+      ]
+    },
+    {
+      "file": "HawkeyePlus_Architecture_EN_Dark_Editable.pptx",
+      "language": "en",
+      "theme": "dark",
+      "slides": [
+        {
+          "Connector": 10,
+          "Circle": 4,
+          "Panel": 17,
+          "Text": 41,
+          "Picture": 11,
+          "Node group": 11
+        },
+        {
+          "Connector": 14,
+          "Circle": 3,
+          "Panel": 15,
+          "Text": 37,
+          "Picture": 6,
+          "Node group": 9
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 24,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 23,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 6,
+          "Circle": 3,
+          "Panel": 3,
+          "Text": 21,
+          "Picture": 3,
+          "Node group": 2
+        }
+      ]
+    },
+    {
+      "file": "HawkeyePlus_Architecture_EN_Light_Editable.pptx",
+      "language": "en",
+      "theme": "light",
+      "slides": [
+        {
+          "Connector": 10,
+          "Circle": 4,
+          "Panel": 17,
+          "Text": 41,
+          "Picture": 11,
+          "Node group": 11
+        },
+        {
+          "Connector": 14,
+          "Circle": 3,
+          "Panel": 15,
+          "Text": 37,
+          "Picture": 6,
+          "Node group": 9
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 24,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 23,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 6,
+          "Circle": 3,
+          "Panel": 3,
+          "Text": 21,
+          "Picture": 3,
+          "Node group": 2
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "path": "README.md",
+      "sha256": "d0f9f6ee87df753ad0a015a0677f5a1436b7c1123c1b226636bbd88c2792fda7"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "82f0d656b62b6c5185d519dd493939d8e8fd0314487dda38d01c781951230728"
+    },
+    {
+      "path": "docs/FEATURES.md",
+      "sha256": "01267ba21df66da7fba5c992546fb0514bd2ad4378f4efbe35a21c5d1360758d"
+    },
+    {
+      "path": "src/lib/frameworks.ts",
+      "sha256": "bbfc1508155a5a5c117f8fb9670e7495696fbafb6befc3451508212146a8d0b3"
+    },
+    {
+      "path": "src/lib/yaml-merge.ts",
+      "sha256": "67eeb18ce2571c706dc476d0847aea555170f45c6e7f4301a6d2be5d9ab2ff27"
+    },
+    {
+      "path": "src/app/api/training-jobs/route.ts",
+      "sha256": "1441f9ecf9dde19a45da5919190066e45c4d0f2af4716e0d9ef4090032f2e639"
+    },
+    {
+      "path": "src/app/api/checkpoints/export/route.ts",
+      "sha256": "c268dd03da152103e975d54537c5d11ecf8934bb61ac04f59440902706c37e18"
+    },
+    {
+      "path": "src/app/api/deployed-models/route.ts",
+      "sha256": "f5318eb2b052252f994cee916718076193276f1197154d48a5bec7cf9efb730e"
+    },
+    {
+      "path": "src/app/api/deployed-models/active/route.ts",
+      "sha256": "3ff533a83876719edcfc1937b2e7fe9992a7d6430b5f0dcc1c3a74f277971550"
+    },
+    {
+      "path": "src/lib/model-yaml.ts",
+      "sha256": "d00567f5d691d8a48b95de7e0d11967ac968c6f2a07c04fad5ca74778afa6c4e"
+    },
+    {
+      "path": "torchtrain/torchtrain/det/models.py",
+      "sha256": "17a0dac5d75029625fe638b0c7153ef92c1d943790def2ced039157fa6979089"
+    },
+    {
+      "path": "torchtrain/torchtrain/seg/models.py",
+      "sha256": "c100716fa0c69bab0902594d2b4158b7af24d755bd0a2896dc7caf1665f0cdc0"
+    },
+    {
+      "path": "docs/tem_report/assets/01_raw.png",
+      "sha256": "24377a3fbea95df759ad7543ec56eebf44dffb6b382f6ffba6e7c8d4784f1799"
+    },
+    {
+      "path": "docs/tem_report/assets/03_added.png",
+      "sha256": "8b0c9fca8fc4864dcfa4558b135b8662a01274a8a15e7210e9cadffa97f02ef1"
+    },
+    {
+      "path": "docs/tem_report/assets/11_napari_ui.png",
+      "sha256": "44e981b50bc522810b7475b449672f606e5d529fe1fc34fb3b9b8a87daa36a84"
+    },
+    {
+      "path": "docs/tem_report/assets/12b_train_job_redacted.png",
+      "sha256": "cfe857753e2204ccc696fb79f8678f3a0866ef1bf28fcfcc11a587b89bd19a91"
+    },
+    {
+      "path": "docs/tem_report/assets/13_train_curve.png",
+      "sha256": "8babcd94cbc3f6e85bf16d9c0734ed67a512cbeffc4b0b971eb60c2ff8fea4ef"
+    }
+  ],
+  "style_reference": "G:\\projects\\AOIPlatform\\HwkUltra_g\\docs\\Architecture_Visuals",
+  "image_size": [
+    3840,
+    2160
+  ],
+  "asset_notes": "HawkeyePlus screenshots; original AI/data/model illustrations; reference WD template and generic art primitives."
+}

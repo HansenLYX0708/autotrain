@@ -1,0 +1,646 @@
+{
+  "powerpoint_opened": true,
+  "slides_exported": 80,
+  "decks": [
+    {
+      "file": "SwiftFlow_HawkeyePlus_Integrated_ZH_Dark_Editable.pptx",
+      "language": "zh",
+      "theme": "dark",
+      "slides": [
+        {
+          "text_boxes": 14,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 21
+        },
+        {
+          "text_boxes": 32,
+          "pictures": 5,
+          "groups": 4,
+          "native_objects": 47
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 25,
+          "pictures": 6,
+          "groups": 5,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 4,
+          "groups": 3,
+          "native_objects": 41
+        },
+        {
+          "text_boxes": 41,
+          "pictures": 7,
+          "groups": 6,
+          "native_objects": 68
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 10,
+          "groups": 9,
+          "native_objects": 41
+        },
+        {
+          "text_boxes": 19,
+          "pictures": 7,
+          "groups": 2,
+          "native_objects": 30
+        },
+        {
+          "text_boxes": 14,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 21
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 41,
+          "pictures": 11,
+          "groups": 11,
+          "native_objects": 83
+        },
+        {
+          "text_boxes": 37,
+          "pictures": 6,
+          "groups": 9,
+          "native_objects": 78
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 45
+        },
+        {
+          "text_boxes": 21,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 35
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 26,
+          "pictures": 7,
+          "groups": 7,
+          "native_objects": 47
+        },
+        {
+          "text_boxes": 17,
+          "pictures": 4,
+          "groups": 3,
+          "native_objects": 29
+        },
+        {
+          "text_boxes": 11,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 18
+        }
+      ],
+      "text_overflow": [],
+      "agenda_destinations": [
+        3,
+        7,
+        11,
+        17
+      ],
+      "native_sections": [
+        {
+          "name": "开场与目录",
+          "first_slide": 1
+        },
+        {
+          "name": "01 总体概念与建设目的",
+          "first_slide": 3
+        },
+        {
+          "name": "02 SwiftFlow",
+          "first_slide": 7
+        },
+        {
+          "name": "03 HawkeyePlus",
+          "first_slide": 11
+        },
+        {
+          "name": "04 协同交付",
+          "first_slide": 17
+        },
+        {
+          "name": "总结与交流",
+          "first_slide": 19
+        }
+      ]
+    },
+    {
+      "file": "SwiftFlow_HawkeyePlus_Integrated_ZH_Light_Editable.pptx",
+      "language": "zh",
+      "theme": "light",
+      "slides": [
+        {
+          "text_boxes": 14,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 21
+        },
+        {
+          "text_boxes": 32,
+          "pictures": 5,
+          "groups": 4,
+          "native_objects": 47
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 25,
+          "pictures": 6,
+          "groups": 5,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 4,
+          "groups": 3,
+          "native_objects": 41
+        },
+        {
+          "text_boxes": 41,
+          "pictures": 7,
+          "groups": 6,
+          "native_objects": 68
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 10,
+          "groups": 9,
+          "native_objects": 41
+        },
+        {
+          "text_boxes": 19,
+          "pictures": 7,
+          "groups": 2,
+          "native_objects": 30
+        },
+        {
+          "text_boxes": 14,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 21
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 41,
+          "pictures": 11,
+          "groups": 11,
+          "native_objects": 83
+        },
+        {
+          "text_boxes": 37,
+          "pictures": 6,
+          "groups": 9,
+          "native_objects": 78
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 45
+        },
+        {
+          "text_boxes": 21,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 35
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 26,
+          "pictures": 7,
+          "groups": 7,
+          "native_objects": 47
+        },
+        {
+          "text_boxes": 17,
+          "pictures": 4,
+          "groups": 3,
+          "native_objects": 29
+        },
+        {
+          "text_boxes": 11,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 18
+        }
+      ],
+      "text_overflow": [],
+      "agenda_destinations": [
+        3,
+        7,
+        11,
+        17
+      ],
+      "native_sections": [
+        {
+          "name": "开场与目录",
+          "first_slide": 1
+        },
+        {
+          "name": "01 总体概念与建设目的",
+          "first_slide": 3
+        },
+        {
+          "name": "02 SwiftFlow",
+          "first_slide": 7
+        },
+        {
+          "name": "03 HawkeyePlus",
+          "first_slide": 11
+        },
+        {
+          "name": "04 协同交付",
+          "first_slide": 17
+        },
+        {
+          "name": "总结与交流",
+          "first_slide": 19
+        }
+      ]
+    },
+    {
+      "file": "SwiftFlow_HawkeyePlus_Integrated_EN_Dark_Editable.pptx",
+      "language": "en",
+      "theme": "dark",
+      "slides": [
+        {
+          "text_boxes": 14,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 21
+        },
+        {
+          "text_boxes": 32,
+          "pictures": 5,
+          "groups": 4,
+          "native_objects": 47
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 25,
+          "pictures": 6,
+          "groups": 5,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 4,
+          "groups": 3,
+          "native_objects": 41
+        },
+        {
+          "text_boxes": 41,
+          "pictures": 7,
+          "groups": 6,
+          "native_objects": 68
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 10,
+          "groups": 9,
+          "native_objects": 41
+        },
+        {
+          "text_boxes": 19,
+          "pictures": 7,
+          "groups": 2,
+          "native_objects": 30
+        },
+        {
+          "text_boxes": 14,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 21
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 41,
+          "pictures": 11,
+          "groups": 11,
+          "native_objects": 83
+        },
+        {
+          "text_boxes": 37,
+          "pictures": 6,
+          "groups": 9,
+          "native_objects": 78
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 45
+        },
+        {
+          "text_boxes": 21,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 35
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 26,
+          "pictures": 7,
+          "groups": 7,
+          "native_objects": 47
+        },
+        {
+          "text_boxes": 17,
+          "pictures": 4,
+          "groups": 3,
+          "native_objects": 29
+        },
+        {
+          "text_boxes": 11,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 18
+        }
+      ],
+      "text_overflow": [],
+      "agenda_destinations": [
+        3,
+        7,
+        11,
+        17
+      ],
+      "native_sections": [
+        {
+          "name": "Opening & Roadmap",
+          "first_slide": 1
+        },
+        {
+          "name": "01 Vision & Rationale",
+          "first_slide": 3
+        },
+        {
+          "name": "02 SwiftFlow",
+          "first_slide": 7
+        },
+        {
+          "name": "03 HawkeyePlus",
+          "first_slide": 11
+        },
+        {
+          "name": "04 Integrated Delivery",
+          "first_slide": 17
+        },
+        {
+          "name": "Summary & Discussion",
+          "first_slide": 19
+        }
+      ]
+    },
+    {
+      "file": "SwiftFlow_HawkeyePlus_Integrated_EN_Light_Editable.pptx",
+      "language": "en",
+      "theme": "light",
+      "slides": [
+        {
+          "text_boxes": 14,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 21
+        },
+        {
+          "text_boxes": 32,
+          "pictures": 5,
+          "groups": 4,
+          "native_objects": 47
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 25,
+          "pictures": 6,
+          "groups": 5,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 4,
+          "groups": 3,
+          "native_objects": 41
+        },
+        {
+          "text_boxes": 41,
+          "pictures": 7,
+          "groups": 6,
+          "native_objects": 68
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 10,
+          "groups": 9,
+          "native_objects": 41
+        },
+        {
+          "text_boxes": 19,
+          "pictures": 7,
+          "groups": 2,
+          "native_objects": 30
+        },
+        {
+          "text_boxes": 14,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 21
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 41,
+          "pictures": 11,
+          "groups": 11,
+          "native_objects": 83
+        },
+        {
+          "text_boxes": 37,
+          "pictures": 6,
+          "groups": 9,
+          "native_objects": 78
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 45
+        },
+        {
+          "text_boxes": 21,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 35
+        },
+        {
+          "text_boxes": 15,
+          "pictures": 2,
+          "groups": 3,
+          "native_objects": 24
+        },
+        {
+          "text_boxes": 26,
+          "pictures": 7,
+          "groups": 7,
+          "native_objects": 47
+        },
+        {
+          "text_boxes": 17,
+          "pictures": 4,
+          "groups": 3,
+          "native_objects": 29
+        },
+        {
+          "text_boxes": 11,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 18
+        }
+      ],
+      "text_overflow": [],
+      "agenda_destinations": [
+        3,
+        7,
+        11,
+        17
+      ],
+      "native_sections": [
+        {
+          "name": "Opening & Roadmap",
+          "first_slide": 1
+        },
+        {
+          "name": "01 Vision & Rationale",
+          "first_slide": 3
+        },
+        {
+          "name": "02 SwiftFlow",
+          "first_slide": 7
+        },
+        {
+          "name": "03 HawkeyePlus",
+          "first_slide": 11
+        },
+        {
+          "name": "04 Integrated Delivery",
+          "first_slide": 17
+        },
+        {
+          "name": "Summary & Discussion",
+          "first_slide": 19
+        }
+      ]
+    }
+  ]
+}

@@ -175,13 +175,17 @@ AnomalyFolder 的名称会被 slug 化（anomalib 用 datamodule `name` 拼结�
 
 **登录**。把 labelme 标注转换为 COCO 格式。
 
+按 `imagePath` 文件名解析上传后的图片位置，支持两种路径分隔符。输出目录已存在且非空、或 train/val 转换后为空时返回 400。成功响应 `stats.skippedCount` / `stats.skipped` 报告跳过的样本。
+
 ### `POST /api/datasets/labelme-to-paddleseg`
 
 **登录**。把 labelme 多边形标注转为 PaddleSeg 布局（`{userDb}/{user}/PaddleSeg/{name}/data/`）：`JPEGImages/`、`Annotations/`（8-bit 调色板 PNG）、`train.txt`、`val.txt`、`class_names.txt`。类别顺序确定（0 恒为 `_background_`），多边形按 even-odd 扫描线填充且后者覆盖前者。详见 [ARCHITECTURE.md §14](ARCHITECTURE.md#14-数据集处理管线)。
 
 ### `POST /api/datasets/merge-labelme`
 
-**登录**。把一批 labelme 标注合并进既有 COCO 数据集。body：`action`, `cocoDataset`, `labelmeDataset`, `trainRatio`, `valRatio`。
+**登录**。把一批 labelme 标注合并进既有 COCO 数据集。body：`action`（`verify` / `merge`）, `cocoDataset`, `labelmeDataset`, `trainRatio`, `valRatio`, `addCategories?: string[]`。
+
+`addCategories` 是用户选择导入的新类别名，省略等于空数组。未选择的新类别标注不复制，图片仍保留。Verify 返回类别差异、`labelme.shapeCounts`、`planned.addedCategories` / `droppedCategories` / `droppedAnnotations`（源样本全部 shape 数，尚未按比例抽样）。Merge 重新验证目标 train/val 类别名和 ID 一致性，同步新类别 ID、统计、数据集 YAML 和已有配置/类别名称文件。
 
 ---
 
@@ -210,9 +214,13 @@ AnomalyFolder 的名称会被 slug 化（anomalib 用 datamodule `name` 拼结�
 | PaddleSeg | `defaultSeg/` |
 | TorchSeg | `defaultTorchSeg/` |
 | TorchDet | `defaultTorchDet/` |
-| 其余（PaddleDetection / PaddleClas / **TorchAnomaly**） | `default/` |
+| PaddleDetection | `default/` |
+| PaddleClas | `defaultClas/` |
+| TorchAnomaly | `defaultTorchAnomaly/` |
 
 首次访问时会用内置的 starter 配置**播种**该目录，保证新装环境下拉列表不为空。torch 框架单独建目录是因为——虽然它们复用 Paddle 的配置 *schema*，但架构不同（`PPLiteSeg` 的模板对 TorchSeg 毫无用处）。`userConfigsPath` 未配置时退回 `{框架仓库}/configs/autotrain/models/default/`。
+
+响应 `data.defaultConfigDir` 是实际扫描的默认目录绝对路径，供创建页显示放置模板的位置。GET 每次重新扫描 `.yml` / `.yaml` 文件。
 
 ### `POST /api/models/import`
 
@@ -238,6 +246,8 @@ AnomalyFolder 的名称会被 slug 化（anomalib 用 datamodule `name` 拼结�
 
 **登录**。列出可导入的训练配置。与模型导入同一套机制，只是子目录是 `training/`：`{userConfigsPath}/{默认文件夹}/training/` + 用户自己的配置目录。
 
+响应同样包含 `data.defaultConfigDir`；创建页下拉与独立 Import Config 使用同一接口。
+
 ### `POST /api/training-configs/import`
 
 **登录**。body：`projectId`, `name`, `description`, `yamlContent`, `isDefault`, `configPath`, `trainingParams`。
@@ -259,7 +269,9 @@ AnomalyFolder 的名称会被 slug 化（anomalib 用 datamodule `name` 拼结�
 
 **登录**。创建任务（状态 `pending`，**不会自动开始**）。
 
-body：`projectId`, `datasetId`, `modelId`, `configId`（可选）, `name`, `gpuIds`, `useAmp`, `useVdl`。
+body：`projectId`, `datasetId`, `modelId`, `configId`（可选）, `name`, `gpuIds`, `useAmp`, `useVdl`, `doEval`（boolean，默认 true）。
+
+`doEval` 保存到 `trainingParams`。开启时检查合并后 YAML 的验证标注文件可读、非空，再生成训练命令：PaddleDetection 使用 `--eval`，PaddleSeg/TorchDet/TorchSeg 使用 `--do_eval`，PaddleClas 使用 `-o Global.eval_during_train=true/false`。TorchAnomaly 的训练期验证是校准和检查点选择所必需，传 false 返回 400。
 
 服务端依次完成：归属校验 → COCO `area` 修复 → **存储配额预检（预留 5 GB，不足 403）** → 名称 slug 化 → `gpuIds` 校验（逗号分隔的 0–63 整数，最多 16 个）→ 三段 YAML 深度合并 → 改写 `save_dir` → 落盘到 `{userConfigsPath}/{username}/jobs/{slug}.yml` → 生成 `command`/`evalCommand`/`inferCommand` → 由合并后 YAML 算出 `totalEpochs`。
 
@@ -289,6 +301,8 @@ body：`projectId`, `datasetId`, `modelId`, `configId`（可选）, `name`, `gpu
 ### `GET /api/training-jobs/[id]/logs`
 
 **归属**。查询参数：`page`（默认 1）、`limit`（默认 100，**上限 1000**）、`epoch`、`minLoss`、`maxLoss`、`sort`（`asc` \| 默认 `desc`）。
+
+GET 的 `kind=eval` 参数只返回带检测、分割或异常检测验证指标的行（包括值为 0 的指标），返回 `{ job, data, pagination }`。Monitoring 独立分页读取验证历史，普通日志使用 `sort=desc` 取最近 500 条。排序以 timestamp、id 保证分页稳定。
 
 ### `POST /api/training-jobs/[id]/logs`
 

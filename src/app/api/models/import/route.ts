@@ -121,6 +121,7 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         defaultConfigs: configs,
+        defaultConfigDir,
         userConfigs: userConfigs,
         workDir: workDir,
         userConfigsPath: userConfigsPath,

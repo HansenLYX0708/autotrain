@@ -50,6 +50,7 @@ import {
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { ConfigYamlPane, yamlSyntaxError } from '@/components/config-yaml-pane'
+import { DefaultConfigPicker } from '@/components/default-config-picker'
 import { asConfigFramework, configSchemaOf, type ConfigFramework } from '@/lib/training-yaml'
 import {
   ANOMALY_MODEL_SIZES,
@@ -228,11 +229,11 @@ export function ModelsPage() {
     const nextFramework = frameworkOf(projectId)
     setModelProjectId(projectId)
     if (nextFramework === dialogFramework) return
-    // Architecture vocabularies do not overlap across frameworks, so start from
-    // that framework's defaults but keep num_classes, which always transfers.
+    // Architecture vocabularies do not overlap across frameworks.
     const next = defaultModelParams(nextFramework)
-    next.numClasses = params.numClasses
     setParams(next)
+    setManualYaml(false)
+    setManualYamlText('')
     setDetectionPreset('PP-YOLOE')
   }
 
@@ -816,6 +817,18 @@ export function ModelsPage() {
                             rows={2}
                           />
                         </div>
+                        <DefaultConfigPicker
+                          projectId={modelProjectId}
+                          kind="models"
+                          onLoad={config => {
+                            const next = { ...defaultModelParams(dialogFramework), ...parseModelParams(dialogFramework, config.content) }
+                            setParams(next)
+                            setDetectionPreset(detectionPresetFor(next.architecture, next.head))
+                            if (!modelName.trim()) setModelName(config.name)
+                            setManualYamlText(config.content)
+                            setManualYaml(true)
+                          }}
+                        />
                         {/* Anomaly detection has no classes: it learns what
                             "normal" looks like and scores deviation from it. */}
                         {isAnomalyModel ? (
@@ -825,21 +838,10 @@ export function ModelsPage() {
                             anomaly-score threshold.
                           </p>
                         ) : (
-                        <div className="space-y-2">
-                          <Label htmlFor="numClasses">Number of Classes</Label>
-                          <Input
-                            id="numClasses"
-                            type="number"
-                            min={1}
-                            value={params.numClasses}
-                            onChange={(e) => setParam('numClasses', Number(e.target.value) || 1)}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            {isSeg
-                              ? 'Include the background class.'
-                              : 'Must match the number of categories in the dataset.'}
+                          <p className="text-sm text-muted-foreground">
+                            The number of classes comes from the dataset selected for the training job.
+                            {isSeg ? ' Segmentation includes the background class.' : ''}
                           </p>
-                        </div>
                         )}
                       </TabsContent>
 
@@ -1566,7 +1568,7 @@ export function ModelsPage() {
                       <Badge variant="outline">{model.architecture}</Badge>
                       {model.backbone && <span>{model.backbone}</span>}
                       <span>•</span>
-                      <span>{model.numClasses} classes</span>
+                      <span>Classes from dataset</span>
                     </div>
                   </CardContent>
                 </Card>

@@ -89,12 +89,13 @@
 ### 3.3 格式转换
 
 - **Convert Labelme**：
-  - → **COCO**：多边形/矩形标注转 COCO JSON。
+  - → **COCO**：多边形/矩形标注转 COCO JSON。上传后按 `imagePath` 的文件名寻找图片，兼容原始路径中的 `/` 和 `\`。训练或验证分区为空会报错；已有输出目录不会被覆盖。
   - → **PaddleSeg**：产出官方 `labelme2seg` / Pascal VOC 风格布局。掩码是 **8-bit 索引色 PNG**——调色板索引即 class id，所以 PaddleSeg/PIL 读到的是可直接训练的二维标签图，而任何图片查看器都能看到亮色伪彩（纯灰度 0..N-1 在肉眼看来和全黑没区别）。类别顺序完全确定：0 恒为 `_background_`，1..N 按文件名排序扫描时首次出现的顺序。多边形按 even-odd 扫描线填充，**后面的形状覆盖前面的**（形状顺序即 z-order）。
 - **Merge Labelme**：把一批新的 labelme 标注合并进既有 COCO 数据集，可指定 `trainRatio` / `valRatio`。合并前有 **Verify** 步骤，先给出影响预览再决定是否执行：
   - 训练集 / 验证集图片数的「合并前 → 合并后」及增量
   - 源数据里有效样本数（相对 JSON 总数）、按比例被跳过的数量
-  - **类别名对照**：Matched / Only in Labelme / Only in COCO。类别名不一致是这类合并最常见的失败原因，`canMerge` 为假时会直接拦住。
+  - **类别名对照**：Matched / Only in Labelme / Only in COCO。Verify 后，新类别逐项勾选是否导入，默认不选。勾选的类别以相同的新 ID 加入 train/val；未选类别的标注不导入，图片仍按比例加入（可能成为无标注图片）。
+  - 目标 train/val 的类别名和 ID 必须一致。新增类别后同步已导入的数据集统计、数据集 YAML 的 `num_classes`、类别名称文件及已保存的 YAML 文件。
 
 ### 3.4 解析与统计
 
@@ -102,6 +103,9 @@
 
 - Train Set / Validation Set 概览
 - **Train Set Distribution / Val Set Distribution / Class Distribution** 柱状图
+- COCO 分别统计 train/val 的标注数和包含该类别的图片数，并提供明细表；概览标注数是 train + val，不含 test。同一图片可以包含多个类别，因此各类别图片数不能相加作为总图片数。
+- 导入和重新解析都支持绝对数据集目录。配置了验证标注但文件读取失败时返回错误，不再静默保存只有 train 的统计。旧记录可点击 **Parse Dataset Statistics** 重新计算。
+- LabelMe → COCO 的导入/重新解析会在验证路径缺失时识别标准 `data/annotations/instance_val.json`（也支持 `annotations/instance_val.json`），同时恢复 val 图片路径。旧记录重新解析后会同步修复数据集 YAML。界面区分「没有验证统计」与「没有验证数据」，可直接点击 **Parse train / val statistics**；显式选择的错误标注路径不会被自动替换。
 - Labelme categories 与 COCO categories 的对照（转换前后核对类别有没有丢）
 
 ### 3.5 样本预览
@@ -118,12 +122,14 @@
 
 | 页签 | 内容 |
 |---|---|
-| **Basic** | 名称、描述、所属项目、类别数、预训练权重 |
+| **Basic** | 名称、描述、所属项目、默认模型配置下拉导入 |
 | **Architecture** | 架构 / backbone / neck / head。可选组合由框架决定 |
 | **Advanced** | 归一化类型、EMA、深度/宽度系数，以及分割任务的 `loss:` 等 |
 
 - 右侧是 **YAML 实时预览**（`ConfigYamlPane`），可直接编辑；语法错误会即时提示。表单与预览共用 `src/lib/model-yaml.ts`，因此**看到的 YAML 就是保存的 YAML**。
 - **Import Model**：从内置默认模板或用户配置目录里的 YAML 文件导入。
+- **Basic → Import default model configuration**：选择项目后读取对应框架的 `models/` 默认目录；把 `.yml` / `.yaml` 文件放入界面提示的目录，点击 **Refresh** 即可出现。选择后载入完整 YAML 并填充可识别的表单字段，进入手动 YAML 编辑模式，保留模板中的额外字段、标签和别名。
+- 模型创建页不再单独配置类别数。创建训练任务时，类别数由所选 dataset 的 YAML 决定（未声明时使用 dataset 的缓存列）；即使旧模型模板含固定类别数，任务配置也会按 dataset 校正。分割含背景类；TorchAnomaly 不设置类别数。
 - 保存时会把 YAML **同步写回**用户配置目录的同名文件，避免文件与数据库行漂移。
 
 ### 架构选择的硬约束
@@ -157,6 +163,10 @@
 
 同样有右侧 YAML 实时预览、**Import Config**、保存时同步写回磁盘文件。
 
+创建/编辑窗口的 **Import default training configuration** 下拉从对应框架的 `training/` 目录读取模板。支持 **Refresh**、完整 YAML 导入及保留自定义设置，与 Models Basic 的行为相同。导入后在右侧编辑 YAML；要改为表单驱动，使用 **Regenerate from form**（会丢弃表单不支持的自定义字段）。
+
+默认目录在 Settings 配置的 `userConfigsPath` 下：PaddleDetection 使用 `default/`，PaddleSeg 使用 `defaultSeg/`，TorchDet 使用 `defaultTorchDet/`，TorchSeg 使用 `defaultTorchSeg/`，PaddleClas 使用 `defaultClas/`，TorchAnomaly 使用 `defaultTorchAnomaly/`。每个目录分别包含 `models/` 和 `training/`。
+
 ---
 
 ## 6. Jobs（训练任务）
@@ -164,6 +174,8 @@
 ### 创建任务
 
 选择 **项目 + 数据集 + 模型配置 + 训练配置**，填名称，选 **GPU**（可多选，如 `0,1`），勾选 AMP / VisualDL。界面会显示**将要执行的命令预览**——该预览与 runner 用的是同一个 `job-commands.ts`，所以不会出现「预览与实际不一致」。
+
+**Validate during training** 默认开启，可关闭以仅训练。开启后按训练配置中的验证间隔执行 val（检测通常是 `snapshot_epoch`，分割是 `save_interval`），结果自动进入 Monitoring；与 VisualDL 开关无关。创建时检查实际合并 YAML 中的验证标注是否可读、非空，不能只凭缓存图片数判断。TorchAnomaly 需要验证来校准分数和选择检查点，因此此开关固定开启。已有任务保留原命令；旧 PaddleDetection 任务若未启用验证，需要新建任务。
 
 提交后服务端：修复 COCO 标注里非正的 `area` → **检查存储配额（预留 5 GB）** → 深度合并三份 YAML → 写任务配置文件 → 生成训练/评估/推理命令 → 从合并后的 YAML 算出总步数。任务初始状态是 `pending`，**不会自动开始**。
 
@@ -205,6 +217,7 @@
 - **PatchCore / PaDiM 的 loss 恒为 0**（它们不做梯度下降，是内存库方法）。**平坦的 loss 曲线不代表训练卡住。**
 - 异常检测的指标来自 anomalib 在验证划分上的自适应阈值，而该划分正是拟合阈值用的，因此**训练期指标偏乐观**。要无偏结论请单独跑一次 Validation。
 - 评估点比训练点稀疏很多（按 `save_interval` / `snapshotEpoch` 触发），指标折线天然是阶梯状。
+- 普通日志显示最近 500 条；验证指标单独分页读取全部历史，避免训练日志超过 500 条后看不到 val。检测图按 epoch 展示 mAP@0.5:0.95 和 mAP@0.5，只有一次验证也显示数据点；尚无结果时提示等待验证或该任务未开启验证。
 - 一次运行的**最后一次评估**（通常也是最好的一次）依赖进程退出时的日志 flush，这条路径已专门处理，不会丢。
 
 ---

@@ -141,11 +141,13 @@ npx tsx scripts/backfill-config-columns.ts --db "file:D:/.../custom.db" --apply
 | PaddleSeg | `defaultSeg/` |
 | TorchSeg | `defaultTorchSeg/` |
 | TorchDet | `defaultTorchDet/` |
-| PaddleDetection / PaddleClas / TorchAnomaly | `default/` |
+| PaddleDetection | `default/` |
+| PaddleClas | `defaultClas/` |
+| TorchAnomaly | `defaultTorchAnomaly/` |
 
 torch 框架单独建目录，是因为它们虽然复用 Paddle 的配置 *schema*，但可用架构不同——给 TorchSeg 一个 `PPLiteSeg` starter 毫无意义。`/api/models/import` 与 `/api/training-configs/import` 首次访问时会用内置 starter 播种对应目录。
 
-注意 `TorchAnomaly` 目前没有独立目录，会落到 `default/`（该目录的 starter 是检测向的），因此异常检测项目通常要自己新建配置而不是导入模板。
+Models Basic 和 Configurations 创建/编辑页直接读取相同接口，显示实际目录并支持刷新。模板加载后进入手动 YAML 模式，避免重新生成表单 YAML 时丢失自定义字段。PaddleClas / TorchAnomaly 的 starter 使用各自框架的生成器。
 
 ### 3.4 字段支持矩阵
 
@@ -189,12 +191,13 @@ torch 框架单独建目录，是因为它们虽然复用 Paddle 的配置 *sche
 - 其他情况 → 整体替换（**序列是替换而非拼接**：覆盖方的 transform 流水线应当自我完备）
 - 覆盖方节点上的标签替换基准方的标签（例如 `!COCODataSet` → `!VOCDataSet`）
 
-任何一份源解析失败时，`mergeYamlConfigs` **不抛异常**，而是退回旧的文本拼接行为并在 `warnings` 里说明原因——一份手写坏了的配置会退化，而不是阻塞任务创建。
+任何一份源解析失败时，`mergeYamlConfigs` **不抛异常**，而是退回旧的文本拼接行为并在 `warnings` 里说明原因。对于需要类别数的框架，后续类别绑定要求有效的 YAML mapping，非法合并结果会阻止任务创建。
 
 生成的 YAML 头部带 `# Merged by AutoTrain from: ...` 注释，并用 `lineWidth: 0` 关闭折行（Paddle 配置里的长路径和 `target_size` 列表不能被折断）。
 
 ### 合并后的加工
 
+- `applyDatasetClasses`（`src/lib/dataset-classes.ts`）以 dataset YAML 的类别数为准，覆盖旧模板内的 `num_classes` / `class_num`，并设置检测顶层、分割 `model.num_classes` 或分类 `Arch.class_num`。只在 dataset YAML 未声明时使用 dataset 缓存列。分割 train/val 类别数不一致时拒绝创建；TorchAnomaly 原样通过。模型生成器不再输出固定类别数。
 - 分类框架走 `setPaddleClasOutputDir`（写 `Global.output_dir`），其余走 `setTopLevelSaveDir`（写顶层 `save_dir`），值都是本次任务的绝对输出目录。
 - 写入 `{userConfigsPath}/{username}/jobs/{jobSlug}.yml`；未配置 `userConfigsPath` 时退回 `{框架仓库}/configs/autotrain/jobs/`。
 - 从合并后的 YAML 反解出 `TrainingParams`，用 `totalStepsFor` 得到 `totalEpochs`——**不是**从配置表的标量列取值，这样即便 YAML 被手工改过，进度条依然正确。
@@ -224,6 +227,8 @@ python tools/train.py --config "<cfg>" --do_eval --save_dir "<dir>" [--amp] [--u
 # dash-c（PaddleDetection / PaddleClas）
 python -m paddle.distributed.launch --gpus 0 tools/train.py -c "<cfg>" [--amp] [--use_vdl=true --vdl_log_dir=<out>/vdl]
 ```
+
+创建任务的 `doEval` 默认 true 并保存到 `trainingParams`。PaddleDetection 开启时追加 `--eval`；config-flags 框架开启时追加 `--do_eval`；PaddleClas 显式覆盖 `Global.eval_during_train`。`training-validation.ts` 在写任务文件前检查合并配置中的 val 标注，拒绝缺失、损坏或空的验证集。TorchAnomaly 保留必需的训练期验证，不允许关闭。
 
 `bestWeightsPath` 按 `checkpointLayout` 给出「最佳权重」路径：`nested` → `<save_dir>/best_model/<weightFile>`；`flat` → `<save_dir>/model_final<ext>`。
 

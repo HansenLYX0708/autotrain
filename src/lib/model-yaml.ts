@@ -220,7 +220,6 @@ const NECK_BLOCKS: Record<string, (p: ModelParams) => string[]> = {
 
 const HEAD_BLOCKS: Record<string, (p: ModelParams) => string[]> = {
   PPYOLOEHead: (p) => [
-    `num_classes: ${p.numClasses}`,
     'fpn_strides: [32, 16, 8]',
     'grid_cell_scale: 5.0',
     'grid_cell_offset: 0.5',
@@ -229,21 +228,19 @@ const HEAD_BLOCKS: Record<string, (p: ModelParams) => string[]> = {
     'loss_weight: {class: 1.0, iou: 2.5, dfl: 0.5}',
   ],
   YOLOv3Head: (p) => [
-    `num_classes: ${p.numClasses}`,
     'anchors: [[10, 13], [16, 30], [33, 23], [30, 61], [62, 45], [59, 119], [116, 90], [156, 198], [373, 326]]',
     'anchor_masks: [[6, 7, 8], [3, 4, 5], [0, 1, 2]]',
     'loss: YOLOv3Loss',
   ],
   PicoHeadV2: (p) => [
-    `num_classes: ${p.numClasses}`,
     'fpn_stride: [8, 16, 32, 64]',
     'feat_in_chan: 128',
     'grid_cell_scale: 5.0',
   ],
-  DINOHead: (p) => [`num_classes: ${p.numClasses}`, 'loss: DINOLoss'],
-  BBoxHead: (p) => [`num_classes: ${p.numClasses}`, 'head: TwoFCHead', 'roi_extractor: RoIAlign', 'bbox_assigner: BBoxAssigner'],
-  RetinaHead: (p) => [`num_classes: ${p.numClasses}`, 'conv_feat: RetinaFeat', 'anchor_generator: RetinaAnchorGenerator'],
-  CenterNetHead: (p) => [`num_classes: ${p.numClasses}`, 'head_planes: 256', 'regress_ltrb: True'],
+  DINOHead: () => ['loss: DINOLoss'],
+  BBoxHead: () => ['head: TwoFCHead', 'roi_extractor: RoIAlign', 'bbox_assigner: BBoxAssigner'],
+  RetinaHead: () => ['conv_feat: RetinaFeat', 'anchor_generator: RetinaAnchorGenerator'],
+  CenterNetHead: () => ['head_planes: 256', 'regress_ltrb: True'],
 };
 
 // ---------------------------------------------------------------------------
@@ -610,10 +607,6 @@ export function validateModelParams(
     return issues;
   }
 
-  if (!Number.isFinite(params.numClasses) || params.numClasses < 1) {
-    issues.push({ level: 'error', message: 'num_classes must be at least 1.' });
-  }
-
   if (framework === 'PaddleSeg' || framework === 'TorchSeg') {
     const expected = segLogitsFor(params.architecture, framework);
     if (params.segLossTypes.length !== expected) {
@@ -624,12 +617,6 @@ export function validateModelParams(
     }
     if (params.segLossCoef.length !== params.segLossTypes.length) {
       issues.push({ level: 'error', message: 'loss.coef must have the same length as loss.types.' });
-    }
-    if (params.numClasses < 2) {
-      issues.push({
-        level: 'warning',
-        message: 'Segmentation num_classes normally includes the background class, so it is usually >= 2.',
-      });
     }
     const arch = segArchitecture(params.architecture, framework);
     if (arch?.needsBackbone && params.backbone && !arch.backbones.includes(params.backbone)) {
@@ -825,7 +812,7 @@ function generateDetectionModelYaml(p: ModelParams, name: string): string {
   // rather than parameters copied from an unrelated network.
   const backboneBlock = BACKBONE_BLOCKS[p.backbone] ? block(p.backbone, BACKBONE_BLOCKS[p.backbone](p)) : '';
   const neckBlock = p.neck && NECK_BLOCKS[p.neck] ? block(p.neck, NECK_BLOCKS[p.neck](p)) : '';
-  const headBlock = HEAD_BLOCKS[p.head] ? block(p.head, HEAD_BLOCKS[p.head](p)) : block(p.head, [`num_classes: ${p.numClasses}`]);
+  const headBlock = HEAD_BLOCKS[p.head] ? block(p.head, HEAD_BLOCKS[p.head](p)) : '';
 
   const multipliers = preset.usesMultipliers
     ? `depth_mult: ${p.depthMult}\nwidth_mult: ${p.widthMult}\n`
@@ -856,7 +843,7 @@ function generateSegModelYaml(
   const needsBackbone = arch?.needsBackbone ?? false;
   const isTorch = framework === 'TorchSeg';
 
-  const modelLines = [`type: ${p.architecture}`, `num_classes: ${p.numClasses}`];
+  const modelLines = [`type: ${p.architecture}`];
   if (p.segAlignCorners) modelLines.push('align_corners: True');
   if (needsBackbone && p.backbone) {
     // torchtrain reads `pretrained: imagenet` as "download ImageNet backbone
@@ -933,7 +920,6 @@ function generateClasModelYaml(p: ModelParams, name: string): string {
 
 Arch:
   name: ${p.architecture}
-  class_num: ${p.numClasses}
 ${p.pretrainWeights ? `  pretrained: ${p.pretrainWeights}\n` : ''}
 Loss:
   Train:

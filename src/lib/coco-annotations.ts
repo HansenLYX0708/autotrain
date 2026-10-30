@@ -1,4 +1,29 @@
 import { readFile, rename, writeFile } from "fs/promises";
+import { existsSync } from "fs";
+import * as path from "path";
+
+/**
+ * Recover the validation paths emitted by our LabelMe converter when an older
+ * import omitted them. Explicit selections always win, including broken paths:
+ * callers must report those errors rather than silently selecting another split.
+ */
+export function resolveCocoValidationPaths(
+  root: string,
+  dataset: { evalAnnoPath?: string | null; evalImagePath?: string | null },
+): { evalAnnoPath: string | null; evalImagePath: string | null } {
+  let evalAnnoPath = dataset.evalAnnoPath || null;
+  let evalImagePath = dataset.evalImagePath || null;
+  if (!evalAnnoPath) {
+    evalAnnoPath = ["data/annotations/instance_val.json", "annotations/instance_val.json"]
+      .find(candidate => existsSync(path.join(root, candidate))) || null;
+  }
+  if (!evalImagePath && evalAnnoPath) {
+    const relativeAnno = path.isAbsolute(evalAnnoPath) ? path.relative(root, evalAnnoPath) : evalAnnoPath;
+    const imageDir = relativeAnno.replace(/\\/g, "/").startsWith("data/annotations/") ? "data/val" : "val";
+    if (existsSync(path.join(root, imageDir))) evalImagePath = imageDir;
+  }
+  return { evalAnnoPath, evalImagePath };
+}
 
 export interface CocoAreaRepairResult {
   annotations: number;

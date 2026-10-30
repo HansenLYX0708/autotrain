@@ -48,6 +48,7 @@ import {
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { ConfigYamlPane, yamlSyntaxError } from '@/components/config-yaml-pane'
+import { DefaultConfigPicker } from '@/components/default-config-picker'
 import {
   asConfigFramework,
   countsIterations,
@@ -239,6 +240,8 @@ export function TrainingPage() {
       }
     }
     setParams(next)
+    setManualYaml(false)
+    setManualYamlText('')
   }
 
   const resetDialog = () => {
@@ -694,6 +697,16 @@ export function TrainingPage() {
                       </div>
                     </div>
 
+                    <DefaultConfigPicker
+                      projectId={configProjectId}
+                      kind="training-configs"
+                      onLoad={config => {
+                        setParams({ ...defaultTrainingParams(dialogFramework), ...parseTrainingParams(dialogFramework, config.content) })
+                        if (!configName.trim()) setConfigName(config.name)
+                        setManualYamlText(config.content)
+                        setManualYaml(true)
+                      }}
+                    />
                     <Tabs defaultValue="schedule" className="w-full">
                       <TabsList className={`grid w-full ${isAnomalyConfig ? 'grid-cols-3' : 'grid-cols-4'}`}>
                         <TabsTrigger value="schedule">Schedule</TabsTrigger>

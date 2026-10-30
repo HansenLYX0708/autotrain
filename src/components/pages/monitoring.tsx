@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { isDetection } from '@/lib/frameworks'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -55,6 +56,8 @@ interface TrainingJob {
   currentLr: number | null
   bestIter: number | null
   bestMetric: number | null
+  command: string | null
+  trainingParams?: { doEval?: boolean }
   startedAt: string | null
   completedAt: string | null
   project: {
@@ -277,6 +280,8 @@ export function MonitoringPage() {
   const [selectedJobId, setSelectedJobId] = useState<string>('')
   const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null)
   const [logs, setLogs] = useState<TrainingLog[]>([])
+  const [evaluationLogs, setEvaluationLogs] = useState<TrainingLog[]>([])
+  const [logsError, setLogsError] = useState<string | null>(null)
   const [stats, setStats] = useState<LogsResponse['stats'] | null>(null)
   const [loading, setLoading] = useState(true)
   const [logsLoading, setLogsLoading] = useState(false)
@@ -285,6 +290,7 @@ export function MonitoringPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const logContainerRef = useRef<HTMLDivElement>(null)
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const logsRequestRef = useRef<AbortController | null>(null)
 
   // Fetch training jobs
   const fetchJobs = useCallback(async () => {
@@ -309,13 +315,35 @@ export function MonitoringPage() {
   // Fetch job logs
   const fetchJobLogs = useCallback(async (jobId: string) => {
     if (!jobId) return
-    
+    logsRequestRef.current?.abort()
+    const controller = new AbortController()
+    logsRequestRef.current = controller
     setLogsLoading(true)
     try {
-      const response = await fetch(`/api/training-jobs/${jobId}/logs?limit=500&sort=asc`)
-      if (response.ok) {
-        const data: LogsResponse = await response.json()
-        setLogs(data.data)
+      const loadEvaluations = async () => {
+        const rows: TrainingLog[] = []
+        let pages = 1
+        for (let page = 1; page <= pages; page++) {
+          const response = await fetch(`/api/training-jobs/${jobId}/logs?kind=eval&limit=1000&sort=asc&page=${page}`, { signal: controller.signal })
+          if (!response.ok) throw new Error('Failed to load validation results')
+          const data: Pick<LogsResponse, 'data' | 'pagination'> = await response.json()
+          if (page === 1) pages = data.pagination.totalPages
+          rows.push(...data.data)
+        }
+        return rows
+      }
+      // Recent training rows and complete validation history use independent
+      // pagination: frequent TRAIN output must never crowd EVAL out of a chart.
+      const [response, evaluations] = await Promise.all([
+        fetch(`/api/training-jobs/${jobId}/logs?limit=500&sort=desc`, { signal: controller.signal }),
+        loadEvaluations(),
+      ])
+      if (!response.ok) throw new Error('Failed to load training logs')
+      const data: LogsResponse = await response.json()
+      if (!controller.signal.aborted) {
+        setLogs(data.data.reverse())
+        setEvaluationLogs(evaluations)
+        setLogsError(null)
         setStats(data.stats)
         
         // Update selected job from the jobs list
@@ -325,9 +353,11 @@ export function MonitoringPage() {
         }
       }
     } catch (error) {
-      console.error('Failed to fetch logs:', error)
+      if (!controller.signal.aborted) {
+        setLogsError(error instanceof Error ? error.message : 'Failed to load logs')
+      }
     } finally {
-      setLogsLoading(false)
+      if (!controller.signal.aborted) setLogsLoading(false)
     }
   }, [jobs])
 
@@ -338,16 +368,24 @@ export function MonitoringPage() {
 
   // Fetch logs when job is selected
   useEffect(() => {
+    setLogs([])
+    setEvaluationLogs([])
+    setStats(null)
+    setLogsError(null)
+  }, [selectedJobId])
+
+  useEffect(() => {
+    setSelectedJob(jobs.find(job => job.id === selectedJobId) || null)
     if (selectedJobId) {
       fetchJobLogs(selectedJobId)
     }
+    return () => logsRequestRef.current?.abort()
   }, [selectedJobId, fetchJobLogs])
 
   // Polling for real-time updates
   useEffect(() => {
     if (autoRefresh && selectedJobId && selectedJob?.status === 'running') {
       pollingIntervalRef.current = setInterval(() => {
-        fetchJobLogs(selectedJobId)
         fetchJobs() // Refresh job list to get status updates
       }, 5000)
     }
@@ -388,7 +426,7 @@ export function MonitoringPage() {
     }))
 
   // Segmentation evaluation metrics over successive evaluations
-  const segMetricChartData = logs
+  const segMetricChartData = evaluationLogs
     .filter(log => log.mIoU !== null)
     .map((log, i) => ({
       step: i + 1,
@@ -399,7 +437,7 @@ export function MonitoringPage() {
     }))
 
   // Detection evaluation metrics over successive evaluations
-  const detMetricChartData = logs
+  const detMetricChartData = evaluationLogs
     .filter(log => log.mAP !== null || log.mAP50 !== null)
     .map((log, i) => ({
       step: i + 1,
@@ -411,7 +449,7 @@ export function MonitoringPage() {
   // Anomaly-detection metrics over successive evaluations. `iteration` is kept
   // as the x-axis label because an anomaly run is measured in steps, and the
   // adapter records the step each evaluation happened at.
-  const anomalyMetricChartData = logs
+  const anomalyMetricChartData = evaluationLogs
     .filter(log => log.imageAuroc !== null || log.pixelAuroc !== null)
     .map((log, i) => ({
       step: i + 1,
@@ -441,10 +479,10 @@ export function MonitoringPage() {
   // Latest segmentation EVAL row (has mIoU + optional per-class metrics). Kept
   // separate from `latestLog` because EVAL rows are interleaved with far
   // more numerous TRAIN rows; the last TRAIN row won't have mIoU set.
-  const latestEvalLog = [...logs].reverse().find((l) => l.mIoU !== null)
+  const latestEvalLog = [...evaluationLogs].reverse().find((l) => l.mIoU !== null)
 
   // Same idea for detection: the newest row carrying COCO metrics.
-  const latestDetEvalLog = [...logs].reverse().find((l) => l.mAP !== null || l.mAP50 !== null)
+  const latestDetEvalLog = [...evaluationLogs].reverse().find((l) => l.mAP !== null || l.mAP50 !== null)
 
   // Parse latest per-class metrics JSON blob into arrays (safe: catch bad
   // JSON so a corrupt row doesn't take down the page).
@@ -622,6 +660,7 @@ export function MonitoringPage() {
           </div>
 
           {/* Charts */}
+          {logsError && <p role="alert" className="text-sm text-destructive">{logsError}</p>}
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Loss Chart */}
             <Card>
@@ -738,15 +777,25 @@ export function MonitoringPage() {
           </div>
 
           {/* Detection Evaluation Metrics (PaddleDetection, TorchDet) */}
-          {detMetricChartData.length > 0 && (
+          {isDetection(selectedJob.project.framework) && (
             <Card>
               <CardHeader>
                 <CardTitle>Detection Metrics</CardTitle>
                 <CardDescription>
-                  COCO mAP across evaluations
+                  Validation COCO mAP by training epoch
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                {detMetricChartData.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    {logsLoading ? 'Loading validation results…'
+                      : selectedJob.trainingParams?.doEval === false ||
+                        (selectedJob.command && !/\s--(?:do_eval|eval)(?:\s|=|$)/.test(selectedJob.command))
+                        ? 'Validation is disabled for this job. Enable “Validate during training” when creating a new job to record val metrics.'
+                        : 'No validation results yet. Results appear after the first evaluation at the configured validation interval.'}
+                  </p>
+                ) : (
+                <>
                 <div className="grid gap-4 md:grid-cols-3">
                   <div className="p-4 rounded-lg border bg-muted/50">
                     <div className="text-sm text-muted-foreground mb-1">Best mAP@0.5:0.95</div>
@@ -771,14 +820,16 @@ export function MonitoringPage() {
                 <ChartContainer config={detMetricChartConfig} className="h-[300px] w-full">
                   <LineChart data={detMetricChartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="step" className="text-xs" />
+                    <XAxis dataKey="epoch" className="text-xs" label={{ value: 'Epoch', position: 'insideBottomRight', offset: -5 }} />
                     <YAxis className="text-xs" domain={[0, 1]} />
                     <ChartTooltip content={<ChartTooltipContent />} />
                     <Legend />
-                    <Line type="monotone" dataKey="mAP" stroke="var(--chart-1)" strokeWidth={2} dot={false} name="mAP@0.5:0.95" />
-                    <Line type="monotone" dataKey="mAP50" stroke="var(--chart-2)" strokeWidth={1.5} dot={false} name="mAP@0.5" />
+                    <Line type="monotone" dataKey="mAP" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 3 }} connectNulls name="mAP@0.5:0.95" />
+                    <Line type="monotone" dataKey="mAP50" stroke="var(--chart-2)" strokeWidth={1.5} dot={{ r: 3 }} connectNulls name="mAP@0.5" />
                   </LineChart>
                 </ChartContainer>
+                </>
+                )}
               </CardContent>
             </Card>
           )}

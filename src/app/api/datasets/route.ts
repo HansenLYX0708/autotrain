@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveCocoValidationPaths } from '@/lib/coco-annotations';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
 import { logActivity } from '@/lib/activity-log';
@@ -35,6 +36,10 @@ async function parseCocoFile(filePath: string) {
 
     const content = fs.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(content);
+    if (!Array.isArray(data.images) || !Array.isArray(data.annotations) || !Array.isArray(data.categories)) {
+      console.error('Invalid COCO arrays:', filePath);
+      return null;
+    }
     
     return {
       images: data.images || [],
@@ -311,6 +316,9 @@ export async function POST(request: NextRequest) {
     const workDir = getWorkDir((project as any).framework, systemConfig);
     const userDatabasePath = (systemConfig as any)?.userDatabasePath;
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
+    const owner = await db.user.findUnique({ where: { id: userId }, select: { username: true } });
+    if (!owner) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    body.username = owner.username;
 
     const framework = (project as any).framework || 'PaddleDetection';
 
@@ -327,6 +335,9 @@ export async function POST(request: NextRequest) {
     let absoluteDatasetDir = body.datasetDir || '';
     if (body.datasetDir && !path.isAbsolute(body.datasetDir) && userDatabasePath && body.username) {
       absoluteDatasetDir = path.join(userDatabasePath, body.username, body.datasetDir);
+    }
+    if ((body.format || 'COCO') === 'COCO' && absoluteDatasetDir) {
+      Object.assign(body, resolveCocoValidationPaths(absoluteDatasetDir, body));
     }
 
     if (isAnomaly(framework)) {
@@ -442,10 +453,10 @@ export async function POST(request: NextRequest) {
           console.error('[Dataset Import] Failed to save PaddleSeg class names:', e);
         }
       }
-    } else if (body.trainAnnoPath && userDatabasePath && body.datasetDir) {
+    } else if (body.trainAnnoPath && absoluteDatasetDir) {
       const trainAnnoFullPath = path.isAbsolute(body.trainAnnoPath) 
         ? body.trainAnnoPath 
-        : path.join(userDatabasePath, body.username || '', body.datasetDir, body.trainAnnoPath);
+        : path.join(absoluteDatasetDir, body.trainAnnoPath);
       
       console.log(`[Dataset Import] Reading train annotation from: ${trainAnnoFullPath}`);
       
@@ -481,7 +492,7 @@ export async function POST(request: NextRequest) {
         if (body.evalAnnoPath) {
           const evalAnnoFullPath = path.isAbsolute(body.evalAnnoPath)
             ? body.evalAnnoPath
-            : path.join(userDatabasePath, body.username || '', body.datasetDir, body.evalAnnoPath);
+            : path.join(absoluteDatasetDir, body.evalAnnoPath);
           
           console.log(`[Dataset Import] Reading eval annotation from: ${evalAnnoFullPath}`);
           
@@ -490,10 +501,12 @@ export async function POST(request: NextRequest) {
             const evalStats = calculateStats(evalData);
             numEvalImages = evalStats.numImages;
             classStats.eval = evalStats.classStats;
+          } else {
+            return NextResponse.json({ success: false, error: `Failed to parse eval annotations: ${evalAnnoFullPath}` }, { status: 400 });
           }
         }
       } else {
-        console.error(`[Dataset Import] Failed to parse train annotation: ${trainAnnoFullPath}`);
+        return NextResponse.json({ success: false, error: `Failed to parse train annotations: ${trainAnnoFullPath}` }, { status: 400 });
       }
     } else {
       console.log(`[Dataset Import] Skipping annotation parsing - missing required fields:`, {

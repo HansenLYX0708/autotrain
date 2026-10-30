@@ -1,0 +1,1319 @@
+{
+  "title": [
+    "SwiftFlow + HawkeyePlus｜工业检测与测量标准化平台：架构、流程与协同交付",
+    "SwiftFlow + HawkeyePlus | Standardized Inspection & Measurement: Architecture, Workflows & Integrated Delivery"
+  ],
+  "slides_per_deck": 20,
+  "pages": [
+    {
+      "stem": "01_Cover",
+      "kind": "cover",
+      "chapter": null,
+      "title": [
+        "封面｜工业检测与测量标准化平台",
+        "Title | Standardized Inspection & Measurement"
+      ]
+    },
+    {
+      "stem": "02_Agenda",
+      "kind": "agenda",
+      "chapter": null,
+      "title": [
+        "汇报目录",
+        "Presentation Roadmap"
+      ]
+    },
+    {
+      "stem": "03_Chapter_Overview",
+      "kind": "divider",
+      "chapter": 0,
+      "title": [
+        "总体概念与建设目的",
+        "Vision & Rationale"
+      ]
+    },
+    {
+      "stem": "04_Shared_Vision",
+      "kind": "content",
+      "chapter": 0,
+      "content": 1,
+      "title": [
+        "一套标准流程，贯通检测与测量",
+        "One Standard Workflow for Inspection & Measurement"
+      ]
+    },
+    {
+      "stem": "05_Why_Standardize",
+      "kind": "content",
+      "chapter": 0,
+      "content": 2,
+      "title": [
+        "为什么要建立统一的工程方法",
+        "Why a Shared Engineering Method Matters"
+      ]
+    },
+    {
+      "stem": "06_Standard_Workflow",
+      "kind": "content",
+      "chapter": 0,
+      "content": 3,
+      "title": [
+        "从工程目标到标准化交付",
+        "From Engineering Goals to Standardized Delivery"
+      ]
+    },
+    {
+      "stem": "07_Chapter_SwiftFlow",
+      "kind": "divider",
+      "chapter": 1,
+      "title": [
+        "SwiftFlow",
+        "SwiftFlow"
+      ]
+    },
+    {
+      "stem": "08_SwiftFlow_Foundation",
+      "kind": "content",
+      "chapter": 1,
+      "content": 4,
+      "title": [
+        "SwiftFlow｜设备与流程执行平台",
+        "SwiftFlow | Equipment & Process Execution"
+      ]
+    },
+    {
+      "stem": "09_Hardware_to_Flow",
+      "kind": "content",
+      "chapter": 1,
+      "content": 5,
+      "title": [
+        "从硬件方案到可执行检测流程",
+        "From Hardware Design to Executable Workflows"
+      ]
+    },
+    {
+      "stem": "10_Inspection_Measurement",
+      "kind": "content",
+      "chapter": 1,
+      "content": 6,
+      "title": [
+        "以同一套流程，实现检测或测量",
+        "One Workflow Foundation for Inspection & Measurement"
+      ]
+    },
+    {
+      "stem": "11_Chapter_HawkeyePlus",
+      "kind": "divider",
+      "chapter": 2,
+      "title": [
+        "HawkeyePlus",
+        "HawkeyePlus"
+      ]
+    },
+    {
+      "stem": "12_HawkeyePlus_Architecture",
+      "kind": "content",
+      "chapter": 2,
+      "content": 7,
+      "title": [
+        "HawkeyePlus｜工业视觉模型研发",
+        "HawkeyePlus | Industrial Vision Model Development"
+      ]
+    },
+    {
+      "stem": "13_HawkeyePlus_Lifecycle",
+      "kind": "content",
+      "chapter": 2,
+      "content": 8,
+      "title": [
+        "从数据到模型的可视化闭环",
+        "A Visual Lifecycle: From Data to Models"
+      ]
+    },
+    {
+      "stem": "14_Detection_Models",
+      "kind": "content",
+      "chapter": 2,
+      "content": 9,
+      "title": [
+        "Detection｜工业缺陷检测",
+        "Object Detection | Industrial Defect Localization"
+      ]
+    },
+    {
+      "stem": "15_Segmentation_Models",
+      "kind": "content",
+      "chapter": 2,
+      "content": 10,
+      "title": [
+        "分割模型｜像素级结构与区域识别",
+        "Segmentation Models | Pixel-level Understanding"
+      ]
+    },
+    {
+      "stem": "16_Classification_Anomaly",
+      "kind": "content",
+      "chapter": 2,
+      "content": 11,
+      "title": [
+        "分类与异常检测｜补齐视觉任务覆盖",
+        "Classification & Anomaly Detection"
+      ]
+    },
+    {
+      "stem": "17_Chapter_Delivery",
+      "kind": "divider",
+      "chapter": 3,
+      "title": [
+        "协同交付",
+        "Integrated Delivery"
+      ]
+    },
+    {
+      "stem": "18_Handoff_Delivery",
+      "kind": "content",
+      "chapter": 3,
+      "content": 12,
+      "title": [
+        "以标准交付包，衔接研发与现场",
+        "Connect Development and Production with a Standard Handoff"
+      ]
+    },
+    {
+      "stem": "19_Summary",
+      "kind": "summary",
+      "chapter": null,
+      "title": [
+        "总结｜标准方法、平台协同、可复用交付",
+        "Summary | Method, Platforms and Reusable Delivery"
+      ]
+    },
+    {
+      "stem": "20_Closing",
+      "kind": "closing",
+      "chapter": null,
+      "title": [
+        "结束页｜讨论与交流",
+        "Closing | Questions & Discussion"
+      ]
+    }
+  ],
+  "chapters": [
+    {
+      "key": "concept",
+      "title": [
+        "总体概念与建设目的",
+        "Vision & Rationale"
+      ],
+      "subtitle": [
+        "建立统一的工程方法",
+        "Establish a shared engineering method"
+      ],
+      "question": [
+        "如何让硬件、工艺与算法形成统一方法？",
+        "How do hardware, workflows and algorithms work as one method?"
+      ],
+      "topics": [
+        [
+          "平台关系",
+          "Platform roles"
+        ],
+        [
+          "建设目的",
+          "Why standardize"
+        ],
+        [
+          "标准流程",
+          "Standard workflow"
+        ]
+      ],
+      "asset": "sf:optical",
+      "first": 3,
+      "last": 6
+    },
+    {
+      "key": "swiftflow",
+      "title": [
+        "SwiftFlow",
+        "SwiftFlow"
+      ],
+      "subtitle": [
+        "设备、流程与算法执行",
+        "Equipment, workflows and algorithm execution"
+      ],
+      "question": [
+        "如何把设备与算法组织成可执行流程？",
+        "How can equipment and algorithms become an executable workflow?"
+      ],
+      "topics": [
+        [
+          "设备接入",
+          "Equipment integration"
+        ],
+        [
+          "流程设计",
+          "Workflow design"
+        ],
+        [
+          "检测与测量",
+          "Inspection & measurement"
+        ]
+      ],
+      "asset": "sf:machine",
+      "first": 7,
+      "last": 10
+    },
+    {
+      "key": "hawkeye",
+      "title": [
+        "HawkeyePlus",
+        "HawkeyePlus"
+      ],
+      "subtitle": [
+        "工业视觉模型研发与验证",
+        "Industrial vision model development and validation"
+      ],
+      "question": [
+        "如何从数据出发，形成可验证、可交付的模型？",
+        "How do we turn data into validated, deliverable models?"
+      ],
+      "topics": [
+        [
+          "模型研发流程",
+          "Model development"
+        ],
+        [
+          "当前模型能力",
+          "Model portfolio"
+        ],
+        [
+          "验证与版本管理",
+          "Validation & versions"
+        ]
+      ],
+      "asset": "hp:core",
+      "first": 11,
+      "last": 16
+    },
+    {
+      "key": "handoff",
+      "title": [
+        "协同交付",
+        "Integrated Delivery"
+      ],
+      "subtitle": [
+        "从研发效果到现场可用",
+        "From development results to production readiness"
+      ],
+      "question": [
+        "如何用交付包与联合验证连接两个平台？",
+        "How do delivery packages and joint validation connect both platforms?"
+      ],
+      "topics": [
+        [
+          "适配与验收",
+          "Adaptation & acceptance"
+        ],
+        [
+          "统一交付资产",
+          "Shared delivery assets"
+        ],
+        [
+          "结果与版本追溯",
+          "Results & version traceability"
+        ]
+      ],
+      "asset": "hp:registry",
+      "first": 17,
+      "last": 18
+    }
+  ],
+  "decks": [
+    {
+      "file": "SwiftFlow_HawkeyePlus_Integrated_ZH_Dark_Editable.pptx",
+      "language": "zh",
+      "theme": "dark",
+      "slides": [
+        {
+          "Panel": 1,
+          "Text": 14,
+          "Picture": 3,
+          "Connector": 3,
+          "Node group": 2,
+          "Circle": 1
+        },
+        {
+          "Panel": 10,
+          "Text": 32,
+          "Picture": 5,
+          "Connector": 1,
+          "Node group": 4
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 7,
+          "Text": 25,
+          "Picture": 6,
+          "Connector": 3,
+          "Node group": 5,
+          "Circle": 6
+        },
+        {
+          "Panel": 5,
+          "Text": 23,
+          "Picture": 4,
+          "Connector": 4,
+          "Node group": 3,
+          "Circle": 6
+        },
+        {
+          "Panel": 9,
+          "Text": 41,
+          "Picture": 7,
+          "Connector": 12,
+          "Node group": 6
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 5,
+          "Text": 24,
+          "Picture": 10,
+          "Connector": 3,
+          "Node group": 9
+        },
+        {
+          "Panel": 4,
+          "Text": 19,
+          "Picture": 7,
+          "Connector": 5,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 14,
+          "Picture": 3,
+          "Connector": 1,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Connector": 10,
+          "Circle": 4,
+          "Panel": 17,
+          "Text": 41,
+          "Picture": 11,
+          "Node group": 11
+        },
+        {
+          "Connector": 14,
+          "Circle": 3,
+          "Panel": 15,
+          "Text": 37,
+          "Picture": 6,
+          "Node group": 9
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 24,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 23,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 6,
+          "Circle": 3,
+          "Panel": 3,
+          "Text": 21,
+          "Picture": 3,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 8,
+          "Text": 26,
+          "Picture": 7,
+          "Connector": 3,
+          "Node group": 7,
+          "Circle": 3
+        },
+        {
+          "Panel": 5,
+          "Text": 17,
+          "Picture": 4,
+          "Connector": 4,
+          "Node group": 3
+        },
+        {
+          "Panel": 1,
+          "Text": 11,
+          "Picture": 3,
+          "Connector": 1,
+          "Node group": 2,
+          "Circle": 3
+        }
+      ],
+      "agenda_navigation": [
+        {
+          "target_page": 3,
+          "object_ids": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20
+          ]
+        },
+        {
+          "target_page": 7,
+          "object_ids": [
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        },
+        {
+          "target_page": 11,
+          "object_ids": [
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40
+          ]
+        },
+        {
+          "target_page": 17,
+          "object_ids": [
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50
+          ]
+        }
+      ],
+      "native_sections": 6
+    },
+    {
+      "file": "SwiftFlow_HawkeyePlus_Integrated_ZH_Light_Editable.pptx",
+      "language": "zh",
+      "theme": "light",
+      "slides": [
+        {
+          "Panel": 1,
+          "Text": 14,
+          "Picture": 3,
+          "Connector": 3,
+          "Node group": 2,
+          "Circle": 1
+        },
+        {
+          "Panel": 10,
+          "Text": 32,
+          "Picture": 5,
+          "Connector": 1,
+          "Node group": 4
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 7,
+          "Text": 25,
+          "Picture": 6,
+          "Connector": 3,
+          "Node group": 5,
+          "Circle": 6
+        },
+        {
+          "Panel": 5,
+          "Text": 23,
+          "Picture": 4,
+          "Connector": 4,
+          "Node group": 3,
+          "Circle": 6
+        },
+        {
+          "Panel": 9,
+          "Text": 41,
+          "Picture": 7,
+          "Connector": 12,
+          "Node group": 6
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 5,
+          "Text": 24,
+          "Picture": 10,
+          "Connector": 3,
+          "Node group": 9
+        },
+        {
+          "Panel": 4,
+          "Text": 19,
+          "Picture": 7,
+          "Connector": 5,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 14,
+          "Picture": 3,
+          "Connector": 1,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Connector": 10,
+          "Circle": 4,
+          "Panel": 17,
+          "Text": 41,
+          "Picture": 11,
+          "Node group": 11
+        },
+        {
+          "Connector": 14,
+          "Circle": 3,
+          "Panel": 15,
+          "Text": 37,
+          "Picture": 6,
+          "Node group": 9
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 24,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 23,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 6,
+          "Circle": 3,
+          "Panel": 3,
+          "Text": 21,
+          "Picture": 3,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 8,
+          "Text": 26,
+          "Picture": 7,
+          "Connector": 3,
+          "Node group": 7,
+          "Circle": 3
+        },
+        {
+          "Panel": 5,
+          "Text": 17,
+          "Picture": 4,
+          "Connector": 4,
+          "Node group": 3
+        },
+        {
+          "Panel": 1,
+          "Text": 11,
+          "Picture": 3,
+          "Connector": 1,
+          "Node group": 2,
+          "Circle": 3
+        }
+      ],
+      "agenda_navigation": [
+        {
+          "target_page": 3,
+          "object_ids": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20
+          ]
+        },
+        {
+          "target_page": 7,
+          "object_ids": [
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        },
+        {
+          "target_page": 11,
+          "object_ids": [
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40
+          ]
+        },
+        {
+          "target_page": 17,
+          "object_ids": [
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50
+          ]
+        }
+      ],
+      "native_sections": 6
+    },
+    {
+      "file": "SwiftFlow_HawkeyePlus_Integrated_EN_Dark_Editable.pptx",
+      "language": "en",
+      "theme": "dark",
+      "slides": [
+        {
+          "Panel": 1,
+          "Text": 14,
+          "Picture": 3,
+          "Connector": 3,
+          "Node group": 2,
+          "Circle": 1
+        },
+        {
+          "Panel": 10,
+          "Text": 32,
+          "Picture": 5,
+          "Connector": 1,
+          "Node group": 4
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 7,
+          "Text": 25,
+          "Picture": 6,
+          "Connector": 3,
+          "Node group": 5,
+          "Circle": 6
+        },
+        {
+          "Panel": 5,
+          "Text": 23,
+          "Picture": 4,
+          "Connector": 4,
+          "Node group": 3,
+          "Circle": 6
+        },
+        {
+          "Panel": 9,
+          "Text": 41,
+          "Picture": 7,
+          "Connector": 12,
+          "Node group": 6
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 5,
+          "Text": 24,
+          "Picture": 10,
+          "Connector": 3,
+          "Node group": 9
+        },
+        {
+          "Panel": 4,
+          "Text": 19,
+          "Picture": 7,
+          "Connector": 5,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 14,
+          "Picture": 3,
+          "Connector": 1,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Connector": 10,
+          "Circle": 4,
+          "Panel": 17,
+          "Text": 41,
+          "Picture": 11,
+          "Node group": 11
+        },
+        {
+          "Connector": 14,
+          "Circle": 3,
+          "Panel": 15,
+          "Text": 37,
+          "Picture": 6,
+          "Node group": 9
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 24,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 23,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 6,
+          "Circle": 3,
+          "Panel": 3,
+          "Text": 21,
+          "Picture": 3,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 8,
+          "Text": 26,
+          "Picture": 7,
+          "Connector": 3,
+          "Node group": 7,
+          "Circle": 3
+        },
+        {
+          "Panel": 5,
+          "Text": 17,
+          "Picture": 4,
+          "Connector": 4,
+          "Node group": 3
+        },
+        {
+          "Panel": 1,
+          "Text": 11,
+          "Picture": 3,
+          "Connector": 1,
+          "Node group": 2,
+          "Circle": 3
+        }
+      ],
+      "agenda_navigation": [
+        {
+          "target_page": 3,
+          "object_ids": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20
+          ]
+        },
+        {
+          "target_page": 7,
+          "object_ids": [
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        },
+        {
+          "target_page": 11,
+          "object_ids": [
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40
+          ]
+        },
+        {
+          "target_page": 17,
+          "object_ids": [
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50
+          ]
+        }
+      ],
+      "native_sections": 6
+    },
+    {
+      "file": "SwiftFlow_HawkeyePlus_Integrated_EN_Light_Editable.pptx",
+      "language": "en",
+      "theme": "light",
+      "slides": [
+        {
+          "Panel": 1,
+          "Text": 14,
+          "Picture": 3,
+          "Connector": 3,
+          "Node group": 2,
+          "Circle": 1
+        },
+        {
+          "Panel": 10,
+          "Text": 32,
+          "Picture": 5,
+          "Connector": 1,
+          "Node group": 4
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 7,
+          "Text": 25,
+          "Picture": 6,
+          "Connector": 3,
+          "Node group": 5,
+          "Circle": 6
+        },
+        {
+          "Panel": 5,
+          "Text": 23,
+          "Picture": 4,
+          "Connector": 4,
+          "Node group": 3,
+          "Circle": 6
+        },
+        {
+          "Panel": 9,
+          "Text": 41,
+          "Picture": 7,
+          "Connector": 12,
+          "Node group": 6
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 5,
+          "Text": 24,
+          "Picture": 10,
+          "Connector": 3,
+          "Node group": 9
+        },
+        {
+          "Panel": 4,
+          "Text": 19,
+          "Picture": 7,
+          "Connector": 5,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 14,
+          "Picture": 3,
+          "Connector": 1,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Connector": 10,
+          "Circle": 4,
+          "Panel": 17,
+          "Text": 41,
+          "Picture": 11,
+          "Node group": 11
+        },
+        {
+          "Connector": 14,
+          "Circle": 3,
+          "Panel": 15,
+          "Text": 37,
+          "Picture": 6,
+          "Node group": 9
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 24,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 4,
+          "Circle": 3,
+          "Panel": 9,
+          "Text": 23,
+          "Picture": 5,
+          "Node group": 6
+        },
+        {
+          "Connector": 6,
+          "Circle": 3,
+          "Panel": 3,
+          "Text": 21,
+          "Picture": 3,
+          "Node group": 2
+        },
+        {
+          "Panel": 4,
+          "Text": 15,
+          "Picture": 2,
+          "Connector": 2,
+          "Node group": 3
+        },
+        {
+          "Panel": 8,
+          "Text": 26,
+          "Picture": 7,
+          "Connector": 3,
+          "Node group": 7,
+          "Circle": 3
+        },
+        {
+          "Panel": 5,
+          "Text": 17,
+          "Picture": 4,
+          "Connector": 4,
+          "Node group": 3
+        },
+        {
+          "Panel": 1,
+          "Text": 11,
+          "Picture": 3,
+          "Connector": 1,
+          "Node group": 2,
+          "Circle": 3
+        }
+      ],
+      "agenda_navigation": [
+        {
+          "target_page": 3,
+          "object_ids": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20
+          ]
+        },
+        {
+          "target_page": 7,
+          "object_ids": [
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        },
+        {
+          "target_page": 11,
+          "object_ids": [
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40
+          ]
+        },
+        {
+          "target_page": 17,
+          "object_ids": [
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50
+          ]
+        }
+      ],
+      "native_sections": 6
+    }
+  ],
+  "sources": [
+    {
+      "platform": "HawkeyePlus",
+      "path": "README.md",
+      "sha256": "d0f9f6ee87df753ad0a015a0677f5a1436b7c1123c1b226636bbd88c2792fda7"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "82f0d656b62b6c5185d519dd493939d8e8fd0314487dda38d01c781951230728"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "docs/FEATURES.md",
+      "sha256": "01267ba21df66da7fba5c992546fb0514bd2ad4378f4efbe35a21c5d1360758d"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "src/lib/frameworks.ts",
+      "sha256": "bbfc1508155a5a5c117f8fb9670e7495696fbafb6befc3451508212146a8d0b3"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "src/lib/yaml-merge.ts",
+      "sha256": "67eeb18ce2571c706dc476d0847aea555170f45c6e7f4301a6d2be5d9ab2ff27"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "src/app/api/training-jobs/route.ts",
+      "sha256": "1441f9ecf9dde19a45da5919190066e45c4d0f2af4716e0d9ef4090032f2e639"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "src/app/api/checkpoints/export/route.ts",
+      "sha256": "c268dd03da152103e975d54537c5d11ecf8934bb61ac04f59440902706c37e18"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "src/app/api/deployed-models/route.ts",
+      "sha256": "f5318eb2b052252f994cee916718076193276f1197154d48a5bec7cf9efb730e"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "src/app/api/deployed-models/active/route.ts",
+      "sha256": "3ff533a83876719edcfc1937b2e7fe9992a7d6430b5f0dcc1c3a74f277971550"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "src/lib/model-yaml.ts",
+      "sha256": "d00567f5d691d8a48b95de7e0d11967ac968c6f2a07c04fad5ca74778afa6c4e"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "torchtrain/torchtrain/det/models.py",
+      "sha256": "17a0dac5d75029625fe638b0c7153ef92c1d943790def2ced039157fa6979089"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "torchtrain/torchtrain/seg/models.py",
+      "sha256": "c100716fa0c69bab0902594d2b4158b7af24d755bd0a2896dc7caf1665f0cdc0"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "docs/tem_report/assets/01_raw.png",
+      "sha256": "24377a3fbea95df759ad7543ec56eebf44dffb6b382f6ffba6e7c8d4784f1799"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "docs/tem_report/assets/03_added.png",
+      "sha256": "8b0c9fca8fc4864dcfa4558b135b8662a01274a8a15e7210e9cadffa97f02ef1"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "docs/tem_report/assets/11_napari_ui.png",
+      "sha256": "44e981b50bc522810b7475b449672f606e5d529fe1fc34fb3b9b8a87daa36a84"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "docs/tem_report/assets/12b_train_job_redacted.png",
+      "sha256": "cfe857753e2204ccc696fb79f8678f3a0866ef1bf28fcfcc11a587b89bd19a91"
+    },
+    {
+      "platform": "HawkeyePlus",
+      "path": "docs/tem_report/assets/13_train_curve.png",
+      "sha256": "8babcd94cbc3f6e85bf16d9c0734ed67a512cbeffc4b0b971eb60c2ff8fea4ef"
+    },
+    {
+      "platform": "SwiftFlow",
+      "path": "docs/Architecture.md",
+      "sha256": "85e6139e71537c320ed9c66dc91f0a41c862b8ab98db7097200d2515bb15dea2"
+    },
+    {
+      "platform": "SwiftFlow",
+      "path": "docs/Flow_Engine_Internals.md",
+      "sha256": "72f6eae2473f370b5c781fb80acbd260d1ee17f790501e228c94547cfb9613d1"
+    },
+    {
+      "platform": "SwiftFlow",
+      "path": "docs/Configuration_Reference.md",
+      "sha256": "6ac82cf7dfc859cc828d03205702fae416bf3ca222c88b45090c112f1c207841"
+    },
+    {
+      "platform": "SwiftFlow",
+      "path": "HWKUltra.Inference/Implementations/InferenceSessionFactory.cs",
+      "sha256": "9134e0bdb62757531bd47eefed1d83257fcfb26720ccff301a8d2ddba30cdca3"
+    },
+    {
+      "platform": "SwiftFlow",
+      "path": "HWKUltra.Inference/Implementations/ModelInstanceConfig.cs",
+      "sha256": "7f096c86dfaff6b249e73011b66b9050cc450ad2dfdc5f357f0545bdbbca4315"
+    },
+    {
+      "platform": "SwiftFlow",
+      "path": "HWKUltra.Inference/Abstractions/InferenceTask.cs",
+      "sha256": "8274e924559f71382a5f44ea051550c6ce3c61b41fb0f3bd47c4d313433dc98d"
+    }
+  ],
+  "image_size": [
+    3840,
+    2160
+  ],
+  "handoff_scope": "Proposed engineering method and delivery baseline; runtime adaptation and joint acceptance required. No automatic connector is claimed."
+}

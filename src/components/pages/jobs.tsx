@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { buildTrainCommand } from '@/lib/job-commands'
-import { isTorch } from '@/lib/frameworks'
+import { isAnomaly, isTorch } from '@/lib/frameworks'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -70,6 +70,8 @@ interface Dataset {
   name: string
   projectId: string
   numClasses: number
+  numEvalImages: number
+  evalAnnoPath: string | null
 }
 
 interface Model {
@@ -132,6 +134,7 @@ const defaultFormData = {
   gpuIds: '0',
   useAmp: true,
   useVdl: false,
+  doEval: true,
 }
 
 const defaultFilterData = {
@@ -152,6 +155,9 @@ export function JobsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [formData, setFormData] = useState(defaultFormData)
+  const validationRequired = isAnomaly(projects.find(p => p.id === formData.projectId)?.framework)
+  const doEval = validationRequired || formData.doEval
+  const selectedDataset = datasets.find(dataset => dataset.id === formData.datasetId)
   const [filterData, setFilterData] = useState(defaultFilterData)
   const [allDatasets, setAllDatasets] = useState<Dataset[]>([])
   const [allModels, setAllModels] = useState<Model[]>([])
@@ -403,6 +409,7 @@ export function JobsPage() {
       gpuIds: formData.gpuIds || '0',
       useAmp: formData.useAmp,
       useVdl: formData.useVdl,
+      doEval,
     })
   }
   
@@ -466,6 +473,7 @@ export function JobsPage() {
           gpuIds: formData.gpuIds,
           useAmp: formData.useAmp,
           useVdl: formData.useVdl,
+          doEval,
         }),
       })
 
@@ -668,6 +676,7 @@ export function JobsPage() {
       { label: 'GPU IDs', value: params.gpuIds },
       { label: 'AMP', value: params.useAmp ? 'Enabled' : 'Disabled' },
       { label: 'VDL', value: params.useVdl ? 'Enabled' : 'Disabled' },
+      { label: 'Validation', value: typeof params.doEval === 'boolean' ? (params.doEval ? 'Enabled' : 'Disabled') : undefined },
     ].filter(p => p.value !== null && p.value !== undefined)
   }
 
@@ -706,7 +715,7 @@ export function JobsPage() {
                 Create Job
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Create Training Job</DialogTitle>
                 <DialogDescription>
@@ -863,6 +872,29 @@ export function JobsPage() {
                         </p>
                       </div>
                       <div className="flex flex-col justify-end gap-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="space-y-0.5">
+                            <Label htmlFor="doEval">Validate during training</Label>
+                            <p className="text-xs text-muted-foreground">
+                              {validationRequired
+                                ? 'Required to calibrate anomaly scores and select a checkpoint.'
+                                : 'Run val at the configured evaluation interval and plot results in Monitoring.'}
+                            </p>
+                            {!validationRequired && selectedDataset && (
+                              <p className="text-xs text-muted-foreground">
+                                {selectedDataset.numEvalImages > 0
+                                  ? `${selectedDataset.numEvalImages} validation images`
+                                  : 'No validation statistics yet. Parse the dataset to check its val split.'}
+                              </p>
+                            )}
+                          </div>
+                          <Switch
+                            id="doEval"
+                            checked={doEval}
+                            disabled={validationRequired}
+                            onCheckedChange={(checked) => setFormData({ ...formData, doEval: checked })}
+                          />
+                        </div>
                         <div className="flex items-center justify-between">
                           <div className="space-y-0.5">
                             <Label htmlFor="useAmp">Use AMP</Label>

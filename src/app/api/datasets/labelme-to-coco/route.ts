@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomInt } from 'crypto';
 
 // Helper to get folder size recursively
 function getFolderSize(folderPath: string): number {
@@ -125,7 +126,7 @@ export async function POST(request: NextRequest) {
     const test = parseFloat(testRatio) || 0;
     const total = train + val + test;
 
-    if (Math.abs(total - 1.0) > 0.001) {
+    if (![train, val, test].every(value => Number.isFinite(value) && value >= 0 && value <= 1) || Math.abs(total - 1.0) > 0.001) {
       return NextResponse.json(
         { error: `Train/Val/Test ratios must sum to 1.0, current sum: ${total.toFixed(3)}` },
         { status: 400 }
@@ -181,16 +182,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if dataset name already exists in COCO directory
-    const cocoBasePath = path.join(workDir, 'dataset', 'COCO');
-    const existingDatasetPath = path.join(cocoBasePath, name);
 
-    if (fs.existsSync(existingDatasetPath)) {
-      return NextResponse.json(
-        { error: `Dataset "${name}" already exists in COCO directory. Please choose a different name.` },
-        { status: 400 }
-      );
-    }
 
     // Get user info for storage quota check
     const user = await db.user.findUnique({
@@ -232,6 +224,16 @@ export async function POST(request: NextRequest) {
       ? datasetDir
       : path.join(workDir, datasetDir);
 
+    // Check the directory the conversion actually writes to. This used to check
+    // `{paddleDetectionPath}/dataset/COCO/{name}`, which is not where the output
+    // goes, so converting twice silently mixed two splits into one folder.
+    if (fs.existsSync(absoluteDatasetDir) && fs.readdirSync(absoluteDatasetDir).length > 0) {
+      return NextResponse.json(
+        { error: `Dataset "${name}" already exists at ${absoluteDatasetDir}. Please choose a different name.` },
+        { status: 400 }
+      );
+    }
+
     // Create output directories
     const trainImagesDir = path.join(absoluteDatasetDir, 'data', 'train');
     const valImagesDir = path.join(absoluteDatasetDir, 'data', 'val');
@@ -246,7 +248,7 @@ export async function POST(request: NextRequest) {
 
     // Read all labelme annotation files
     const labelmeFiles = fs.readdirSync(absoluteAnnotationsPath)
-      .filter(file => file.endsWith('.json'));
+      .filter(file => file.toLowerCase().endsWith('.json'));
 
     if (labelmeFiles.length === 0) {
       return NextResponse.json(
@@ -256,12 +258,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Shuffle files for random split
-    const shuffledFiles = labelmeFiles.sort(() => Math.random() - 0.5);
+    const shuffledFiles = [...labelmeFiles];
+    for (let i = shuffledFiles.length - 1; i > 0; i--) {
+      const j = randomInt(i + 1);
+      [shuffledFiles[i], shuffledFiles[j]] = [shuffledFiles[j], shuffledFiles[i]];
+    }
     
     // Calculate split indices
     const totalFiles = shuffledFiles.length;
     const trainCount = Math.floor(totalFiles * train);
-    const valCount = Math.floor(totalFiles * val);
+    const valCount = test === 0 ? totalFiles - trainCount : Math.floor(totalFiles * val);
     const testCount = totalFiles - trainCount - valCount;
 
     const trainFiles = shuffledFiles.slice(0, trainCount);
@@ -273,6 +279,9 @@ export async function POST(request: NextRequest) {
     let categoryId = 1;
     let annotationId = 1;
 
+    const skipped: string[] = [];
+    const usedNames = new Set<string>();
+
     const convertSplit = (files: string[], splitName: string): { images: CocoImage[]; annotations: CocoAnnotation[]; imageCount: number; annotationCount: number } => {
       const images: CocoImage[] = [];
       const annotations: CocoAnnotation[] = [];
@@ -282,16 +291,30 @@ export async function POST(request: NextRequest) {
 
       for (const file of files) {
         const labelmePath = path.join(absoluteAnnotationsPath, file);
-        const labelmeData: LabelmeData = JSON.parse(fs.readFileSync(labelmePath, 'utf-8'));
-
-        // Find corresponding image
-        const imageFileName = labelmeData.imagePath;
-        const sourceImagePath = path.join(absoluteImagesPath, imageFileName);
-        
-        if (!fs.existsSync(sourceImagePath)) {
-          console.warn(`Image not found: ${sourceImagePath}, skipping...`);
+        let labelmeData: LabelmeData;
+        try {
+          labelmeData = JSON.parse(fs.readFileSync(labelmePath, 'utf-8'));
+        } catch (error) {
+          skipped.push(`${file}: invalid JSON (${error instanceof Error ? error.message : String(error)})`);
           continue;
         }
+
+        // Labelme stores `imagePath` relative to where the JSON was *created*,
+        // e.g. "..\MC\a.JPG". After upload every image sits flat in imgs/, so
+        // resolve by base name (either separator) — joining the raw value made
+        // every such sample "not found" and produced an empty dataset.
+        const imageFileName = String(labelmeData.imagePath || '').split(/[\\/]/).pop() || '';
+        const sourceImagePath = imageFileName ? path.join(absoluteImagesPath, imageFileName) : '';
+
+        if (!imageFileName || !fs.existsSync(sourceImagePath)) {
+          skipped.push(`${file}: image not found (${labelmeData.imagePath})`);
+          continue;
+        }
+        if (usedNames.has(imageFileName.toLowerCase())) {
+          skipped.push(`${file}: duplicate image ${imageFileName}`);
+          continue;
+        }
+        usedNames.add(imageFileName.toLowerCase());
 
         // Copy image to destination
         const destImagePath = path.join(
@@ -311,7 +334,7 @@ export async function POST(request: NextRequest) {
         imageCount++;
 
         // Convert shapes to annotations
-        for (const shape of labelmeData.shapes) {
+        for (const shape of labelmeData.shapes || []) {
           // Calculate bbox from polygon points
           const points = shape.points;
           if (!Array.isArray(points) || points.length < 2) continue;
@@ -329,10 +352,12 @@ export async function POST(request: NextRequest) {
           }
 
           // Get or create category
-          if (!categories.has(shape.label)) {
-            categories.set(shape.label, categoryId++);
+          const label = String(shape.label ?? '').trim();
+          if (!label) continue;
+          if (!categories.has(label)) {
+            categories.set(label, categoryId++);
           }
-          const catId = categories.get(shape.label)!;
+          const catId = categories.get(label)!;
 
           // Calculate polygon area using shoelace formula
           let area = 0;
@@ -384,6 +409,26 @@ export async function POST(request: NextRequest) {
     const trainData = convertSplit(trainFiles, 'train');
     const valData = convertSplit(valFiles, 'val');
     const testData = convertSplit(testFiles, 'test');
+
+    if (skipped.length > 0) {
+      console.warn(`[labelme-to-coco] Skipped ${skipped.length} sample(s):`, skipped.slice(0, 20));
+    }
+
+    // An empty split used to be reported as a successful conversion; the import
+    // then showed an empty (or train-only) statistics panel with no explanation.
+    if (trainData.imageCount === 0 || valData.imageCount === 0) {
+      fs.rmSync(absoluteDatasetDir, { recursive: true, force: true });
+      return NextResponse.json(
+        {
+          error: `Conversion produced ${trainData.imageCount} train and ${valData.imageCount} val images; both splits need at least one image.`,
+          message: skipped.length > 0
+            ? `${skipped.length} of ${labelmeFiles.length} samples were skipped, e.g. ${skipped.slice(0, 3).join('; ')}`
+            : 'Add more samples or adjust the split ratios.',
+          skipped: skipped.slice(0, 50),
+        },
+        { status: 400 }
+      );
+    }
 
     // Create COCO datasets
     const createCocoDataset = (images: CocoImage[], annotations: CocoAnnotation[]): CocoDataset => ({
@@ -459,6 +504,8 @@ export async function POST(request: NextRequest) {
         categories: categories.size,
         totalAnnotations,
         classStats,
+        skippedCount: skipped.length,
+        skipped: skipped.slice(0, 50),
       },
     });
 

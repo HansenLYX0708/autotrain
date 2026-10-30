@@ -35,6 +35,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Dialog,
@@ -174,7 +175,7 @@ const chartConfig = {
 
 interface LabelmeMergePreview {
   canMerge: boolean
-  labelme: { name: string; categories: string[]; totalJson: number; validSamples: number; invalidSamples: string[] }
+  labelme: { name: string; categories: string[]; shapeCounts: Record<string, number>; totalJson: number; validSamples: number; invalidSamples: string[] }
   coco: { name: string; categories: string[]; trainCategories: string[]; valCategories: string[] }
   differences: { matched: string[]; onlyInLabelme: string[]; onlyInCoco: string[]; missingFromTrain: string[]; missingFromVal: string[] }
   before: { trainImages: number; valImages: number; trainAnnotations: number; valAnnotations: number }
@@ -193,6 +194,7 @@ export function DatasetsPage() {
   const [verifyingMerge, setVerifyingMerge] = useState(false)
   const [mergingDatasets, setMergingDatasets] = useState(false)
   const [mergePreview, setMergePreview] = useState<LabelmeMergePreview | null>(null)
+  const [mergeNewCategories, setMergeNewCategories] = useState<string[]>([])
   const [mergeFormData, setMergeFormData] = useState({ labelmeDataset: '', cocoDataset: '', trainRatio: 0.7, valRatio: 0.2 })
   const [labelmeFormData, setLabelmeFormData] = useState({
     name: '',
@@ -324,7 +326,9 @@ export function DatasetsPage() {
       const response = await fetch('/api/datasets')
       if (response.ok) {
         const data = await response.json()
-        setDatasets(data.data || data)
+        const rows: Dataset[] = data.data || data
+        setDatasets(rows)
+        setSelectedDataset(prev => prev ? rows.find(row => row.id === prev.id) || null : null)
       }
     } catch (error) {
       console.error('Failed to fetch datasets:', error)
@@ -369,7 +373,7 @@ export function DatasetsPage() {
   //                which contains train.txt, val.txt, class_names.txt,
   //                JPEGImages/, Annotations/); image paths are unused for seg.
   const handleDatasetSelect = (datasetName: string) => {
-    const selected = availableDatasets.find(d => d.name === datasetName)
+    const selected = availableDatasets.find(d => d.name === datasetName && d.format === formData.format)
     if (!selected) {
       setFormData(prev => ({ ...prev, name: datasetName }))
       return
@@ -409,7 +413,7 @@ export function DatasetsPage() {
     // new framework's dataset layout is declared in exactly one place.
     const expectedFormat = frameworkMeta(newProject?.framework).datasetFormat as DatasetFormat
     setFormData(prev => {
-      const currentDs = availableDatasets.find(d => d.name === prev.name)
+        const currentDs = availableDatasets.find(d => d.name === prev.name && d.format === prev.format)
       const compatible = !currentDs || currentDs.format === expectedFormat
       if (compatible) {
         return { ...prev, projectId, format: expectedFormat }
@@ -463,7 +467,11 @@ export function DatasetsPage() {
           body: JSON.stringify(submitData),
         })
         if (response.ok) {
-          toast({ title: 'Dataset created successfully' })
+          const result = await response.json()
+          toast({
+            title: 'Dataset created successfully',
+            description: `${result.data.numTrainImages} train / ${result.data.numEvalImages} val images imported`,
+          })
           fetchDatasets()
           setDialogOpen(false)
           setFormData({ ...EMPTY_DATASET_FORM })
@@ -720,7 +728,8 @@ export function DatasetsPage() {
       if (result.success) {
         const desc = isSeg
           ? `Created PaddleSeg dataset with ${result.stats.trainCount} train, ${result.stats.valCount} val images (${result.stats.numClasses} classes: ${result.stats.classNames?.join(', ') ?? ''})`
-          : `Created dataset with ${result.stats.trainCount} train, ${result.stats.valCount} val, ${result.stats.testCount} test images`
+          : `Created dataset with ${result.stats.trainCount} train, ${result.stats.valCount} val, ${result.stats.testCount} test images` +
+            (result.stats.skippedCount ? ` (${result.stats.skippedCount} sample(s) skipped, see server log)` : '')
         toast({
           title: 'Conversion successful',
           description: desc,
@@ -742,7 +751,7 @@ export function DatasetsPage() {
       } else {
         toast({ 
           title: 'Conversion failed', 
-          description: result.error || 'Check the paths and try again',
+          description: [result.error || 'Check the paths and try again', result.message].filter(Boolean).join(' — '),
           variant: 'destructive' 
         })
       }
@@ -769,12 +778,13 @@ export function DatasetsPage() {
       const response = await fetch('/api/datasets/merge-labelme', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, ...mergeFormData }),
+        body: JSON.stringify({ action, ...mergeFormData, addCategories: action === 'merge' ? mergeNewCategories : [] }),
       })
       const result = await response.json()
       if (!response.ok || !result.success) throw new Error(result.error || 'Dataset merge failed')
       if (action === 'verify') {
         setMergePreview(result.data)
+        setMergeNewCategories([])
       } else {
         toast({
           title: 'Datasets merged',
@@ -1243,7 +1253,7 @@ export function DatasetsPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className="min-h-0 flex-1 overflow-y-auto pr-2">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+                <fieldset disabled={verifyingMerge || mergingDatasets} className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                   <div className="space-y-2">
                     <Label>Labelme source</Label>
                     <Select
@@ -1300,7 +1310,7 @@ export function DatasetsPage() {
                     <span>Ratio sum: {(mergeFormData.trainRatio + mergeFormData.valRatio).toFixed(2)} / 1.00</span>
                     <span className="text-muted-foreground">The unallocated remainder is skipped. Either ratio may be 1.</span>
                   </div>
-                </div>
+                </fieldset>
 
                 {mergePreview && (
                   <div className="space-y-4 pb-4">
@@ -1309,9 +1319,30 @@ export function DatasetsPage() {
                       <AlertDescription>
                         {mergePreview.canMerge
                           ? 'Category verification passed. The merge can proceed.'
-                          : 'Category verification failed. Labelme categories must exist in both target train and val annotations.'}
+                          : 'Verification failed. Check source files and target train/val category consistency.'}
                       </AlertDescription>
                     </Alert>
+
+                    {mergePreview.differences.onlyInLabelme.length > 0 && (
+                      <div className="rounded-md border p-3 space-y-3">
+                        <p className="text-sm font-medium">Import new categories</p>
+                        <p className="text-xs text-muted-foreground">
+                          Select the new categories to add to train and val. Unchecked categories and their annotations
+                          are excluded; images are still copied, including images with no remaining annotations.
+                        </p>
+                        {mergePreview.differences.onlyInLabelme.map(name => (
+                          <label key={name} className="flex items-center gap-2 text-sm">
+                            <Checkbox
+                              checked={mergeNewCategories.includes(name)}
+                              disabled={mergingDatasets || verifyingMerge}
+                              onCheckedChange={checked => setMergeNewCategories(prev =>
+                                checked ? [...prev, name] : prev.filter(item => item !== name))}
+                            />
+                            {name} ({mergePreview.labelme.shapeCounts[name] || 0} source annotations)
+                          </label>
+                        ))}
+                      </div>
+                    )}
 
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Train images</p><p className="text-xl font-semibold">{mergePreview.before.trainImages} → {mergePreview.planned.trainImages}</p><p className="text-xs text-green-600">+{mergePreview.planned.trainAdd}</p></CardContent></Card>
@@ -1378,7 +1409,7 @@ export function DatasetsPage() {
                 <Button variant="outline" onClick={() => requestMergePreview('verify')} disabled={verifyingMerge || mergingDatasets}>
                   {verifyingMerge ? 'Verifying...' : 'Verify'}
                 </Button>
-                <Button onClick={() => requestMergePreview('merge')} disabled={!mergePreview?.canMerge || mergingDatasets || mergePreview.planned.trainAdd + mergePreview.planned.valAdd === 0}>
+                <Button onClick={() => requestMergePreview('merge')} disabled={!mergePreview?.canMerge || verifyingMerge || mergingDatasets || mergePreview.planned.trainAdd + mergePreview.planned.valAdd === 0}>
                   {mergingDatasets ? 'Merging...' : 'Merge into COCO'}
                 </Button>
               </DialogFooter>
@@ -2354,12 +2385,22 @@ export function DatasetsPage() {
                           <div className="text-2xl font-bold">{selectedDataset.numTrainImages + selectedDataset.numEvalImages}</div>
                           <div className="text-xs text-muted-foreground">Total Images</div>
                         </>
-                      ) : (
-                        <>
-                          <div className="text-2xl font-bold">{selectedDataset.numAnnotations}</div>
-                          <div className="text-xs text-muted-foreground">Annotations</div>
-                        </>
-                      )}
+                      ) : (() => {
+                        // `numAnnotations` counts the train split only, which
+                        // read as the dataset total. Show both splits instead.
+                        const s = getClassStats(selectedDataset.classStats)
+                        const sum = (rows: Array<{ count?: number }>) => rows.reduce((a, r) => a + (r.count || 0), 0)
+                        const trainAnn = s.train.length > 0 ? sum(s.train) : selectedDataset.numAnnotations
+                        const valAnn = sum(s.eval)
+                        return (
+                          <>
+                            <div className="text-2xl font-bold">{trainAnn + valAnn}</div>
+                            <div className="text-xs text-muted-foreground">
+                              Annotations (train {trainAnn} / val {valAnn})
+                            </div>
+                          </>
+                        )
+                      })()}
                     </div>
                     <div className="p-3 rounded-lg bg-muted/50">
                       <div className="text-2xl font-bold">{selectedDataset.numTrainImages}</div>
@@ -2374,42 +2415,78 @@ export function DatasetsPage() {
                   {/* Class Distribution Chart (COCO) */}
                   {!isSegSelected && selectedDataset.classStats && (() => {
                     const stats = getClassStats(selectedDataset.classStats)
+                    type Row = { id: number; name: string; count?: number; imageCount?: number }
+                    // Join the two splits by class name so a class missing from
+                    // one split shows as 0 there instead of disappearing.
+                    const names = Array.from(new Set([...stats.train, ...stats.eval].map((r: Row) => r.name)))
+                    const byName = (rows: Row[], name: string) => rows.find((r) => r.name === name)
+                    const table = names.map((name) => ({
+                      name,
+                      train: byName(stats.train, name)?.count ?? 0,
+                      trainImages: byName(stats.train, name)?.imageCount ?? 0,
+                      val: byName(stats.eval, name)?.count ?? 0,
+                      valImages: byName(stats.eval, name)?.imageCount ?? 0,
+                    }))
+                    const splitChart = (title: string, data: Row[], colors: [string, string]) => (
+                      <div>
+                        <h4 className="text-sm font-medium mb-3">{title}</h4>
+                        <ChartContainer config={chartConfig} className="h-[220px] w-full aspect-auto">
+                          <BarChart data={data} margin={{ bottom: 8 }}>
+                            <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                            {/* interval 0: recharts otherwise hides every
+                                other label when the column is narrow, which
+                                made bars look attributed to the wrong class. */}
+                            <XAxis dataKey="name" className="text-xs" interval={0} angle={-35} textAnchor="end" height={50} />
+                            <YAxis className="text-xs" allowDecimals={false} />
+                            <Tooltip />
+                            <Bar dataKey="count" name="Annotations" fill={colors[0]} radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="imageCount" name="Images" fill={colors[1]} radius={[4, 4, 0, 0]} />
+                          </BarChart>
+                        </ChartContainer>
+                      </div>
+                    )
                     return (
                       <div className="space-y-4">
-                        {/* Train Chart */}
-                        {stats.train.length > 0 && (
-                          <div>
-                            <h4 className="text-sm font-medium mb-3">Train Set Distribution</h4>
-                            <ChartContainer config={chartConfig} className="h-[180px] w-full">
-                              <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={stats.train}>
-                                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                                  <XAxis dataKey="name" className="text-xs" />
-                                  <YAxis className="text-xs" />
-                                  <Tooltip />
-                                  <Bar dataKey="count" name="Annotations" fill="#e07b39" radius={[4, 4, 0, 0]} />
-                                  <Bar dataKey="imageCount" name="Images" fill="#4caf50" radius={[4, 4, 0, 0]} />
-                                </BarChart>
-                              </ResponsiveContainer>
-                            </ChartContainer>
-                          </div>
-                        )}
-                        {/* Val Chart */}
-                        {stats.eval.length > 0 && (
-                          <div>
-                            <h4 className="text-sm font-medium mb-3">Val Set Distribution</h4>
-                            <ChartContainer config={chartConfig} className="h-[180px] w-full">
-                              <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={stats.eval}>
-                                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                                  <XAxis dataKey="name" className="text-xs" />
-                                  <YAxis className="text-xs" />
-                                  <Tooltip />
-                                  <Bar dataKey="count" name="Annotations" fill="#2196f3" radius={[4, 4, 0, 0]} />
-                                  <Bar dataKey="imageCount" name="Images" fill="#9c27b0" radius={[4, 4, 0, 0]} />
-                                </BarChart>
-                              </ResponsiveContainer>
-                            </ChartContainer>
+                        {stats.train.length > 0 && splitChart('Train Set Distribution', stats.train, ['#e07b39', '#4caf50'])}
+                        {stats.eval.length > 0
+                          ? splitChart('Val Set Distribution', stats.eval, ['#2196f3', '#9c27b0'])
+                          : (
+                            <div className="text-xs text-muted-foreground space-y-2">
+                              <p>
+                                {selectedDataset.numEvalImages > 0
+                                  ? `${selectedDataset.numEvalImages} val images recorded; per-class validation statistics have not been calculated.`
+                                  : 'Validation statistics have not been loaded. This does not mean the converted val split is missing.'}
+                                {' '}Re-parse to read both splits and recover validation paths from the converted COCO dataset.
+                              </p>
+                              <Button variant="outline" size="sm" disabled={parsing} onClick={() => handleParseDataset(selectedDataset.id)}>
+                                {parsing ? 'Parsing…' : 'Parse train / val statistics'}
+                              </Button>
+                            </div>
+                          )}
+                        {table.length > 0 && (
+                          <div className="rounded-md border overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead className="bg-muted/50">
+                                <tr>
+                                  <th className="text-left font-medium p-2">Class</th>
+                                  <th className="text-right font-medium p-2">Train ann.</th>
+                                  <th className="text-right font-medium p-2">Train img.</th>
+                                  <th className="text-right font-medium p-2">Val ann.</th>
+                                  <th className="text-right font-medium p-2">Val img.</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {table.map((r) => (
+                                  <tr key={r.name} className="border-t">
+                                    <td className="p-2 truncate max-w-[120px]" title={r.name}>{r.name}</td>
+                                    <td className="p-2 text-right tabular-nums">{r.train}</td>
+                                    <td className="p-2 text-right tabular-nums">{r.trainImages}</td>
+                                    <td className={`p-2 text-right tabular-nums ${r.val === 0 && stats.eval.length > 0 ? 'text-amber-600' : ''}`}>{r.val}</td>
+                                    <td className="p-2 text-right tabular-nums">{r.valImages}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
                           </div>
                         )}
                       </div>

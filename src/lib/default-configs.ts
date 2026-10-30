@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { asConfigFramework, defaultTrainingParams, generateTrainingYaml } from './training-yaml';
+import { defaultModelParams, generateModelYaml } from './model-yaml';
 
 /**
  * Central definition of "default config folder" naming and built-in starter
@@ -34,6 +36,8 @@ export function getDefaultFolderName(framework: string): string {
   if (framework === 'PaddleSeg') return 'defaultSeg';
   if (framework === 'TorchSeg') return 'defaultTorchSeg';
   if (framework === 'TorchDet') return 'defaultTorchDet';
+  if (framework === 'TorchAnomaly') return 'defaultTorchAnomaly';
+  if (framework === 'PaddleClas') return 'defaultClas';
   return 'default';
 }
 
@@ -597,12 +601,18 @@ const BUILTIN_TRAINING: Record<string, BuiltinConfig[]> = {
 
 /** Return built-in model starters for the given framework (empty if none). */
 export function getBuiltinModelConfigs(framework: string): BuiltinConfig[] {
-  return BUILTIN_MODELS[framework] ?? [];
+  return BUILTIN_MODELS[framework] ?? [{
+    name: 'starter_model',
+    content: generateModelYaml(asConfigFramework(framework), defaultModelParams(asConfigFramework(framework))),
+  }];
 }
 
 /** Return built-in training starters for the given framework (empty if none). */
 export function getBuiltinTrainingConfigs(framework: string): BuiltinConfig[] {
-  return BUILTIN_TRAINING[framework] ?? [];
+  return BUILTIN_TRAINING[framework] ?? [{
+    name: 'starter_training',
+    content: generateTrainingYaml(asConfigFramework(framework), defaultTrainingParams(asConfigFramework(framework))),
+  }];
 }
 
 /**

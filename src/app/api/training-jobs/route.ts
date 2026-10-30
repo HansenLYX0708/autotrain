@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
-import { getWorkDir, isClassification } from "@/lib/frameworks";
+import { getWorkDir, isAnomaly, isClassification } from "@/lib/frameworks";
+import { validateTrainingValidation } from "@/lib/training-validation";
 import {
   bestWeightsPath,
   buildEvalCommand,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/job-commands";
 import { mergeYamlConfigs, setPaddleClasOutputDir, setTopLevelSaveDir } from "@/lib/yaml-merge";
 import { repairCocoAnnotationAreas } from "@/lib/coco-annotations";
+import { applyDatasetClasses } from "@/lib/dataset-classes";
 import { isInside } from "@/lib/safe-path";
 import {
   asConfigFramework,
@@ -224,6 +226,10 @@ export async function POST(request: NextRequest) {
     const { userId, role } = auth;
     
     const body = await request.json();
+    if (body.doEval !== undefined && typeof body.doEval !== "boolean") {
+      return NextResponse.json({ error: "doEval must be a boolean" }, { status: 400 });
+    }
+    const doEval = body.doEval !== false;
 
     // Validate required relations and user access
     // Admin can access any project/dataset/model, regular user can only access their own
@@ -295,6 +301,9 @@ export async function POST(request: NextRequest) {
     // Get system config for framework path and userConfigsPath
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
+    if (isAnomaly(framework) && !doEval) {
+      return NextResponse.json({ error: "TorchAnomaly requires validation to calibrate anomaly scores and select a checkpoint." }, { status: 400 });
+    }
     const workDir = getWorkDir(framework, systemConfig);
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
     const userDatabasePath = (systemConfig as any)?.userDatabasePath;
@@ -397,6 +406,11 @@ export async function POST(request: NextRequest) {
       console.warn(`[training-jobs] YAML merge warnings for "${jobName}":`, mergeResult.warnings);
     }
     let mergedYaml = mergeResult.yaml;
+    try {
+      mergedYaml = applyDatasetClasses(mergedYaml, framework, dataset);
+    } catch (error) {
+      return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Invalid dataset classes' }, { status: 400 });
+    }
 
     if (!mergedYaml.trim()) {
       return NextResponse.json(
@@ -406,6 +420,14 @@ export async function POST(request: NextRequest) {
         },
         { status: 400 }
       );
+    }
+
+    if (doEval) {
+      try {
+        validateTrainingValidation(mergedYaml, framework, workDir);
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid validation dataset" }, { status: 400 });
+      }
     }
 
     // Save to userConfigsPath/{username}/jobs folder, fallback to old path if not set
@@ -473,6 +495,7 @@ export async function POST(request: NextRequest) {
       gpuIds,
       useAmp,
       useVdl,
+      doEval,
     });
 
     // Point eval/infer at the checkpoint the run will consider "best", using the
@@ -526,6 +549,7 @@ export async function POST(request: NextRequest) {
           gpuIds,
           useAmp,
           useVdl,
+          doEval,
           jobSlug: jobName,
           framework,
           totalSteps,

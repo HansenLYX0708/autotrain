@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveCocoValidationPaths } from '@/lib/coco-annotations';
+import { parseDocument } from 'yaml';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { db } from '@/lib/db';
@@ -51,6 +53,10 @@ async function parseCocoFile(filePath: string): Promise<CocoDataset | null> {
 
     const content = fs.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(content);
+    if (!Array.isArray(data.images) || !Array.isArray(data.annotations) || !Array.isArray(data.categories)) {
+      console.error('Invalid COCO arrays:', filePath);
+      return null;
+    }
     
     return {
       images: data.images || [],
@@ -143,8 +149,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Get dataset from database
-    const dataset = await db.dataset.findUnique({
-      where: { id: datasetId },
+    const dataset = await db.dataset.findFirst({
+      where: { id: datasetId, ...(user.role === 'admin' ? {} : { userId }) },
       include: { project: { select: { framework: true } } },
     });
 
@@ -267,6 +273,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const owner = await db.user.findUnique({ where: { id: dataset.userId || userId }, select: { username: true } });
+    const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
+      ? dataset.datasetDir
+      : path.join(userDatabasePath, owner?.username || user.username, dataset.datasetDir || '');
+    const validationPaths = resolveCocoValidationPaths(root, dataset);
     // Determine annotation file path
     let annoPath: string | null = null;
     
@@ -277,7 +288,7 @@ export async function POST(request: NextRequest) {
         : path.join(userDatabasePath, user.username, annotationPath);
     } else if (dataset.datasetDir && dataset.trainAnnoPath) {
       // Build absolute path: {userDatabasePath}/{username}/{datasetDir}/{trainAnnoPath}
-      annoPath = path.join(userDatabasePath, user.username, dataset.datasetDir, dataset.trainAnnoPath);
+      annoPath = path.isAbsolute(dataset.trainAnnoPath) ? dataset.trainAnnoPath : path.join(root, dataset.trainAnnoPath);
     }
 
     if (!annoPath) {
@@ -304,18 +315,39 @@ export async function POST(request: NextRequest) {
     let numEvalImages = 0;
     let evalClassStats: Array<{ id: number; name: string; count: number; imageCount: number }> = [];
     
-    if (dataset.datasetDir && dataset.evalAnnoPath) {
+    if (validationPaths.evalAnnoPath) {
       // Build absolute path for eval annotation
-      const evalPath = path.join(userDatabasePath, user.username, dataset.datasetDir, dataset.evalAnnoPath);
+      const evalPath = path.isAbsolute(validationPaths.evalAnnoPath)
+        ? validationPaths.evalAnnoPath : path.join(root, validationPaths.evalAnnoPath);
       const evalData = await parseCocoFile(evalPath);
       if (evalData) {
         numEvalImages = evalData.images.length;
         const evalStats = calculateStats(evalData);
         evalClassStats = evalStats.classStats;
+      } else {
+        return NextResponse.json({ success: false, error: `Failed to parse eval annotations: ${evalPath}. Statistics were not updated.` }, { status: 400 });
       }
     }
 
-    // Update dataset with statistics
+    // Repair omitted paths in the authoritative YAML too, so subsequent jobs
+    // actually use the recovered validation split. Preserve custom YAML tags.
+    let yamlConfig = dataset.yamlConfig;
+    if (validationPaths.evalAnnoPath && (
+      validationPaths.evalAnnoPath !== dataset.evalAnnoPath ||
+      validationPaths.evalImagePath !== dataset.evalImagePath
+    )) {
+      const doc = parseDocument(yamlConfig || '', { logLevel: 'silent' });
+      if (doc.errors.length) {
+        return NextResponse.json({ success: false, error: 'Dataset YAML is invalid. Fix it before restoring validation paths.' }, { status: 400 });
+      }
+      doc.setIn(['EvalDataset', 'name'], 'COCODataSet');
+      doc.setIn(['EvalDataset', 'dataset_dir'], root.replace(/\\/g, '/'));
+      doc.setIn(['EvalDataset', 'anno_path'], validationPaths.evalAnnoPath);
+      if (validationPaths.evalImagePath) doc.setIn(['EvalDataset', 'image_dir'], validationPaths.evalImagePath);
+      yamlConfig = doc.toString({ lineWidth: 0 });
+    }
+
+    // Update both splits together only after both annotation files were read.
     const updatedDataset = await db.dataset.update({
       where: { id: datasetId },
       data: {
@@ -324,13 +356,21 @@ export async function POST(request: NextRequest) {
         numTrainImages: stats.numImages,
         numEvalImages: numEvalImages,
         classStats: JSON.stringify({ train: stats.classStats, eval: evalClassStats }),
+        ...validationPaths,
+        yamlConfig,
       },
       include: {
         project: {
-          select: { id: true, name: true },
+          select: { id: true, name: true, framework: true, status: true },
         },
       },
     });
+
+    if (yamlConfig !== dataset.yamlConfig && yamlConfig && systemConfig?.userConfigsPath) {
+      const slug = dataset.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase();
+      const configFile = path.join(systemConfig.userConfigsPath, owner?.username || user.username, 'datasets', `${slug}.yml`);
+      if (fs.existsSync(configFile)) fs.writeFileSync(configFile, yamlConfig, 'utf8');
+    }
 
     return NextResponse.json({
       success: true,
@@ -406,7 +446,7 @@ export async function GET(request: NextRequest) {
     const absolutePath = path.isAbsolute(filePath)
       ? filePath
       : datasetDir
-        ? path.join(userDatabasePath, user.username, datasetDir, filePath)
+        ? path.join(path.isAbsolute(datasetDir) ? datasetDir : path.join(userDatabasePath, user.username, datasetDir), filePath)
         : path.join(userDatabasePath, user.username, filePath);
 
     // PaddleSeg detection: a `.txt` list file lives next to `class_names.txt`

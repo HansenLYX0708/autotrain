@@ -45,12 +45,17 @@ export async function GET(
     const epoch = searchParams.get("epoch");
     const minLoss = searchParams.get("minLoss");
     const maxLoss = searchParams.get("maxLoss");
+    const evaluationsOnly = searchParams.get("kind") === "eval";
 
     // Sort order
     const sortOrder = searchParams.get("sort") === "asc" ? "asc" : "desc";
 
     // Build filter conditions
     const where: Record<string, unknown> = { jobId: id };
+    if (evaluationsOnly) {
+      where.OR = ["mAP", "mAP50", "mIoU", "imageAuroc", "imageF1", "pixelAuroc", "pixelF1"]
+        .map(metric => ({ [metric]: { not: null } }));
+    }
     if (epoch) {
       where.epoch = parseInt(epoch);
     }
@@ -65,10 +70,14 @@ export async function GET(
         where,
         skip,
         take: limit,
-        orderBy: { timestamp: sortOrder },
+        orderBy: [{ timestamp: sortOrder }, { id: sortOrder }],
       }),
       db.trainingLog.count({ where }),
     ]);
+    const pagination = { page, limit, total, totalPages: Math.ceil(total / limit) };
+    if (evaluationsOnly) {
+      return NextResponse.json({ job, data: logs, pagination });
+    }
 
     // Calculate summary statistics
     const stats = await db.trainingLog.aggregate({
@@ -109,12 +118,7 @@ export async function GET(
         status: job.status,
       },
       data: logs,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      pagination,
       stats: {
         totalLogs: stats._count,
         minLoss: stats._min.loss,

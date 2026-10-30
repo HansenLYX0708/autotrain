@@ -1,0 +1,155 @@
+{
+  "platform": "HawkeyePlus",
+  "powerpoint_opened": true,
+  "slides_exported": 20,
+  "decks": [
+    {
+      "file": "HawkeyePlus_Architecture_Dark_Editable.pptx",
+      "language": "zh",
+      "slides": [
+        {
+          "text_boxes": 41,
+          "pictures": 11,
+          "groups": 11,
+          "native_objects": 83
+        },
+        {
+          "text_boxes": 37,
+          "pictures": 6,
+          "groups": 9,
+          "native_objects": 78
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 45
+        },
+        {
+          "text_boxes": 21,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 35
+        }
+      ],
+      "text_overflow": []
+    },
+    {
+      "file": "HawkeyePlus_Architecture_Light_Editable.pptx",
+      "language": "zh",
+      "slides": [
+        {
+          "text_boxes": 41,
+          "pictures": 11,
+          "groups": 11,
+          "native_objects": 83
+        },
+        {
+          "text_boxes": 37,
+          "pictures": 6,
+          "groups": 9,
+          "native_objects": 78
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 45
+        },
+        {
+          "text_boxes": 21,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 35
+        }
+      ],
+      "text_overflow": []
+    },
+    {
+      "file": "HawkeyePlus_Architecture_EN_Dark_Editable.pptx",
+      "language": "en",
+      "slides": [
+        {
+          "text_boxes": 41,
+          "pictures": 11,
+          "groups": 11,
+          "native_objects": 83
+        },
+        {
+          "text_boxes": 37,
+          "pictures": 6,
+          "groups": 9,
+          "native_objects": 78
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 45
+        },
+        {
+          "text_boxes": 21,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 35
+        }
+      ],
+      "text_overflow": []
+    },
+    {
+      "file": "HawkeyePlus_Architecture_EN_Light_Editable.pptx",
+      "language": "en",
+      "slides": [
+        {
+          "text_boxes": 41,
+          "pictures": 11,
+          "groups": 11,
+          "native_objects": 83
+        },
+        {
+          "text_boxes": 37,
+          "pictures": 6,
+          "groups": 9,
+          "native_objects": 78
+        },
+        {
+          "text_boxes": 24,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 46
+        },
+        {
+          "text_boxes": 23,
+          "pictures": 5,
+          "groups": 6,
+          "native_objects": 45
+        },
+        {
+          "text_boxes": 21,
+          "pictures": 3,
+          "groups": 2,
+          "native_objects": 35
+        }
+      ],
+      "text_overflow": []
+    }
+  ]
+}

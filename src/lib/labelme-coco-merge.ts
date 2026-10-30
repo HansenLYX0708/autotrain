@@ -21,6 +21,12 @@ export interface MergeAssessment {
     skipped: number;
     trainImages: number;
     valImages: number;
+    /** New (Labelme-only) categories that will be appended to the COCO dataset. */
+    addedCategories: string[];
+    /** New categories the user chose not to import; their shapes are dropped. */
+    droppedCategories: string[];
+    /** Source shapes (over all valid samples) that belong to dropped categories. */
+    droppedAnnotations: number;
   };
 }
 
@@ -49,6 +55,16 @@ function difference(left: string[], right: string[]): string[] {
   return left.filter((value) => !rightSet.has(value));
 }
 
+/**
+ * Decide whether a Labelme folder can be merged into a COCO dataset.
+ *
+ * Categories that exist only in the Labelme data are no longer a hard stop: each
+ * one is either listed in `addCategories` (appended to both COCO splits) or
+ * dropped (its shapes are skipped). What still blocks is a category the COCO
+ * dataset knows but that is missing from one of its splits — the train and val
+ * files would then disagree on the class list, which is a structural problem in
+ * the target rather than a choice about the new data.
+ */
 export function assessLabelmeMerge(
   sourceCategoryNames: string[],
   trainCategoryNames: string[],
@@ -57,21 +73,27 @@ export function assessLabelmeMerge(
   trainRatio: number,
   valRatio: number,
   before: MergeCounts,
+  addCategories: string[] = [],
+  sourceShapeCounts: Record<string, number> = {},
 ): MergeAssessment {
   const sourceCategories = unique(sourceCategoryNames);
   const trainCategories = unique(trainCategoryNames);
   const valCategories = unique(valCategoryNames);
   const cocoCategories = unique([...trainCategories, ...valCategories]);
   const onlyInLabelme = difference(sourceCategories, cocoCategories);
-  const missingFromTrain = difference(sourceCategories, trainCategories);
-  const missingFromVal = difference(sourceCategories, valCategories);
+  const matched = sourceCategories.filter((name) => cocoCategories.includes(name));
+  const missingFromTrain = difference(matched, trainCategories);
+  const missingFromVal = difference(matched, valCategories);
+  const requested = new Set(addCategories.map((name) => name.trim()));
+  const addedCategories = onlyInLabelme.filter((name) => requested.has(name));
+  const droppedCategories = onlyInLabelme.filter((name) => !requested.has(name));
   const trainAdd = Math.floor(validSamples * trainRatio);
   const valAdd = Math.floor(validSamples * valRatio);
   return {
-    canMerge: validSamples > 0 && onlyInLabelme.length === 0 && missingFromTrain.length === 0 && missingFromVal.length === 0,
+    canMerge: validSamples > 0 && missingFromTrain.length === 0 && missingFromVal.length === 0,
     cocoCategories,
     differences: {
-      matched: sourceCategories.filter((name) => cocoCategories.includes(name)),
+      matched,
       onlyInLabelme,
       onlyInCoco: difference(cocoCategories, sourceCategories),
       missingFromTrain,
@@ -83,8 +105,36 @@ export function assessLabelmeMerge(
       skipped: validSamples - trainAdd - valAdd,
       trainImages: before.trainImages + trainAdd,
       valImages: before.valImages + valAdd,
+      addedCategories,
+      droppedCategories,
+      droppedAnnotations: droppedCategories.reduce((sum, name) => sum + (sourceShapeCounts[name] || 0), 0),
     },
   };
+}
+
+/**
+ * Append `names` as new categories to every document, with the same id in each
+ * so train and val stay aligned. Ids continue after the largest id used by any
+ * document. Returns the assigned ids. Mutates the documents.
+ */
+export function appendCategories(
+  documents: Array<{ categories: Array<{ id: number; name: string; supercategory?: string }> }>,
+  names: string[],
+): Map<string, number> {
+  const assigned = new Map<string, number>();
+  let nextId = documents
+    .flatMap((document) => document.categories.map((category) => Number(category.id) || 0))
+    .reduce((maximum, id) => Math.max(maximum, id), 0) + 1;
+  for (const name of unique(names)) {
+    const id = nextId++;
+    assigned.set(name, id);
+    for (const document of documents) {
+      if (!document.categories.some((category) => category.name.trim() === name)) {
+        document.categories.push({ id, name, supercategory: 'object' });
+      }
+    }
+  }
+  return assigned;
 }
 
 export function convertLabelmeShapes(

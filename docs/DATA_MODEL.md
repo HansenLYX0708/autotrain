@@ -181,7 +181,7 @@ anomalib 会取 test 划分的一半作验证，并**在其上拟合异常分数
 | `bestIter` / `bestMetric` | 来自 "best mIoU (X) was saved at iter N" 一类的日志行。非分割框架为 null |
 | `outputDir` | 命令实际使用的**绝对** `save_dir`，`/api/checkpoints` 依赖它定位检查点 |
 | `weightsPath` / `vdlLogDir` | 权重路径 / VisualDL 日志目录（仅 `useVdl` 时） |
-| `trainingParams` | JSON 字符串：`gpuIds`、`useAmp`、`useVdl`、`jobSlug`、`framework`、`totalSteps`、`epochs` 或 `iters`、`batchSize`、`baseLr` |
+| `trainingParams` | JSON 字符串：`gpuIds`、`useAmp`、`useVdl`、`doEval`（是否训练时验证，新任务默认 true）、`jobSlug`、`framework`、`totalSteps`、`epochs` 或 `iters`、`batchSize`、`baseLr` |
 | `yamlConfig` | 本次任务实际使用的合并后 YAML（快照） |
 | `startedAt` / `completedAt` | |
 

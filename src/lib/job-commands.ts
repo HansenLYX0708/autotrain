@@ -12,7 +12,7 @@
  * path building done here uses forward slashes, which Python accepts on Windows.
  */
 
-import { frameworkMeta, launchPrefix, type Framework } from "./frameworks";
+import { frameworkMeta, isClassification, launchPrefix, type Framework } from "./frameworks";
 
 /** Quote a path for a shell that is invoked with `shell: true`. */
 function q(value: string): string {
@@ -63,6 +63,11 @@ export function buildTrainCommand(options: TrainCommandOptions): string {
     if (options.useVdl) parts.push("--use_vdl");
   } else {
     parts.push("-c", q(options.configPath));
+    if (isClassification(options.framework)) {
+      parts.push("-o", `Global.eval_during_train=${options.doEval !== false}`);
+    } else if (options.doEval !== false) {
+      parts.push("--eval");
+    }
     if (options.useAmp) parts.push("--amp");
     if (options.useVdl) {
       parts.push(`--use_vdl=true`, `--vdl_log_dir=${options.outputDir ?? options.saveDir}/vdl`);
