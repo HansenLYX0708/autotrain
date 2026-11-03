@@ -26,15 +26,24 @@
  */
 
 import type { ParsedTrainLog } from './types'
+import {
+  NUMERIC_TOKEN,
+  NonFiniteCollector,
+  isOpenArrayFragment,
+  parseFloatArray,
+  parseNumericToken,
+} from './numbers'
 
 interface OpenEval {
   mIoU: number | null
   acc: number | null
   kappa: number | null
   dice: number | null
-  classIoU?: number[]
-  classPrecision?: number[]
-  classRecall?: number[]
+  classIoU?: (number | null)[]
+  classPrecision?: (number | null)[]
+  classRecall?: (number | null)[]
+  /** Canonical names of metrics that printed a non-finite token. */
+  nonFinite: Set<string>
   bestIter?: number | null
   bestMetric?: number | null
   /** Which `Class <kind>:` header we most recently saw; the *next* `[..]`
@@ -75,38 +84,6 @@ export function createSegState(): SegParserState {
   return { lastEpoch: 0, lastIter: 0, lastTotalIter: 0, open: null }
 }
 
-function segFloat(line: string, re: RegExp): number | null {
-  const m = line.match(re)
-  return m ? parseFloat(m[1]) : null
-}
-
-/** Parse a complete `[a b c d]` whitespace-separated float array. Returns
- *  `null` if the text is not a closed float array. */
-function parseFloatArray(text: string): number[] | null {
-  const stripped = text.trim()
-  if (!stripped.startsWith('[') || !stripped.endsWith(']')) return null
-  const inner = stripped.slice(1, -1).trim()
-  if (!inner) return null
-  const nums = inner.split(/\s+/).map((tok) => parseFloat(tok))
-  if (nums.some((n) => Number.isNaN(n))) return null
-  return nums
-}
-
-/**
- * Could `line` be the start (or continuation) of a numpy float array that has
- * not been closed yet? Used to decide whether to keep buffering instead of
- * treating the line as "not part of this EVAL block".
- *
- * Deliberately strict: only digits, dots, signs, exponents, whitespace and a
- * single leading `[` are allowed, so a genuine log line never gets swallowed.
- */
-function isOpenArrayFragment(text: string): boolean {
-  const stripped = text.trim()
-  if (!stripped || stripped.endsWith(']')) return false
-  const body = stripped.startsWith('[') ? stripped.slice(1) : stripped
-  return body.length > 0 && /^[\d.eE+\-\s]+$/.test(body)
-}
-
 function finalizeOpenEval(open: OpenEval): ParsedTrainLog {
   return {
     kind: 'eval',
@@ -131,6 +108,7 @@ function finalizeOpenEval(open: OpenEval): ParsedTrainLog {
     classRecall: open.classRecall,
     bestIter: open.bestIter ?? null,
     bestMetric: open.bestMetric ?? null,
+    nonFinite: open.nonFinite.size > 0 ? [...open.nonFinite] : undefined,
     rawLog: open.rawLines.join('\n'),
   }
 }
@@ -166,13 +144,13 @@ export function parseSegLine(
     const iterMatch = trimmed.match(/iter:\s*(\d+)\/(\d+)/i)
     const iteration = iterMatch ? parseInt(iterMatch[1], 10) : 0
     const totalIter = iterMatch ? parseInt(iterMatch[2], 10) : 0
-    const loss = segFloat(trimmed, /loss:\s*([\d.]+)/i)
+    const nonFinite = new NonFiniteCollector()
+    const loss = nonFinite.read(trimmed, 'loss')
     // Seg's lr can be scientific (e.g., `lr: 1.234e-05`).
-    const lr = segFloat(trimmed, /lr:\s*([\d.e+-]+)/i)
-    const batchCost = segFloat(trimmed, /batch_cost:\s*([\d.]+)/i)
-    const readerCost = segFloat(trimmed, /reader_cost:\s*([\d.]+)/i)
-    const ipsMatch = trimmed.match(/ips:\s*([\d.]+)/i)
-    const ips = ipsMatch ? parseFloat(ipsMatch[1]) : null
+    const lr = nonFinite.read(trimmed, 'lr')
+    const batchCost = nonFinite.read(trimmed, 'batch_cost')
+    const readerCost = nonFinite.read(trimmed, 'reader_cost')
+    const ips = nonFinite.read(trimmed, 'ips')
     const etaMatch = trimmed.match(/ETA\s+(\d+:\d{2}:\d{2})/i)
     const memReservedMatch = trimmed.match(/max_mem_reserved:\s*(\d+)/i)
     const memAllocatedMatch = trimmed.match(/max_mem_allocated:\s*(\d+)/i)
@@ -196,6 +174,7 @@ export function parseSegLine(
       ips,
       memReserved: memReservedMatch ? parseInt(memReservedMatch[1], 10) : null,
       memAllocated: memAllocatedMatch ? parseInt(memAllocatedMatch[1], 10) : null,
+      nonFinite: nonFinite.names(),
       rawLog: trimmed,
     })
     return results
@@ -209,11 +188,13 @@ export function parseSegLine(
     if (state.open) {
       results.push(finalizeOpenEval(state.open))
     }
+    const head = new NonFiniteCollector()
     state.open = {
-      mIoU: segFloat(trimmed, /mIoU:\s*([\d.]+)/i),
-      acc: segFloat(trimmed, /Acc:\s*([\d.]+)/i),
-      kappa: segFloat(trimmed, /Kappa:\s*([\d.]+)/i),
-      dice: segFloat(trimmed, /Dice:\s*([\d.]+)/i),
+      mIoU: head.read(trimmed, 'mIoU'),
+      acc: head.read(trimmed, 'Acc', 'acc'),
+      kappa: head.read(trimmed, 'Kappa', 'kappa'),
+      dice: head.read(trimmed, 'Dice', 'dice'),
+      nonFinite: new Set(head.names() ?? []),
       expectClassArray: null,
       pendingArray: null,
       rawLines: [trimmed],
@@ -247,9 +228,10 @@ export function parseSegLine(
     const arr = parseFloatArray(candidate)
     if (arr) {
       const slot = state.open.expectClassArray
-      if (slot === 'iou') state.open.classIoU = arr
-      else if (slot === 'precision') state.open.classPrecision = arr
-      else if (slot === 'recall') state.open.classRecall = arr
+      if (slot === 'iou') state.open.classIoU = arr.values
+      else if (slot === 'precision') state.open.classPrecision = arr.values
+      else if (slot === 'recall') state.open.classRecall = arr.values
+      if (arr.nonFinite) state.open.nonFinite.add(`class_${slot}`)
       state.open.expectClassArray = null
       state.open.pendingArray = null
       state.open.rawLines.push(trimmed)
@@ -275,9 +257,13 @@ export function parseSegLine(
 
   // --- 5. EVAL block: closing "best mIoU" line ------------------------
   if (state.open && /\[EVAL\][^]*best validation mIoU/i.test(trimmed)) {
-    const bestMatch = trimmed.match(/mIoU\s*\(\s*([\d.]+)\s*\)/i)
+    const bestMatch = trimmed.match(new RegExp(`mIoU\\s*\\(\\s*(${NUMERIC_TOKEN})\\s*\\)`, 'i'))
     const iterMatch = trimmed.match(/iter\s+(\d+)/i)
-    if (bestMatch) state.open.bestMetric = parseFloat(bestMatch[1])
+    if (bestMatch) {
+      const best = parseNumericToken(bestMatch[1])
+      state.open.bestMetric = best.value
+      if (best.nonFinite) state.open.nonFinite.add('mIoU')
+    }
     if (iterMatch) state.open.bestIter = parseInt(iterMatch[1], 10)
     state.open.rawLines.push(trimmed)
     results.push(finalizeOpenEval(state.open))

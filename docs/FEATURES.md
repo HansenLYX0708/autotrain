@@ -89,7 +89,7 @@
 ### 3.3 格式转换
 
 - **Convert Labelme**：
-  - → **COCO**：多边形/矩形标注转 COCO JSON。上传后按 `imagePath` 的文件名寻找图片，兼容原始路径中的 `/` 和 `\`。训练或验证分区为空会报错；已有输出目录不会被覆盖。
+  - → **COCO**：多边形/矩形标注转 COCO JSON。图片匹配走 `src/lib/labelme-images.ts` 共享规则：先按 `imagePath` 文件名在 `imgs/`（含子目录、大小写不敏感）查找，重名时用 `imagePath` 的尾部目录消歧；找不到再按 **JSON 文件名**回退（`5A3B.json` ↔ `5A3B.jpg`，图片被改名成与 JSON 同名时常用这条）；带 BOM 的 JSON 也能解析。训练或验证分区为空会报错；已有输出目录不会被覆盖。
   - → **PaddleSeg**：产出官方 `labelme2seg` / Pascal VOC 风格布局。掩码是 **8-bit 索引色 PNG**——调色板索引即 class id，所以 PaddleSeg/PIL 读到的是可直接训练的二维标签图，而任何图片查看器都能看到亮色伪彩（纯灰度 0..N-1 在肉眼看来和全黑没区别）。类别顺序完全确定：0 恒为 `_background_`，1..N 按文件名排序扫描时首次出现的顺序。多边形按 even-odd 扫描线填充，**后面的形状覆盖前面的**（形状顺序即 z-order）。
 - **Merge Labelme**：把一批新的 labelme 标注合并进既有 COCO 数据集，可指定 `trainRatio` / `valRatio`。合并前有 **Verify** 步骤，先给出影响预览再决定是否执行：
   - 训练集 / 验证集图片数的「合并前 → 合并后」及增量
@@ -210,14 +210,15 @@
 | Segmentation Metrics | 分割 | `mIoU`、`acc`、`kappa`、`dice` |
 | Anomaly Detection Metrics | 异常检测 | `imageAuroc`、`imageF1`、`pixelAuroc`、`pixelF1`、`threshold` |
 | Performance Metrics | 全部 | `batchCost`、`dataCost`、`readerCost`、`ips`、显存占用 |
-| Raw Log Output | 全部 | `rawLog` 原始日志行 |
+| Console Output | 全部 | `autotrain-console.log`：stdout+stderr 逐字节捕获（见下文） |
 
 ### 看图时要知道的事
 
 - **PatchCore / PaDiM 的 loss 恒为 0**（它们不做梯度下降，是内存库方法）。**平坦的 loss 曲线不代表训练卡住。**
 - 异常检测的指标来自 anomalib 在验证划分上的自适应阈值，而该划分正是拟合阈值用的，因此**训练期指标偏乐观**。要无偏结论请单独跑一次 Validation。
 - 评估点比训练点稀疏很多（按 `save_interval` / `snapshotEpoch` 触发），指标折线天然是阶梯状。
-- 普通日志显示最近 500 条；验证指标单独分页读取全部历史，避免训练日志超过 500 条后看不到 val。检测图按 epoch 展示 mAP@0.5:0.95 和 mAP@0.5，只有一次验证也显示数据点；尚无结果时提示等待验证或该任务未开启验证。
+- Monitoring 载入任务的**完整**日志历史（`fields=compact` 翻完所有页，之后用 `afterTimestamp`/`afterId` 游标增量追加），验证行直接从其中筛出；图表超过 4000 点会按 min/max 抽稀（峰值保留），图下标注「Showing N of M points」。
+- **Console Output** 卡片显示 `autotrain-console.log` 的尾部，运行中每 5 秒按 `offset` 追加（不会显示半行）；「Load earlier」向前翻页，搜索框对整文件做大小写不敏感行搜索（`line N: text`），另有整文件下载链接。`Found inf or nan` 行标黄、Traceback/Error 标红。更新前启动的任务没有该文件，卡片回退显示解析日志行。AMP 溢出会在图表上方给出「AMP loss-scale overflow」告警（本次运行的溢出次数与 loss scale 变化）。
 - 一次运行的**最后一次评估**（通常也是最好的一次）依赖进程退出时的日志 flush，这条路径已专门处理，不会丢。
 
 ---
@@ -333,6 +334,9 @@ Paddle 环境里没有 `torch`，torch 环境里没有 `paddle`，而 anomalib �
 | 分割推理「成功但 0 张结果图」 | 结果在 `added_prediction/`、`pseudo_color_prediction/` 子目录，确认扫描到了子目录 |
 | PaddleSeg 推理报 `UnicodeDecodeError` | TIFF 输入。平台会自动转存 PNG；若失败，手动转好再传 |
 | 异常检测 loss 曲线全是 0 | PatchCore / PaDiM 是内存库方法，没有梯度下降。这是正常的 |
+| Labelme 合并/转换报「image not found」 | `imagePath` 记录的是标注时的原始路径，与上传后文件名常常不同。解析器依次尝试：imgs/（含子目录）按文件名匹配 → 按 JSON 文件名匹配。把图片改成与 JSON 同名即可修复；同名图在多个子目录时需让 `imagePath` 带上目录前缀以消歧 |
+| Monitoring 出现「Non-finite values detected」告警 | 训练日志打印了 NaN/Inf（loss、mIoU、逐类别数组等）。这些点在图上被略过；训练很可能已发散——降低学习率、关闭 AMP，或检查标注数据 |
+| Console 显示 `Found inf or nan, current scale is …` | AMP 梯度溢出（Paddle AMP 自动把 loss scale 减半，该步被跳过）。早期偶尔几次正常；反复出现说明梯度持续溢出——降学习率、检查标注/box，或关 AMP。Monitoring 的「AMP loss-scale overflow」告警会汇总次数与 scale 变化 |
 | 停止训练后任务显示 failed | 旧版本行为。当前版本手动停止会写 `stopped` |
 | 停不掉训练，显存一直被占 | 服务在任务运行期间重启过，进程句柄已丢失。用 `nvidia-smi` 找到 PID 手工结束 |
 | 登录后一片空、项目全没了 | `DATABASE_URL` 指错，SQLite 新建了空库。看服务启动日志里的醒目告警 |

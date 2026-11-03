@@ -33,6 +33,14 @@ import type { ParsedTrainLog } from './types'
 import { isAnomaly, isClassification, isSegmentation, normalizeFramework, type Framework } from '@/lib/frameworks'
 
 export type { ParsedTrainLog } from './types'
+export {
+  NUMERIC_TOKEN,
+  NonFiniteCollector,
+  isOpenArrayFragment,
+  parseFloatArray,
+  parseNumericToken,
+  readMetric,
+} from './numbers'
 
 export interface JobParserState {
   framework: Framework

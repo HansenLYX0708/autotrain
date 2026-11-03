@@ -46,10 +46,11 @@ export interface ParsedTrainLog {
   acc?: number | null
   kappa?: number | null
   dice?: number | null
-  /** Per-class arrays, arity = num_classes (incl. background). */
-  classIoU?: number[]
-  classPrecision?: number[]
-  classRecall?: number[]
+  /** Per-class arrays, arity = num_classes (incl. background). Entries are
+   *  `null` where numpy printed `nan` for a class absent from the val split. */
+  classIoU?: (number | null)[]
+  classPrecision?: (number | null)[]
+  classRecall?: (number | null)[]
   // ---- Anomaly-detection eval metrics (TorchAnomaly) -------------------
   /** Image-level AUROC: can the model tell a defective part from a good one. */
   imageAuroc?: number | null
@@ -73,6 +74,14 @@ export interface ParsedTrainLog {
   bestMetric?: number | null
   /** Which metric the "best" line reported, e.g. `mIoU` or `image_auroc`. */
   bestMetricName?: string | null
+
+  /**
+   * Canonical names of metrics whose printed value was NaN/Inf/NA (e.g.
+   * `loss`, `lr`, `mIoU`, `class_iou`, `image_auroc`). Their numeric fields
+   * are `null`; this list is how "printed but diverged" stays distinguishable
+   * from "not printed".
+   */
+  nonFinite?: string[]
 
   /** Original line(s) that produced this record. */
   rawLog: string

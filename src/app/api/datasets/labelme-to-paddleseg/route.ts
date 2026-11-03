@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { deflateSync } from 'zlib';
 import { getSegColorMap, type RGB } from '@/lib/seg-colors';
+import { buildImageIndex, parseLabelmeJson, resolveLabelmeImage } from '@/lib/labelme-images';
 
 /**
  * Convert a labelme polygon-annotated dataset into a PaddleSeg-compatible
@@ -304,6 +305,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // One recursive index for the whole conversion (shared resolver: matches
+    // imagePath basenames in any subfolder, falls back to the JSON stem).
+    const imageIndex = await buildImageIndex(absoluteImagesPath);
+
     const defaultOut = path.join(userDatabasePath, user.username, 'PaddleSeg', name);
     const absoluteDatasetDir = outputDatasetDir
       ? (path.isAbsolute(outputDatasetDir)
@@ -357,8 +362,8 @@ export async function POST(request: NextRequest) {
         // Strip UTF-8 BOM if present. PowerShell's `Set-Content -Encoding UTF8`
         // and various labelme-adjacent tools emit BOM-prefixed JSON which
         // `JSON.parse` rejects with `Unexpected token '\uFEFF'`.
-        const raw = fs.readFileSync(jsonPath, 'utf-8').replace(/^\uFEFF/, '');
-        const data = JSON.parse(raw) as LabelmeData;
+        const raw = fs.readFileSync(jsonPath, 'utf-8');
+        const data = parseLabelmeJson(raw) as LabelmeData;
         parsedJsons.push({ file, data });
         for (const shape of data.shapes || []) {
           if (shape.shape_type !== 'polygon' || (shape.points?.length ?? 0) < 3) continue;
@@ -413,16 +418,13 @@ export async function POST(request: NextRequest) {
     const skipped: string[] = [];
 
     for (const { file, data } of parsedJsons) {
-      const imageFileName = path.basename(data.imagePath || '');
-      if (!imageFileName) {
-        skipped.push(`${file}: missing imagePath`);
+      const resolved = resolveLabelmeImage(imageIndex, file, data.imagePath);
+      if ('error' in resolved) {
+        skipped.push(`${file}: ${resolved.error}`);
         continue;
       }
-      const sourceImagePath = path.join(absoluteImagesPath, imageFileName);
-      if (!fs.existsSync(sourceImagePath)) {
-        skipped.push(`${file}: image not found (${imageFileName})`);
-        continue;
-      }
+      const imageFileName = path.basename(resolved.path);
+      const sourceImagePath = resolved.path;
 
       const w = data.imageWidth | 0;
       const h = data.imageHeight | 0;

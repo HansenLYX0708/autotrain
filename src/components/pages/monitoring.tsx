@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { isDetection } from '@/lib/frameworks'
+import { decimateMinMax } from '@/lib/chart-decimate'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Label } from '@/components/ui/label'
@@ -42,6 +44,8 @@ import {
   Pause,
   Play,
   AlertCircle,
+  AlertTriangle,
+  Download,
   Loader2,
 } from 'lucide-react'
 
@@ -149,6 +153,54 @@ interface LogsResponse {
   }
   epochs: number[]
 }
+
+// AMP overflow summary returned alongside console ranges (see
+// `src/lib/job-console.ts`). Mirrors the server-side `AmpSummary`.
+interface AmpSummary {
+  count: number
+  initialScale: number | null
+  currentScale: number | null
+  minScale: number | null
+  lastLine: string | null
+}
+
+interface ConsoleRangeResponse {
+  available: boolean
+  path?: string
+  size: number
+  start: number
+  end: number
+  text: string
+  hasMore: boolean
+  amp: AmpSummary | null
+}
+
+interface ConsoleSearchResults {
+  matches: { line: number; text: string }[]
+  totalMatches: number
+  truncated: boolean
+}
+
+// Keep at most 4 MB of console text in the browser; older lines can be
+// pulled back with "Load earlier".
+const CONSOLE_TEXT_LIMIT = 4 * 1024 * 1024
+
+const byteLength = (s: string) => new TextEncoder().encode(s).length
+
+const formatBytes = (n: number) => {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`
+}
+
+// Line highlighting for the console viewer: AMP overflow events are worth
+// noticing but not fatal; a traceback means the run died.
+const consoleLineClass = (line: string) =>
+  /found inf or nan/i.test(line)
+    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+    : /Traceback|Error|Exception/.test(line)
+      ? 'bg-red-500/15 text-red-700 dark:text-red-300'
+      : ''
 
 // Chart configurations
 const lossChartConfig = {
@@ -280,7 +332,6 @@ export function MonitoringPage() {
   const [selectedJobId, setSelectedJobId] = useState<string>('')
   const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null)
   const [logs, setLogs] = useState<TrainingLog[]>([])
-  const [evaluationLogs, setEvaluationLogs] = useState<TrainingLog[]>([])
   const [logsError, setLogsError] = useState<string | null>(null)
   const [stats, setStats] = useState<LogsResponse['stats'] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -288,9 +339,30 @@ export function MonitoringPage() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [autoScroll, setAutoScroll] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
+  // Console Output card. `consoleStart/End` are byte offsets into
+  // autotrain-console.log bracketing the loaded `consoleText` window, so the
+  // live tail and "Load earlier" can resume without re-downloading anything.
+  const [consoleAvailable, setConsoleAvailable] = useState<boolean | null>(null)
+  const [consoleText, setConsoleText] = useState('')
+  const [consoleStart, setConsoleStart] = useState(0)
+  const [consoleSize, setConsoleSize] = useState(0)
+  const [consoleHasEarlier, setConsoleHasEarlier] = useState(false)
+  const [consoleAmp, setConsoleAmp] = useState<AmpSummary | null>(null)
+  const [consoleSearching, setConsoleSearching] = useState(false)
+  const [searchResults, setSearchResults] = useState<ConsoleSearchResults | null>(null)
+  // Fallback for jobs whose runs predate console capture: the parsed
+  // TrainingLog rows, paged backwards through `logs?sort=desc`.
+  const [fbLogs, setFbLogs] = useState<TrainingLog[]>([])
+  const [fbPage, setFbPage] = useState(0)
+  const [fbTotalPages, setFbTotalPages] = useState(1)
   const logContainerRef = useRef<HTMLDivElement>(null)
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const pollInFlightRef = useRef(false)
   const logsRequestRef = useRef<AbortController | null>(null)
+  const logCursorRef = useRef<{ timestamp: string; id: string } | null>(null)
+  const consoleStartRef = useRef(0)
+  const consoleEndRef = useRef(0)
+  const consoleLoadedRef = useRef(false)
+  const prevStatusRef = useRef<string | undefined>(undefined)
 
   // Fetch training jobs
   const fetchJobs = useCallback(async () => {
@@ -312,100 +384,328 @@ export function MonitoringPage() {
     }
   }, [selectedJobId])
 
-  // Fetch job logs
-  const fetchJobLogs = useCallback(async (jobId: string) => {
-    if (!jobId) return
-    logsRequestRef.current?.abort()
-    const controller = new AbortController()
-    logsRequestRef.current = controller
-    setLogsLoading(true)
-    try {
-      const loadEvaluations = async () => {
-        const rows: TrainingLog[] = []
-        let pages = 1
-        for (let page = 1; page <= pages; page++) {
-          const response = await fetch(`/api/training-jobs/${jobId}/logs?kind=eval&limit=1000&sort=asc&page=${page}`, { signal: controller.signal })
-          if (!response.ok) throw new Error('Failed to load validation results')
-          const data: Pick<LogsResponse, 'data' | 'pagination'> = await response.json()
-          if (page === 1) pages = data.pagination.totalPages
-          rows.push(...data.data)
-        }
-        return rows
-      }
-      // Recent training rows and complete validation history use independent
-      // pagination: frequent TRAIN output must never crowd EVAL out of a chart.
-      const [response, evaluations] = await Promise.all([
-        fetch(`/api/training-jobs/${jobId}/logs?limit=500&sort=desc`, { signal: controller.signal }),
-        loadEvaluations(),
-      ])
+  // Load the COMPLETE log history of a job (compact rows, no rawLog) by
+  // paging forward through `logs?sort=asc`. `logs` is the single source for
+  // charts, eval rows and the non-finite scan — no separate eval fetch.
+  const loadFullLogs = useCallback(async (jobId: string, signal: AbortSignal) => {
+    const rows: TrainingLog[] = []
+    let page = 1
+    let totalPages = 1
+    let lastStats: LogsResponse['stats'] | null = null
+    do {
+      const response = await fetch(
+        `/api/training-jobs/${jobId}/logs?sort=asc&limit=1000&fields=compact&page=${page}`,
+        { signal },
+      )
       if (!response.ok) throw new Error('Failed to load training logs')
       const data: LogsResponse = await response.json()
-      if (!controller.signal.aborted) {
-        setLogs(data.data.reverse())
-        setEvaluationLogs(evaluations)
-        setLogsError(null)
+      rows.push(...data.data)
+      totalPages = data.pagination.totalPages
+      lastStats = data.stats
+      page += 1
+    } while (page <= totalPages)
+    setLogs(rows)
+    const last = rows[rows.length - 1]
+    logCursorRef.current = last ? { timestamp: last.timestamp, id: last.id } : null
+    setStats(lastStats)
+  }, [])
+
+  // Append rows newer than the cursor. `afterTimestamp`/`afterId` resume
+  // strictly after the last known row, so incremental polls never re-read or
+  // duplicate history; a full page means more rows are waiting.
+  const loadIncrementalLogs = useCallback(async (jobId: string) => {
+    const cursor = logCursorRef.current
+    if (!cursor) {
+      // No rows seen yet — e.g. the job was selected while still pending.
+      // Page forward from the start (same shape as the initial load) so the
+      // first rows arriving mid-poll are picked up and the cursor is set.
+      const rows: TrainingLog[] = []
+      let page = 1
+      let totalPages = 1
+      do {
+        const response = await fetch(
+          `/api/training-jobs/${jobId}/logs?sort=asc&limit=1000&fields=compact&page=${page}`,
+        )
+        if (!response.ok) return
+        const data: LogsResponse = await response.json()
+        rows.push(...data.data)
+        totalPages = data.pagination.totalPages
         setStats(data.stats)
-        
-        // Update selected job from the jobs list
-        const job = jobs.find(j => j.id === jobId)
-        if (job) {
-          setSelectedJob(job)
-        }
+        page += 1
+      } while (page <= totalPages)
+      if (rows.length > 0) {
+        setLogs((prev) => [...prev, ...rows])
+        const last = rows[rows.length - 1]
+        logCursorRef.current = { timestamp: last.timestamp, id: last.id }
       }
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setLogsError(error instanceof Error ? error.message : 'Failed to load logs')
-      }
-    } finally {
-      if (!controller.signal.aborted) setLogsLoading(false)
+      return
     }
-  }, [jobs])
+    let afterTs = cursor.timestamp
+    let afterId = cursor.id
+    const added: TrainingLog[] = []
+    while (true) {
+      const response = await fetch(
+        `/api/training-jobs/${jobId}/logs?sort=asc&limit=1000&fields=compact` +
+          `&afterTimestamp=${encodeURIComponent(afterTs)}&afterId=${encodeURIComponent(afterId)}`,
+      )
+      if (!response.ok) return
+      const data: LogsResponse = await response.json()
+      setStats(data.stats)
+      if (data.data.length === 0) break
+      added.push(...data.data)
+      const last = data.data[data.data.length - 1]
+      afterTs = last.timestamp
+      afterId = last.id
+      logCursorRef.current = { timestamp: afterTs, id: afterId }
+      if (data.data.length < 1000) break
+    }
+    if (added.length > 0) setLogs((prev) => [...prev, ...added])
+  }, [])
+
+  const loadFallbackLogs = useCallback(async (jobId: string, page: number) => {
+    const response = await fetch(`/api/training-jobs/${jobId}/logs?sort=desc&limit=1000&page=${page}`)
+    if (!response.ok) return
+    const data: LogsResponse = await response.json()
+    const ascending = [...data.data].reverse()
+    setFbTotalPages(data.pagination.totalPages)
+    setFbPage(page)
+    // Desc pages arrive newest-first; older pages are prepended so `fbLogs`
+    // stays oldest→newest.
+    setFbLogs((prev) => (page === 1 ? ascending : [...ascending, ...prev]))
+  }, [])
+
+  // Initial console load: tail of the file. `available: false` means the run
+  // predates console capture — fall back to the parsed rows.
+  const loadConsoleTail = useCallback(async (jobId: string, signal?: AbortSignal) => {
+    try {
+      const response = await fetch(`/api/training-jobs/${jobId}/console`, { signal })
+      if (!response.ok) return
+      const r: ConsoleRangeResponse = await response.json()
+      setConsoleAvailable(r.available)
+      setConsoleAmp(r.amp ?? null)
+      if (!r.available) {
+        setConsoleText('')
+        consoleLoadedRef.current = false
+        await loadFallbackLogs(jobId, 1)
+        return
+      }
+      consoleLoadedRef.current = true
+      setConsoleSize(r.size)
+      setConsoleText(r.text)
+      consoleStartRef.current = r.start
+      consoleEndRef.current = r.end
+      setConsoleStart(r.start)
+      setConsoleHasEarlier(r.start > 0)
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return
+      console.error('Failed to load console output:', error)
+    }
+  }, [loadFallbackLogs])
+
+  // Live tail while running: fetch from the last known end offset. The server
+  // never returns a partial line for a running job, so appending is safe.
+  const appendConsole = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch(
+        `/api/training-jobs/${jobId}/console?offset=${consoleEndRef.current}`,
+      )
+      if (!response.ok) return
+      const r: ConsoleRangeResponse = await response.json()
+      if (!r.available) return
+      setConsoleAmp(r.amp ?? null)
+      setConsoleSize(r.size)
+      if (!consoleLoadedRef.current) {
+        // The file appeared after the job was selected (e.g. selected while
+        // pending, then started): load the tail and drop the fallback rows.
+        setFbLogs([])
+        setFbPage(0)
+        setFbTotalPages(1)
+        await loadConsoleTail(jobId)
+        return
+      }
+      if (r.size < consoleEndRef.current) {
+        // File was truncated or rewritten — resync from the tail.
+        consoleEndRef.current = 0
+        await loadConsoleTail(jobId)
+        return
+      }
+      if (r.text) {
+        setConsoleText((prev) => {
+          let text = prev + r.text
+          let start = consoleStartRef.current
+          // Cap the in-memory window at 4 MB by dropping the oldest complete
+          // lines; start moves forward so "Load earlier" can still reach them.
+          while (byteLength(text) > CONSOLE_TEXT_LIMIT) {
+            const nl = text.indexOf('\n')
+            if (nl === -1) break
+            start += byteLength(text.slice(0, nl + 1))
+            text = text.slice(nl + 1)
+          }
+          consoleStartRef.current = start
+          setConsoleStart(start)
+          setConsoleHasEarlier(start > 0)
+          return text
+        })
+      }
+      consoleEndRef.current = r.end
+      setConsoleHasEarlier(consoleStartRef.current > 0)
+    } catch (error) {
+      console.error('Failed to append console output:', error)
+    }
+  }, [loadConsoleTail])
+
+  // "Load earlier": prepend the chunk ending at the current start offset.
+  const loadConsoleEarlier = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch(
+        `/api/training-jobs/${jobId}/console?before=${consoleStartRef.current}`,
+      )
+      if (!response.ok) return
+      const r: ConsoleRangeResponse = await response.json()
+      if (!r.available || !r.text) {
+        setConsoleHasEarlier(false)
+        return
+      }
+      setConsoleText((prev) => r.text + prev)
+      consoleStartRef.current = r.start
+      setConsoleStart(r.start)
+      setConsoleHasEarlier(r.hasMore)
+    } catch (error) {
+      console.error('Failed to load earlier console output:', error)
+    }
+  }, [])
+
+  const runConsoleSearch = useCallback(async (jobId: string, query: string) => {
+    const q = query.trim()
+    if (!q) {
+      setSearchResults(null)
+      return
+    }
+    setConsoleSearching(true)
+    try {
+      const response = await fetch(
+        `/api/training-jobs/${jobId}/console?q=${encodeURIComponent(q)}`,
+      )
+      if (response.ok) setSearchResults(await response.json())
+    } finally {
+      setConsoleSearching(false)
+    }
+  }, [])
 
   // Initial fetch
   useEffect(() => {
     fetchJobs()
   }, [fetchJobs])
 
-  // Fetch logs when job is selected
+  // Keep selectedJob in sync with the polled jobs list — a plain derivation,
+  // it must not reload logs.
   useEffect(() => {
+    setSelectedJob(jobs.find((job) => job.id === selectedJobId) || null)
+  }, [jobs, selectedJobId])
+
+  // Full reload on job selection only.
+  useEffect(() => {
+    if (!selectedJobId) return
+    logsRequestRef.current?.abort()
+    const controller = new AbortController()
+    logsRequestRef.current = controller
+
     setLogs([])
-    setEvaluationLogs([])
     setStats(null)
     setLogsError(null)
-  }, [selectedJobId])
+    logCursorRef.current = null
+    setConsoleAvailable(null)
+    setConsoleText('')
+    setConsoleAmp(null)
+    setConsoleSize(0)
+    consoleStartRef.current = 0
+    consoleEndRef.current = 0
+    consoleLoadedRef.current = false
+    setConsoleStart(0)
+    setConsoleHasEarlier(false)
+    setSearchResults(null)
+    setSearchQuery('')
+    setFbLogs([])
+    setFbPage(0)
+    setFbTotalPages(1)
+    prevStatusRef.current = undefined
 
+    setLogsLoading(true)
+    ;(async () => {
+      try {
+        await loadFullLogs(selectedJobId, controller.signal)
+        if (controller.signal.aborted) return
+        await loadConsoleTail(selectedJobId, controller.signal)
+        if (controller.signal.aborted) return
+        setLogsError(null)
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setLogsError(error instanceof Error ? error.message : 'Failed to load logs')
+        }
+      } finally {
+        if (!controller.signal.aborted) setLogsLoading(false)
+      }
+    })()
+    return () => controller.abort()
+  }, [selectedJobId, loadFullLogs, loadConsoleTail])
+
+  // Polling while the selected job is running (or pending, so a job started
+  // from elsewhere transitions into live monitoring without a reload): job
+  // list + incremental logs + console append. The in-flight ref keeps 5s
+  // ticks from overlapping when a fetch is slow.
   useEffect(() => {
-    setSelectedJob(jobs.find(job => job.id === selectedJobId) || null)
-    if (selectedJobId) {
-      fetchJobLogs(selectedJobId)
-    }
-    return () => logsRequestRef.current?.abort()
-  }, [selectedJobId, fetchJobLogs])
-
-  // Polling for real-time updates
-  useEffect(() => {
-    if (autoRefresh && selectedJobId && selectedJob?.status === 'running') {
-      pollingIntervalRef.current = setInterval(() => {
-        fetchJobs() // Refresh job list to get status updates
-      }, 5000)
-    }
-
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current)
+    const pollable = selectedJob?.status === 'running' || selectedJob?.status === 'pending'
+    if (!autoRefresh || !selectedJobId || !pollable) return
+    const tick = async () => {
+      if (pollInFlightRef.current) return
+      pollInFlightRef.current = true
+      try {
+        await fetchJobs()
+        await loadIncrementalLogs(selectedJobId)
+        await appendConsole(selectedJobId)
+      } catch {
+        // Keep polling — a dropped request should not stop live updates.
+      } finally {
+        pollInFlightRef.current = false
       }
     }
-  }, [autoRefresh, selectedJobId, selectedJob?.status, fetchJobLogs, fetchJobs])
+    const interval = setInterval(tick, 5000)
+    return () => clearInterval(interval)
+  }, [autoRefresh, selectedJobId, selectedJob?.status, fetchJobs, loadIncrementalLogs, appendConsole])
+
+  // When the job leaves `running`, do one final incremental fetch so the last
+  // lines and the run footer are not missed between polls.
+  useEffect(() => {
+    const prev = prevStatusRef.current
+    const current = selectedJob?.status
+    prevStatusRef.current = current
+    if (prev === 'running' && current && current !== 'running' && selectedJobId) {
+      ;(async () => {
+        await loadIncrementalLogs(selectedJobId)
+        await appendConsole(selectedJobId)
+      })()
+    }
+  }, [selectedJob?.status, selectedJobId, loadIncrementalLogs, appendConsole])
 
   // Auto-scroll to bottom
   useEffect(() => {
     if (autoScroll && logContainerRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
     }
-  }, [logs, autoScroll])
+  }, [consoleText, autoScroll])
 
-  // Prepare chart data
-  const lossChartData = logs
+  // EVAL rows are part of `logs` now (complete history, one fetch path), so
+  // evaluation charts just filter for the rows carrying eval metrics.
+  const evaluationLogs = logs.filter(
+    (log) =>
+      log.mAP !== null || log.mAP50 !== null || log.mIoU !== null ||
+      log.imageAuroc !== null || log.imageF1 !== null ||
+      log.pixelAuroc !== null || log.pixelF1 !== null,
+  )
+
+  // Prepare chart data. Very long runs are min/max-decimated so tens of
+  // thousands of points don't stall recharts — peaks are preserved per bucket.
+  const lossChartFull = logs
     .filter(log => log.loss !== null)
     .map(log => ({
       iteration: log.iteration,
@@ -416,14 +716,18 @@ export function MonitoringPage() {
       lossDfl: log.lossDfl,
       lossL1: log.lossL1,
     }))
+  const lossChartData = decimateMinMax(lossChartFull, (r) => r.loss, 4000)
+  const lossDecimated = lossChartData.length < lossChartFull.length
 
-  const lrChartData = logs
+  const lrChartFull = logs
     .filter(log => log.learningRate !== null)
     .map(log => ({
       iteration: log.iteration,
       epoch: log.epoch,
       learningRate: log.learningRate,
     }))
+  const lrChartData = decimateMinMax(lrChartFull, (r) => r.learningRate, 4000)
+  const lrDecimated = lrChartData.length < lrChartFull.length
 
   // Segmentation evaluation metrics over successive evaluations
   const segMetricChartData = evaluationLogs
@@ -462,16 +766,24 @@ export function MonitoringPage() {
     }))
   const latestAnomalyEvalLog = anomalyMetricChartData[anomalyMetricChartData.length - 1]
 
-  // Filter logs for raw log viewer
-  const filteredLogs = logs.filter(log => {
-    if (!searchQuery) return true
-    const query = searchQuery.toLowerCase()
-    return (
-      log.rawLog?.toLowerCase().includes(query) ||
-      log.epoch.toString().includes(query) ||
-      log.iteration.toString().includes(query)
-    )
+  // Rows whose parsed classMetrics JSON carries a `nonFinite` list (written by
+  // the server when a metric printed NaN/Inf). These rows are omitted from the
+  // charts because their numeric fields are null — surface that as a warning
+  // rather than letting the curve silently skip them. `logs` holds the
+  // complete history, so scanning it alone suffices.
+  const nonFiniteRows = logs.flatMap((log) => {
+    if (!log.classMetrics) return []
+    try {
+      const parsed = JSON.parse(log.classMetrics)
+      return Array.isArray(parsed?.nonFinite) && parsed.nonFinite.length > 0
+        ? [{ log, names: parsed.nonFinite as string[] }]
+        : []
+    } catch {
+      return []
+    }
   })
+  const nonFiniteNames = [...new Set(nonFiniteRows.flatMap((r) => r.names))]
+  const firstNonFinite = nonFiniteRows[0]
 
   // Get latest log for current metrics
   const latestLog = logs[logs.length - 1]
@@ -661,6 +973,35 @@ export function MonitoringPage() {
 
           {/* Charts */}
           {logsError && <p role="alert" className="text-sm text-destructive">{logsError}</p>}
+          {nonFiniteRows.length > 0 && firstNonFinite && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Non-finite values detected</AlertTitle>
+              <AlertDescription>
+                Non-finite values (NaN/Inf) detected in {nonFiniteRows.length} log line
+                {nonFiniteRows.length === 1 ? '' : 's'}, first at epoch {firstNonFinite.log.epoch}{' '}
+                iter {firstNonFinite.log.iteration}: {nonFiniteNames.join(', ')}. These points are
+                omitted from the charts — training has likely diverged (try lower learning rate,
+                disable AMP, or check labels).
+              </AlertDescription>
+            </Alert>
+          )}
+          {consoleAmp && consoleAmp.count > 0 && (
+            <Alert
+              variant={consoleAmp.currentScale !== null && consoleAmp.currentScale <= 1 || consoleAmp.count >= 10 ? 'destructive' : 'default'}
+              className={consoleAmp.currentScale !== null && consoleAmp.currentScale <= 1 || consoleAmp.count >= 10 ? '' : 'border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300'}
+            >
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>AMP loss-scale overflow</AlertTitle>
+              <AlertDescription>
+                Found inf/nan in gradients {consoleAmp.count} time(s) in the current run; loss
+                scale fell from {consoleAmp.initialScale ?? '?'} to {consoleAmp.currentScale ?? '?'}{' '}
+                (each event skips that step). A few early events are normal with AMP; repeated
+                drops mean gradients keep overflowing — lower the learning rate, check
+                labels/boxes, or disable AMP.
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Loss Chart */}
             <Card>
@@ -730,6 +1071,11 @@ export function MonitoringPage() {
                     No loss data available
                   </div>
                 )}
+                {lossDecimated && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Showing {lossChartData.length.toLocaleString()} of {lossChartFull.length.toLocaleString()} points (peaks preserved)
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -771,6 +1117,11 @@ export function MonitoringPage() {
                   <div className="flex items-center justify-center h-[300px] text-muted-foreground">
                     No learning rate data available
                   </div>
+                )}
+                {lrDecimated && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Showing {lrChartData.length.toLocaleString()} of {lrChartFull.length.toLocaleString()} points (peaks preserved)
+                  </p>
                 )}
               </CardContent>
             </Card>
@@ -1058,26 +1409,73 @@ export function MonitoringPage() {
             </CardContent>
           </Card>
 
-          {/* Raw Log Viewer */}
+          {/* Console Output — verbatim stdout+stderr captured to
+              autotrain-console.log next to the job's checkpoints. Older runs
+              (no console file) fall back to parsed TrainingLog rows. */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Raw Log Output</CardTitle>
+                  <CardTitle>Console Output</CardTitle>
                   <CardDescription>
-                    Training log entries ({filteredLogs.length} of {logs.length} logs)
+                    {consoleAvailable
+                      ? `${formatBytes(consoleSize)} · ${
+                          consoleStart > 0 ? `showing from byte ${consoleStart.toLocaleString()}` : 'full file'
+                        }`
+                      : consoleAvailable === false
+                        ? 'Parsed training log entries'
+                        : 'Loading console output…'}
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-4">
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search logs..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-8 w-[200px]"
-                    />
-                  </div>
+                  {consoleAvailable && (
+                    <>
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search console..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              if (searchQuery.trim()) {
+                                runConsoleSearch(selectedJob.id, searchQuery)
+                              } else {
+                                setSearchResults(null)
+                              }
+                            }
+                          }}
+                          className="pl-8 w-[200px]"
+                        />
+                      </div>
+                      {searchResults ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => { setSearchResults(null); setSearchQuery('') }}
+                        >
+                          Clear
+                        </Button>
+                      ) : (
+                        consoleHasEarlier && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => loadConsoleEarlier(selectedJob.id)}
+                          >
+                            Load earlier
+                          </Button>
+                        )
+                      )}
+                      <a
+                        href={`/api/training-jobs/${selectedJob.id}/console?download=1`}
+                        title="Download full log"
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <Download className="h-4 w-4" />
+                      </a>
+                    </>
+                  )}
                   <div className="flex items-center gap-2">
                     <Label htmlFor="auto-scroll" className="text-sm">Auto Scroll</Label>
                     <Switch
@@ -1091,31 +1489,74 @@ export function MonitoringPage() {
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[400px] w-full rounded-md border bg-muted/30" ref={logContainerRef}>
-                <div className="p-4 font-mono text-xs space-y-1">
-                  {filteredLogs.length === 0 ? (
-                    <div className="text-muted-foreground text-center py-8">
-                      {searchQuery ? 'No logs match your search' : 'No logs available'}
-                    </div>
-                  ) : (
-                    filteredLogs.map((log) => (
-                      <div 
-                        key={log.id}
-                        className="hover:bg-muted/50 px-2 py-1 rounded"
+                {consoleAvailable === false ? (
+                  <div className="p-4 font-mono text-xs space-y-1">
+                    <p className="font-sans text-sm text-muted-foreground mb-3">
+                      Console output is recorded for runs started after this update.
+                    </p>
+                    {fbPage < fbTotalPages && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mb-2"
+                        onClick={() => loadFallbackLogs(selectedJob.id, fbPage + 1)}
                       >
-                        <span className="text-muted-foreground mr-2">
-                          [Epoch {log.epoch}] [Iter {log.iteration}/{log.totalIter}]
-                        </span>
-                        {log.rawLog || (
-                          <span>
-                            loss: {log.loss?.toFixed(6) || 'N/A'} | 
-                            lr: {log.learningRate?.toExponential(2) || 'N/A'} |
-                            ips: {log.ips?.toFixed(2) || 'N/A'}
+                        Load earlier
+                      </Button>
+                    )}
+                    {fbLogs.length === 0 ? (
+                      <div className="text-muted-foreground text-center py-8">No logs available</div>
+                    ) : (
+                      fbLogs.map((log) => (
+                        <div key={log.id} className="hover:bg-muted/50 px-2 py-1 rounded">
+                          <span className="text-muted-foreground mr-2">
+                            [Epoch {log.epoch}] [Iter {log.iteration}/{log.totalIter}]
                           </span>
-                        )}
+                          {log.rawLog || (
+                            <span>
+                              loss: {log.loss?.toFixed(6) || 'N/A'} |
+                              lr: {log.learningRate?.toExponential(2) || 'N/A'} |
+                              ips: {log.ips?.toFixed(2) || 'N/A'}
+                            </span>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                ) : searchResults ? (
+                  <div className="p-4 font-mono text-xs space-y-1">
+                    <div className="text-muted-foreground mb-2">
+                      {searchResults.totalMatches} match(es)
+                      {searchResults.truncated ? ` — showing first ${searchResults.matches.length}` : ''}
+                    </div>
+                    {searchResults.matches.length === 0 ? (
+                      <div className="text-muted-foreground text-center py-8">No matches</div>
+                    ) : (
+                      searchResults.matches.map((m) => (
+                        <div key={m.line} className={`px-2 py-1 rounded ${consoleLineClass(m.text)}`}>
+                          <span className="text-muted-foreground mr-2">line {m.line}:</span>
+                          {m.text}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                ) : (
+                  <pre className="whitespace-pre-wrap break-all p-4 font-mono text-xs">
+                    {consoleSearching ? (
+                      <div className="text-muted-foreground text-center py-8">Searching…</div>
+                    ) : consoleText.length === 0 ? (
+                      <div className="text-muted-foreground text-center py-8">
+                        {consoleAvailable === null ? 'Loading…' : 'No console output yet'}
                       </div>
-                    ))
-                  )}
-                </div>
+                    ) : (
+                      consoleText.split('\n').map((line, i) => (
+                        <div key={i} className={`px-2 rounded ${consoleLineClass(line)}`}>
+                          {line || ' '}
+                        </div>
+                      ))
+                    )}
+                  </pre>
+                )}
                 <ScrollBar orientation="vertical" />
               </ScrollArea>
             </CardContent>

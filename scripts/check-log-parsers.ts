@@ -26,7 +26,14 @@
  *   [6]  For iteration-counting frameworks the progress column is `iteration`,
  *        not `epoch` (see `tracksIterations`).
  */
-import { createParserState, feed, flush, type ParsedTrainLog } from "../src/lib/log-parsers";
+import {
+  createParserState,
+  feed,
+  flush,
+  parseNumericToken,
+  readMetric,
+  type ParsedTrainLog,
+} from "../src/lib/log-parsers";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail?: unknown) {
@@ -326,6 +333,158 @@ console.log("\n[6] tracksIterations semantics for currentEpoch");
   );
   check("TorchSeg train row iteration=20500", rows[0]?.iteration === 20500, rows[0]?.iteration);
   check("TorchSeg train row totalIter=160000", rows[0]?.totalIter === 160000, rows[0]?.totalIter);
+}
+
+// --------------------------------------------------------------------------
+console.log("\n[7] numbers.ts: token parsing and whole-key reads");
+{
+  const nonFinite = (t: string) => parseNumericToken(t);
+  for (const tok of ["nan", "-nan", "NaN", "inf", "-inf", "Infinity", "NA", "N/A", "None"]) {
+    const r = nonFinite(tok);
+    check(`'${tok}' -> nonFinite`, r.value === null && r.nonFinite === true, r);
+  }
+  for (const [tok, want] of [["1.5e-05", 1.5e-5], ["-0.3", -0.3], [".5", 0.5]] as const) {
+    const r = parseNumericToken(tok);
+    check(`'${tok}' -> ${want}`, r.value === want && r.nonFinite === false, r);
+  }
+  check("`loss` does not match `loss_cls:`", readMetric("loss_cls: 1", "loss") === null);
+  check("`loss` reads through `loss_cls:` neighbours", readMetric("loss_cls: 1 loss: 2", "loss")?.value === 2);
+  check("`lr` does not match `learning_rate:`", readMetric("learning_rate: 1", "lr") === null);
+  check("`na` not read inside `name: x`", readMetric("name: x", "na") === null);
+}
+
+// --------------------------------------------------------------------------
+console.log("\n[8] PaddleDetection TRAIN line full of NaN/Inf");
+{
+  const detLine =
+    `Epoch: [3] [20/100] learning_rate: 0.000800 loss: nan loss_cls: nan ` +
+    `loss_iou: -nan loss_dfl: inf loss_l1: 1.2 eta: 0:10:04 batch_cost: 0.4 ` +
+    `data_cost: 0.1 ips: 2.0 images/s, max_mem_reserved: 1520 MB, max_mem_allocated: 1340 MB`;
+  const st = createParserState("PaddleDetection");
+  const rows = feed(st, `${detLine}\n`);
+  const t = rows.find((r) => r.kind === "train");
+  check("nan-loss line still yields a train record", !!t);
+  check("epoch/iter parsed", t?.epoch === 3 && t?.iteration === 20, [t?.epoch, t?.iteration]);
+  check("loss is null not NaN", t?.loss === null, t?.loss);
+  check("lr finite", t?.learningRate === 0.0008, t?.learningRate);
+  check("loss_l1 finite", t?.lossL1 === 1.2, t?.lossL1);
+  check(
+    "no NaN/Inf in any numeric field",
+    !!t &&
+      Object.entries(t).every(
+        ([k, v]) => typeof v !== "number" || Number.isFinite(v),
+      ),
+  );
+  check(
+    "nonFinite lists diverged metrics",
+    JSON.stringify(t?.nonFinite) === JSON.stringify(["loss", "loss_cls", "loss_iou", "loss_dfl"]),
+    t?.nonFinite,
+  );
+
+  const st2 = createParserState("PaddleDetection");
+  const rows2 = feed(st2, `Epoch: [3] [21/100] learning_rate: -nan loss: NA eta: 0:10:04\n`);
+  const t2 = rows2.find((r) => r.kind === "train");
+  check("lr: -nan + loss: NA still yields a record", !!t2, t2);
+  check("lr stored null", t2?.learningRate === null, t2?.learningRate);
+  check("loss stored null", t2?.loss === null, t2?.loss);
+
+  // Chunk-split robustness: feed the same line one byte at a time.
+  const st3 = createParserState("PaddleDetection");
+  const rows3: ParsedTrainLog[] = [];
+  for (const ch of `${detLine}\n`) rows3.push(...feed(st3, ch));
+  const t3 = rows3.find((r) => r.kind === "train");
+  check(
+    "byte-wise chunked feed yields identical record",
+    !!t3 &&
+      t3.loss === null &&
+      t3.lossL1 === 1.2 &&
+      JSON.stringify(t3.nonFinite) === JSON.stringify(["loss", "loss_cls", "loss_iou", "loss_dfl"]),
+    t3?.nonFinite,
+  );
+}
+
+// --------------------------------------------------------------------------
+console.log("\n[9] PaddleSeg: NaN loss/lr on TRAIN + NaN inside EVAL block");
+{
+  const st = createParserState("PaddleSeg");
+  const rows = feed(
+    st,
+    `${TS}[TRAIN] epoch: 1, iter: 100/1000, loss: nan, lr: -nan, batch_cost: 0.1 | ETA 00:13:51\n`,
+  );
+  const t = rows.find((r) => r.kind === "train");
+  check("seg nan train record emitted", !!t);
+  check("seg loss/lr null", t?.loss === null && t?.learningRate === null, [t?.loss, t?.learningRate]);
+  check(
+    "seg nonFinite [loss, lr]",
+    JSON.stringify(t?.nonFinite) === JSON.stringify(["loss", "lr"]),
+    t?.nonFinite,
+  );
+
+  // EVAL block: nan mIoU head + nan inside the (wrapped) class arrays must not
+  // close the block early — the old parser lost per-class metrics AND the
+  // best-checkpoint line here.
+  const st2 = createParserState("PaddleSeg");
+  const rows2 = feed(
+    st2,
+    [
+      `${TS}[TRAIN] epoch: 1, iter: 20000/160000, loss: 0.4, lr: 0.001 | ETA 00:13:51`,
+      `${TS}[EVAL] #Images: 10 mIoU: nan Acc: 0.99 Kappa: 0.49 Dice: 0.60`,
+      `${TS}[EVAL] Class IoU: `,
+      `[0.9952 nan 0.6496]`,
+      `${TS}[EVAL] Class Precision: `,
+      `[0.9976 0.4916 0.764  0.4805 0.2345 0.6789 0.9123 0.4567 0.8901 0.2345`,
+      ` nan 0.789 ]`,
+      `${TS}[EVAL] Class Recall: `,
+      `[0.9976 0.5358 0.8128]`,
+      `${TS}[EVAL] The model with the best validation mIoU (0.5696) was saved at iter 20000.`,
+      ``,
+    ].join("\n"),
+  );
+  const evals = rows2.filter((r) => r.kind === "eval");
+  check("exactly one eval row despite nan", evals.length === 1, evals.length);
+  const e = evals[0];
+  check("mIoU null", e?.mIoU === null, e?.mIoU);
+  check(
+    "classIoU [0.9952, null, 0.6496]",
+    JSON.stringify(e?.classIoU) === JSON.stringify([0.9952, null, 0.6496]),
+    e?.classIoU,
+  );
+  check(
+    "wrapped precision keeps length + null",
+    e?.classPrecision?.length === 12 && e?.classPrecision?.[10] === null,
+    e?.classPrecision,
+  );
+  check("classRecall intact", e?.classRecall?.length === 3, e?.classRecall);
+  check("bestMetric survives nan block", e?.bestMetric === 0.5696, e?.bestMetric);
+  check("bestIter survives nan block", e?.bestIter === 20000, e?.bestIter);
+  check(
+    "nonFinite includes mIoU/class_iou/class_precision",
+    !!e?.nonFinite &&
+      ["mIoU", "class_iou", "class_precision"].every((n) => e.nonFinite!.includes(n)),
+    e?.nonFinite,
+  );
+}
+
+// --------------------------------------------------------------------------
+console.log("\n[10] TorchAnomaly: nan loss + nan metric key");
+{
+  const st = createParserState("TorchAnomaly");
+  const rows = feed(
+    st,
+    [
+      `${TS}[TRAIN] epoch: 3, iter: 600/8000, loss: nan, lr: 0.0001 | ETA 00:11:22`,
+      `${TS}[EVAL] #Images: 40 image_AUROC: nan pixel_auroc: 0.9`,
+      `${TS}[EVAL] The model with the best validation image_auroc (0.9) was saved at iter 3000.`,
+      ``,
+    ].join("\n"),
+  );
+  const t = rows.find((r) => r.kind === "train");
+  check("anomaly nan train record", !!t && t.loss === null, t?.loss);
+  check("train nonFinite includes loss", !!t?.nonFinite?.includes("loss"), t?.nonFinite);
+  const e = rows.find((r) => r.kind === "eval" && r.iteration === 600);
+  check("imageAuroc null", e?.imageAuroc === null, e?.imageAuroc);
+  check("pixelAuroc finite", e?.pixelAuroc === 0.9, e?.pixelAuroc);
+  check("nonFinite includes image_auroc", !!e?.nonFinite?.includes("image_auroc"), e?.nonFinite);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} CHECK(S) FAILED`}\n`);

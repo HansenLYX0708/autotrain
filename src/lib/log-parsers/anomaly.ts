@@ -33,6 +33,7 @@
  */
 
 import type { ParsedTrainLog } from './types'
+import { NUMERIC_TOKEN, NonFiniteCollector, parseNumericToken } from './numbers'
 
 /** Metric names that have dedicated `TrainingLog` columns. */
 const COLUMN_METRICS = new Set(['image_auroc', 'image_f1', 'pixel_auroc', 'pixel_f1', 'threshold'])
@@ -40,6 +41,8 @@ const COLUMN_METRICS = new Set(['image_auroc', 'image_f1', 'pixel_auroc', 'pixel
 interface OpenEval {
   numImages: number | null
   metrics: Record<string, number>
+  /** Lower-cased keys whose printed value was non-finite. */
+  nonFinite: string[]
   bestIter: number | null
   bestMetric: number | null
   bestMetricName: string | null
@@ -60,32 +63,32 @@ export function createAnomalyState(): AnomalyParserState {
   return { lastEpoch: 0, lastIter: 0, lastTotalIter: 0, open: null }
 }
 
-function num(line: string, re: RegExp): number | null {
-  const m = line.match(re)
-  if (!m) return null
-  const value = parseFloat(m[1])
-  return Number.isFinite(value) ? value : null
-}
-
 /**
- * Collect every `key: value` pair whose value is numeric.
+ * Collect every `key: value` pair whose value is a numeric token.
  *
  * Keys are lower-cased so `Image_AUROC` and `image_auroc` land in the same slot.
  * The leading `#` is captured rather than excluded so that `#Images: 40` — the
  * sample count, not a metric — is skipped instead of being reported as a metric
  * called `images`. (A lookbehind would read better but is avoided: this module is
  * bundled for the browser too.)
+ *
+ * Non-finite tokens (`nan`, `inf`, …) are NOT put in `metrics` — the column is
+ * a number — but their key is returned in `nonFinite` so the caller can report
+ * that the value was printed and diverged rather than simply absent.
  */
-function readMetricPairs(line: string): Record<string, number> {
-  const out: Record<string, number> = {}
-  const re = /(#?)([A-Za-z][A-Za-z0-9_]*)\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)/g
+function readMetricPairs(line: string): { metrics: Record<string, number>; nonFinite: string[] } {
+  const metrics: Record<string, number> = {}
+  const nonFinite: string[] = []
+  const re = new RegExp(`(#?)([A-Za-z][A-Za-z0-9_]*)\\s*:\\s*(${NUMERIC_TOKEN})(?![\\w.])`, 'gi')
   let match: RegExpExecArray | null
   while ((match = re.exec(line)) !== null) {
     if (match[1] === '#') continue
-    const value = parseFloat(match[3])
-    if (Number.isFinite(value)) out[match[2].toLowerCase()] = value
+    const key = match[2].toLowerCase()
+    const r = parseNumericToken(match[3])
+    if (r.nonFinite) nonFinite.push(key)
+    else if (r.value !== null) metrics[key] = r.value
   }
-  return out
+  return { metrics, nonFinite }
 }
 
 function finalizeOpenEval(open: OpenEval): ParsedTrainLog {
@@ -113,6 +116,7 @@ function finalizeOpenEval(open: OpenEval): ParsedTrainLog {
     pixelF1: open.metrics.pixel_f1 ?? null,
     threshold: open.metrics.threshold ?? null,
     extraMetrics: Object.keys(extra).length > 0 ? extra : undefined,
+    nonFinite: open.nonFinite.length > 0 ? [...open.nonFinite] : undefined,
     bestIter: open.bestIter,
     bestMetric: open.bestMetric,
     bestMetricName: open.bestMetricName,
@@ -154,20 +158,23 @@ export function parseAnomalyLine(line: string, state: AnomalyParserState): Parse
     if (iteration) state.lastIter = iteration
     if (totalIter) state.lastTotalIter = totalIter
 
+    const nonFinite = new NonFiniteCollector()
+
     results.push({
       kind: 'train',
       epoch,
       iteration,
       totalIter,
-      loss: num(trimmed, /loss:\s*([\d.e+-]+)/i),
-      learningRate: num(trimmed, /lr:\s*([\d.e+-]+)/i),
+      loss: nonFinite.read(trimmed, 'loss'),
+      learningRate: nonFinite.read(trimmed, 'lr'),
       eta: etaMatch ? etaMatch[1] : null,
-      batchCost: num(trimmed, /batch_cost:\s*([\d.]+)/i),
+      batchCost: nonFinite.read(trimmed, 'batch_cost'),
       dataCost: null,
-      readerCost: num(trimmed, /reader_cost:\s*([\d.]+)/i),
-      ips: num(trimmed, /ips:\s*([\d.]+)/i),
+      readerCost: nonFinite.read(trimmed, 'reader_cost'),
+      ips: nonFinite.read(trimmed, 'ips'),
       memReserved: memReservedMatch ? parseInt(memReservedMatch[1], 10) : null,
       memAllocated: memAllocatedMatch ? parseInt(memAllocatedMatch[1], 10) : null,
+      nonFinite: nonFinite.names(),
       rawLog: trimmed,
     })
     return results
@@ -179,7 +186,9 @@ export function parseAnomalyLine(line: string, state: AnomalyParserState): Parse
   // Checked before the metrics line because it also contains a `(...)` number
   // that `readMetricPairs` must not be handed.
   if (isEval && /best\s+validation/i.test(trimmed)) {
-    const bestMatch = trimmed.match(/best\s+validation\s+([A-Za-z][A-Za-z0-9_]*)\s*\(\s*([\d.]+)\s*\)/i)
+    const bestMatch = trimmed.match(
+      new RegExp(`best\\s+validation\\s+([A-Za-z][A-Za-z0-9_]*)\\s*\\(\\s*(${NUMERIC_TOKEN})\\s*\\)`, 'i'),
+    )
     const iterMatch = trimmed.match(/iter\s+(\d+)/i)
     // The line may arrive with no metrics line before it (e.g. a resumed run),
     // so synthesise an empty block rather than dropping the best-model update.
@@ -188,6 +197,7 @@ export function parseAnomalyLine(line: string, state: AnomalyParserState): Parse
       {
         numImages: null,
         metrics: {},
+        nonFinite: [],
         bestIter: null,
         bestMetric: null,
         bestMetricName: null,
@@ -198,7 +208,7 @@ export function parseAnomalyLine(line: string, state: AnomalyParserState): Parse
       }
     if (bestMatch) {
       open.bestMetricName = bestMatch[1].toLowerCase()
-      open.bestMetric = parseFloat(bestMatch[2])
+      open.bestMetric = parseNumericToken(bestMatch[2]).value
     }
     if (iterMatch) open.bestIter = parseInt(iterMatch[1], 10)
     open.rawLines.push(trimmed)
@@ -210,9 +220,12 @@ export function parseAnomalyLine(line: string, state: AnomalyParserState): Parse
   // --- 3. EVAL metrics line --------------------------------------------
   if (isEval && /#Images:/i.test(trimmed)) {
     if (state.open) results.push(finalizeOpenEval(state.open))
+    const imagesMatch = trimmed.match(/#Images:\s*(\d+)/i)
+    const pairs = readMetricPairs(trimmed)
     state.open = {
-      numImages: num(trimmed, /#Images:\s*(\d+)/i),
-      metrics: readMetricPairs(trimmed),
+      numImages: imagesMatch ? parseInt(imagesMatch[1], 10) : null,
+      metrics: pairs.metrics,
+      nonFinite: pairs.nonFinite,
       bestIter: null,
       bestMetric: null,
       bestMetricName: null,

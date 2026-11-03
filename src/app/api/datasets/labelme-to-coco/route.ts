@@ -4,6 +4,7 @@ import { requireAuth } from '@/lib/auth';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomInt } from 'crypto';
+import { buildImageIndex, parseLabelmeJson, resolveLabelmeImage } from '@/lib/labelme-images';
 
 // Helper to get folder size recursively
 function getFolderSize(folderPath: string): number {
@@ -281,6 +282,11 @@ export async function POST(request: NextRequest) {
 
     const skipped: string[] = [];
     const usedNames = new Set<string>();
+    // One recursive index of the images folder for the whole request: matches
+    // by imagePath basename (any subfolder), falls back to the JSON file stem
+    // when the image was renamed to match the JSON.
+    const imageIndex = await buildImageIndex(absoluteImagesPath);
+    let matchedByJsonName = 0;
 
     const convertSplit = (files: string[], splitName: string): { images: CocoImage[]; annotations: CocoAnnotation[]; imageCount: number; annotationCount: number } => {
       const images: CocoImage[] = [];
@@ -293,23 +299,20 @@ export async function POST(request: NextRequest) {
         const labelmePath = path.join(absoluteAnnotationsPath, file);
         let labelmeData: LabelmeData;
         try {
-          labelmeData = JSON.parse(fs.readFileSync(labelmePath, 'utf-8'));
+          labelmeData = parseLabelmeJson(fs.readFileSync(labelmePath, 'utf-8')) as LabelmeData;
         } catch (error) {
           skipped.push(`${file}: invalid JSON (${error instanceof Error ? error.message : String(error)})`);
           continue;
         }
 
-        // Labelme stores `imagePath` relative to where the JSON was *created*,
-        // e.g. "..\MC\a.JPG". After upload every image sits flat in imgs/, so
-        // resolve by base name (either separator) — joining the raw value made
-        // every such sample "not found" and produced an empty dataset.
-        const imageFileName = String(labelmeData.imagePath || '').split(/[\\/]/).pop() || '';
-        const sourceImagePath = imageFileName ? path.join(absoluteImagesPath, imageFileName) : '';
-
-        if (!imageFileName || !fs.existsSync(sourceImagePath)) {
-          skipped.push(`${file}: image not found (${labelmeData.imagePath})`);
+        const resolved = resolveLabelmeImage(imageIndex, file, labelmeData.imagePath);
+        if ('error' in resolved) {
+          skipped.push(`${file}: ${resolved.error}`);
           continue;
         }
+        if (resolved.via === 'jsonName') matchedByJsonName++;
+        const imageFileName = path.basename(resolved.path);
+        const sourceImagePath = resolved.path;
         if (usedNames.has(imageFileName.toLowerCase())) {
           skipped.push(`${file}: duplicate image ${imageFileName}`);
           continue;
@@ -505,6 +508,7 @@ export async function POST(request: NextRequest) {
         totalAnnotations,
         classStats,
         skippedCount: skipped.length,
+        matchedByJsonName,
         skipped: skipped.slice(0, 50),
       },
     });

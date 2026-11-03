@@ -59,6 +59,7 @@ npm run dev          # next dev -p 3000
 npm run build        # next build && node copy.js  (output: standalone)
 npm run lint         # eslint .
 npm run db:push      # prisma db push   <- what this project actually uses
+npm run package:update -- -Label <name>  # one-shot minimal upgrade package: checks + build + verify + smoke test
 npx tsc --noEmit     # typecheck
 ```
 
@@ -321,6 +322,43 @@ The key carrying the detection head differs per meta-architecture:
 are backbone-specific — emitting CSPResNet's `layers`/`use_alpha` under a
 `MobileNetV3:` block is a hard failure. `DETECTION_PRESETS` in
 `src/lib/model-yaml.ts` encodes valid combinations.
+
+### Log parsers: non-finite values
+
+Training logs print `nan`/`-inf`/`NA`/`None` when a run diverges or a class is
+absent from the val split. All numeric reads in `src/lib/log-parsers/` go
+through `numbers.ts` (`readMetric`, `parseNumericToken`, `NonFiniteCollector`)
+— never add another `[\d.]+` + `parseFloat`: `parseFloat("-nan")` leaks NaN
+into the record (which SQLite silently stores as NULL) and a rejected token in
+a numpy class array used to close the EVAL block early, losing per-class
+metrics and the best-checkpoint line. Non-finite metrics parse to `null` and
+their names land in `ParsedTrainLog.nonFinite`, persisted inside
+`TrainingLog.classMetrics` JSON for the Monitoring divergence warning.
+
+### Unparsed output lives only in `autotrain-console.log`
+
+The parsers feed charts and `TrainingLog` rows — anything they don't
+recognise (AMP `Found inf or nan, current scale is …` lines, warnings, all of
+stderr) would otherwise be lost, so `startTrainingProcess` also tees every
+decoded stdout/stderr chunk verbatim to `<outputDir>/autotrain-console.log`
+(`src/lib/job-console.ts`). One file accumulates runs separated by
+`===== AutoTrain run started =====` headers; the AMP summary and the
+monitoring alert describe the latest run only. Debugging a failure means
+reading this file (`GET …/console`, tail/`offset`/`before`/`q`/`download`),
+not just the parsed rows — don't add parser rules just to make some line
+"visible".
+
+### Labelme `imagePath` is a hint, not a path
+
+All three labelme entry points (merge, `labelme-to-coco`,
+`labelme-to-paddleseg`) resolve images through `src/lib/labelme-images.ts` —
+never `path.join(imgsDir, imagePath)` or basename-only lookups. The recorded
+value reflects where the image lived at annotation time; after upload the
+real file may sit in an `imgs/` subfolder or have been renamed to the JSON
+stem, and JSONs can carry a UTF-8 BOM (`parseLabelmeJson`). Matching order:
+imagePath basename (subfolder-aware, `..`-safe, disambiguated by the
+imagePath's trailing folder) → JSON-stem fallback → specific error. Change
+the rules there, once.
 
 ## Conventions
 

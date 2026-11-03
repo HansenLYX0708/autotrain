@@ -50,12 +50,61 @@ export async function GET(
     // Sort order
     const sortOrder = searchParams.get("sort") === "asc" ? "asc" : "desc";
 
-    // Build filter conditions
-    const where: Record<string, unknown> = { jobId: id };
-    if (evaluationsOnly) {
-      where.OR = ["mAP", "mAP50", "mIoU", "imageAuroc", "imageF1", "pixelAuroc", "pixelF1"]
-        .map(metric => ({ [metric]: { not: null } }));
+    // Cursor pagination: `afterTimestamp` + `afterId` resume strictly after a
+    // known row without re-scanning pages. Forward-only — a cursor against a
+    // descending sort would walk the list backwards and is rejected, as is a
+    // half-specified cursor.
+    const afterTimestamp = searchParams.get("afterTimestamp");
+    const afterId = searchParams.get("afterId");
+    let cursor: { timestamp: Date; id: string } | null = null;
+    if (afterTimestamp !== null || afterId !== null) {
+      if (sortOrder !== "asc") {
+        return NextResponse.json(
+          { error: "afterTimestamp/afterId cursor requires sort=asc" },
+          { status: 400 }
+        );
+      }
+      if (afterTimestamp === null || afterId === null) {
+        return NextResponse.json(
+          { error: "afterTimestamp and afterId must be provided together" },
+          { status: 400 }
+        );
+      }
+      const t = new Date(afterTimestamp);
+      if (isNaN(t.getTime())) {
+        return NextResponse.json(
+          { error: "Invalid afterTimestamp" },
+          { status: 400 }
+        );
+      }
+      cursor = { timestamp: t, id: afterId };
     }
+
+    // fields=compact drops `rawLog` (the largest column) for clients that only
+    // chart the numeric fields — e.g. the monitoring page paging through the
+    // complete history of a long run.
+    const compact = searchParams.get("fields") === "compact";
+
+    // Build filter conditions. AND-combined so the eval-metric OR and the
+    // cursor OR constrain each other instead of clobbering the `where.OR` key.
+    const where: Record<string, unknown> = { jobId: id };
+    const and: Record<string, unknown>[] = [];
+    if (evaluationsOnly) {
+      and.push({
+        OR: ["mAP", "mAP50", "mIoU", "imageAuroc", "imageF1", "pixelAuroc", "pixelF1"]
+          .map(metric => ({ [metric]: { not: null } })),
+      });
+    }
+    if (cursor) {
+      const { timestamp, id: cursorId } = cursor;
+      and.push({
+        OR: [
+          { timestamp: { gt: timestamp } },
+          { timestamp: { equals: timestamp }, id: { gt: cursorId } },
+        ],
+      });
+    }
+    if (and.length > 0) where.AND = and;
     if (epoch) {
       where.epoch = parseInt(epoch);
     }
@@ -71,6 +120,7 @@ export async function GET(
         skip,
         take: limit,
         orderBy: [{ timestamp: sortOrder }, { id: sortOrder }],
+        ...(compact ? { omit: { rawLog: true } } : {}),
       }),
       db.trainingLog.count({ where }),
     ]);

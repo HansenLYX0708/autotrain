@@ -2,7 +2,8 @@ param(
     [string]$OutputDirectory = ".\dist",
     [string]$Timestamp = (Get-Date -Format "yyyyMMdd-HHmmss"),
     [string]$DefaultConfigsPath = "",
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$SourceRevision = ""
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2
@@ -69,6 +70,7 @@ $Manifest = [ordered]@{
     databaseMigrationRequired = $false
     defaultConfigCount = $Inventory.Count
     defaultConfigPolicy = "copy-missing-preserve-existing"
+    sourceRevision = $SourceRevision
     frameworks = @($Inventory.framework | Select-Object -Unique)
 }
 [IO.File]::WriteAllText((Join-Path $PackageRoot "manifest.json"), ($Manifest | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false)))

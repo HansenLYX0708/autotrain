@@ -175,7 +175,7 @@ const chartConfig = {
 
 interface LabelmeMergePreview {
   canMerge: boolean
-  labelme: { name: string; categories: string[]; shapeCounts: Record<string, number>; totalJson: number; validSamples: number; invalidSamples: string[] }
+  labelme: { name: string; categories: string[]; shapeCounts: Record<string, number>; totalJson: number; validSamples: number; invalidSamples: string[]; matchedByJsonName?: number }
   coco: { name: string; categories: string[]; trainCategories: string[]; valCategories: string[] }
   differences: { matched: string[]; onlyInLabelme: string[]; onlyInCoco: string[]; missingFromTrain: string[]; missingFromVal: string[] }
   before: { trainImages: number; valImages: number; trainAnnotations: number; valAnnotations: number }
@@ -1392,6 +1392,12 @@ export function DatasetsPage() {
                           <div className="max-h-28 overflow-y-auto text-xs break-words">{mergePreview.differences.missingFromVal.join(', ') || 'None'}</div>
                         </div>
                       </div>
+                    )}
+
+                    {(mergePreview.labelme.matchedByJsonName ?? 0) > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {mergePreview.labelme.matchedByJsonName} image(s) matched by JSON file name (imagePath did not match)
+                      </p>
                     )}
 
                     {mergePreview.labelme.invalidSamples.length > 0 && (

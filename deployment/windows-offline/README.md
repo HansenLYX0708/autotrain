@@ -259,6 +259,16 @@ Windows 自托管必须使用 Next.js 16.3.3 或更高的已修复版本；低�
 
 重新运行同版本安装器时不会覆盖已有 `data/autotrain.db`，但会刷新程序、框架和 Python 包。升级到包含数据库 schema 变化的新版本前，应先备份数据库，并由新离线包提供专门升级步骤；不要用旧数据库模板覆盖现有数据库。
 
+### 一键生成最小升级包
+
+日常发布只更新应用与默认配置时，在制作机仓库根目录运行一条命令即可：
+
+```powershell
+npm run package:update -- -Label <名称>
+```
+
+`New-UpdatePackage.ps1` 依次执行：tsc 基线检查（默认 7 个已知错误，超出即失败）→ `scripts/check-*.ts` 回归脚本 → 调用 `Build-MinimalUpgrade.ps1` 打包 → 校验 zip 与全部文件 SHA256 → 在临时目录内用全新数据库启动打包产物做冒烟测试（HTTP 200、静态资源、API 401），最后打印 zip 路径、大小、SHA256 和安装命令。本机路径写在 `local-upgrade.config.json`（已被 `local-*` gitignore 规则忽略，可复制 `local-upgrade.config.example.json`）；`manifest.json` 会记录 `sourceRevision`。可选开关：`-SkipChecks`、`-SkipBuild`、`-SkipSmokeTest`、`-DefaultConfigsPath <路径>`。详见 `UPGRADE.md` 的 Building 章节。
+
 ## 9. 验证真实训练
 
 环境检查通过后，还必须逐框架做一个最小任务：

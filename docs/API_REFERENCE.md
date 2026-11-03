@@ -175,7 +175,7 @@ AnomalyFolder 的名称会被 slug 化（anomalib 用 datamodule `name` 拼结�
 
 **登录**。把 labelme 标注转换为 COCO 格式。
 
-按 `imagePath` 文件名解析上传后的图片位置，支持两种路径分隔符。输出目录已存在且非空、或 train/val 转换后为空时返回 400。成功响应 `stats.skippedCount` / `stats.skipped` 报告跳过的样本。
+按 `imagePath` 文件名解析上传后的图片位置，支持两种路径分隔符与 `imgs/` 子目录；找不到时回退按 JSON 文件名（`xxx.json` ↔ `xxx.<ext>`）匹配——规则集中在 `src/lib/labelme-images.ts`。输出目录已存在且非空、或 train/val 转换后为空时返回 400。成功响应 `stats.skippedCount` / `stats.skipped` 报告跳过的样本，`stats.matchedByJsonName` 记录按 JSON 文件名匹配上的数量。
 
 ### `POST /api/datasets/labelme-to-paddleseg`
 
@@ -185,7 +185,7 @@ AnomalyFolder 的名称会被 slug 化（anomalib 用 datamodule `name` 拼结�
 
 **登录**。把一批 labelme 标注合并进既有 COCO 数据集。body：`action`（`verify` / `merge`）, `cocoDataset`, `labelmeDataset`, `trainRatio`, `valRatio`, `addCategories?: string[]`。
 
-`addCategories` 是用户选择导入的新类别名，省略等于空数组。未选择的新类别标注不复制，图片仍保留。Verify 返回类别差异、`labelme.shapeCounts`、`planned.addedCategories` / `droppedCategories` / `droppedAnnotations`（源样本全部 shape 数，尚未按比例抽样）。Merge 重新验证目标 train/val 类别名和 ID 一致性，同步新类别 ID、统计、数据集 YAML 和已有配置/类别名称文件。
+`addCategories` 是用户选择导入的新类别名，省略等于空数组。未选择的新类别标注不复制，图片仍保留。Verify 返回类别差异、`labelme.shapeCounts`、`planned.addedCategories` / `droppedCategories` / `droppedAnnotations`（源样本全部 shape 数，尚未按比例抽样），以及 `labelme.matchedByJsonName`——有多少样本的图片是按 JSON 文件名（而非 `imagePath`）匹配上的。图片解析同样走 `labelme-images` 共享解析器（子目录、JSON 名回退、BOM、重名按 imagePath 尾部目录消歧、同一图片被两个 JSON 引用报 invalid）。Merge 重新验证目标 train/val 类别名和 ID 一致性，同步新类别 ID、统计、数据集 YAML 和已有配置/类别名称文件。
 
 ---
 
@@ -300,9 +300,23 @@ body：`projectId`, `datasetId`, `modelId`, `configId`（可选）, `name`, `gpu
 
 ### `GET /api/training-jobs/[id]/logs`
 
-**归属**。查询参数：`page`（默认 1）、`limit`（默认 100，**上限 1000**）、`epoch`、`minLoss`、`maxLoss`、`sort`（`asc` \| 默认 `desc`）。
+**归属**。查询参数：`page`（默认 1）、`limit`（默认 100，**上限 1000**）、`epoch`、`minLoss`、`maxLoss`、`sort`（`asc` \| 默认 `desc`）、`fields`（`compact`）、`afterTimestamp` + `afterId`。
 
-GET 的 `kind=eval` 参数只返回带检测、分割或异常检测验证指标的行（包括值为 0 的指标），返回 `{ job, data, pagination }`。Monitoring 独立分页读取验证历史，普通日志使用 `sort=desc` 取最近 500 条。排序以 timestamp、id 保证分页稳定。
+GET 的 `kind=eval` 参数只返回带检测、分割或异常检测验证指标的行（包括值为 0 的指标），返回 `{ job, data, pagination }`。`fields=compact` 用 Prisma `omit` 去掉 `rawLog` 列，供只画图的前端翻完整个历史。`afterTimestamp`（ISO）+ `afterId` 是游标翻页：只与 `sort=asc` 同用，两个参数必须同时给出（否则 400），过滤条件与其他过滤项 AND 组合。排序以 timestamp、id 保证分页稳定。
+
+### `GET /api/training-jobs/[id]/console`
+
+**归属**。读取任务输出目录下的 `autotrain-console.log`（启动进程时逐字节捕获的 stdout+stderr，见 `src/lib/job-console.ts`）。文件不存在或无 `outputDir` 时返回 `{ available: false, size: 0, amp: null }`（仍 200），前端据此回退到解析日志行。
+
+查询参数：`maxBytes`（默认 256 KB，夹取 4 KB..1 MB）。模式：
+
+- `download=1`：整文件流式下载，`text/plain; charset=utf-8`，`Content-Disposition: attachment; filename="<任务名 slug>-console.log"`。
+- `q=<text>`：整文件大小写不敏感子串搜索，返回 `{ available, path, size, matches: [{line, text}], totalMatches, truncated, amp }`（matches 上限 1000，行号 1 起）。
+- `offset=<字节>`：从偏移量正向读。运行中的任务绝不返回半行；任务结束后含 EOF 处的未闭合行（`includePartial`）。
+- `before=<字节>`：返回以该偏移结尾的一段，用于「Load earlier」向前翻。
+- 默认：文件尾部 `maxBytes`。
+
+区间响应为 `{ available: true, path, size, start, end, text, hasMore, amp }`，永远按行边界裁剪，`end` 是**字节**偏移（多字节字符不会错位）。`amp` 是最近一次运行的 AMP loss-scale 溢出汇总（`{count, initialScale, currentScale, minScale, lastLine}`，增量扫描缓存）。非法数字参数返回 400。
 
 ### `POST /api/training-jobs/[id]/logs`
 

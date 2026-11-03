@@ -282,7 +282,13 @@ Buffer chunk
 
 写库失败被**吞掉**并只打日志：丢一行日志远不如因为数据库抖动搞死一次训练严重。
 
-### 6.4 停止与结束
+### 6.3.1 控制台日志捕获（autotrain-console.log）
+
+解析器只认特定行——AMP 的 `Found inf or nan, current scale is …`、警告、stderr 和一切其他输出都不会进 `TrainingLog`。因此 `startTrainingProcess` 同时把**每个解码后的 stdout/stderr chunk 按到达顺序逐字节**写进 `<outputDir>/autotrain-console.log`（`src/lib/job-console.ts`，路径解析与 `/api/checkpoints` 的 `saveDir` 相同：绝对 `outputDir` 优先，否则相对框架工作目录）。
+
+- 每次启动追加 `===== AutoTrain run started <ISO> =====` 头，`close` 时写 `… run finished: <status> (exit code N)` 尾，所以同一文件可含多次运行；AMP 汇总只描述**最近一次**运行（遇头即重置）。
+- 流写失败只 `console.error` 并停笔——日志文件坏了绝不能搞死训练。
+- 读取走 `GET /api/training-jobs/[id]/console`：tail / `offset` / `before` / `q` / `download`，**绝不切行**（运行中不返回未闭合行），`end` 为字节偏移。`readAmpSummary` 增量折叠 AMP 溢出行并缓存已扫位置，文件被截断则重扫。
 
 - `PUT {status:"stopped"}`：先把 job id 记入 `stoppingJobs`，**再**杀进程。否则 `close` 处理器会把「用户主动停止」当成「崩溃」——`taskkill` 让子进程非零退出，旧代码无条件写 `failed` + "exit code 1"，于是每次手动停止都显示成崩溃。
 - `killProcessTree(pid)`：Windows 用 `taskkill /PID <pid> /T /F`；POSIX 对**进程组**发 SIGTERM，5 秒后 SIGKILL。只杀启动器是不够的——`paddle.distributed.launch` 会为每张卡 fork worker，它们会活下来并继续占着显存。
@@ -305,6 +311,8 @@ Buffer chunk
 之所以能共享，是因为 **`torchtrain/torchtrain/logger.py` 逐字节复刻了 Paddle 的 stdout 格式**。改任一侧的日志格式，必须同时改另一侧。校验脚本：`scripts/check-log-parsers.ts`。
 
 所有解析器产出统一的 `ParsedTrainLog`（`kind: 'train' | 'eval'`），框架特有字段是可选的——消费方应把「字段缺失」理解为「该框架不适用」而不是「数据丢了」。
+
+**非有限值（NaN/Inf）**：所有数值读取走共享模块 `numbers.ts`（`readMetric` / `parseNumericToken` / `NonFiniteCollector`）。日志里的 `nan`、`-inf`、`NA`、`None` 等 token 一律解析为 `null`，同时把指标名记进 `ParsedTrainLog.nonFinite`（如 `loss`、`class_iou`、`image_auroc`）——「打印了但已发散」与「没打印」因此可区分。numpy 逐类别数组中的 `nan` 变成数组里的 `null` 项（不位移类别索引），且不会让包裹数组提前闭合 EVAL 块。`writeParsedLog` 把 `nonFinite` 名单随 `TrainingLog.classMetrics` JSON 一起持久化（`{"iou":…,"nonFinite":[…]}`），Monitoring 页据此在 loss 图上方显示发散告警。
 
 `flush()` 在进程退出时会给有状态解析器喂一个**哨兵行**（匹配不上任何模式），迫使它们闭合尚未提交的 EVAL 块。
 

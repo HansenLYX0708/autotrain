@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
 import { defaultInferOutputDir, frameworkMeta, getWorkDir, isAnomaly, isSegmentation, resolvePythonPath } from '@/lib/frameworks';
 import { buildEvalCommand, buildInferCommand } from '@/lib/job-commands';
+import { NUMERIC_TOKEN, parseNumericToken } from '@/lib/log-parsers';
 import { spawn, exec } from 'child_process';
 import { existsSync, readdirSync, readFileSync, statSync, mkdirSync } from 'fs';
 import { join, basename, extname, dirname } from 'path';
@@ -611,17 +612,19 @@ function startValidationProcess(
       // torchtrain/torchtrain/logger.py), so TorchSeg parses identically.
       const segF = (re: RegExp): number | null => {
         const m = fullOutput.match(re);
-        return m ? parseFloat(m[1]) : null;
+        return m ? parseNumericToken(m[1]).value : null;
       };
       const classArrays = fullOutput.match(/\[EVAL\]\s*Class IoU:\s*\r?\n\s*\[([^\]]*)\]/i);
       resultJson = JSON.stringify({
-        mIoU: segF(/mIoU:\s*([\d.]+)/i),
-        acc: segF(/Acc:\s*([\d.]+)/i),
-        kappa: segF(/Kappa:\s*([\d.]+)/i),
-        dice: segF(/Dice:\s*([\d.]+)/i),
+        mIoU: segF(new RegExp(`mIoU:\\s*(${NUMERIC_TOKEN})`, 'i')),
+        acc: segF(new RegExp(`Acc:\\s*(${NUMERIC_TOKEN})`, 'i')),
+        kappa: segF(new RegExp(`Kappa:\\s*(${NUMERIC_TOKEN})`, 'i')),
+        dice: segF(new RegExp(`Dice:\\s*(${NUMERIC_TOKEN})`, 'i')),
         samplesCount: segF(/#Images:\s*(\d+)/i),
+        // `nan` entries must map to null, not be filtered out — filtering
+        // would shift every class index after the gap.
         classIoU: classArrays
-          ? classArrays[1].trim().split(/\s+/).map(Number).filter((n) => !Number.isNaN(n))
+          ? classArrays[1].trim().split(/\s+/).map((tok) => parseNumericToken(tok).value)
           : undefined,
       });
     } else if (type === 'eval' && status === 'completed') {

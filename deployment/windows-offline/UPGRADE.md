@@ -15,9 +15,26 @@ framework environments and model weights are reused from the existing installati
   validation annotations before creation when validation is enabled.
 - Monitoring reads validation history separately from recent training logs and
   plots detection mAP@0.5:0.95 / mAP@0.5 by epoch, including a single result.
+- NaN/Inf values in training and validation logs are stored as empty values
+  instead of corrupting charts. Monitoring shows a divergence warning naming the
+  affected metrics; per-class arrays containing `nan` keep their class order.
 - Select which new Labelme categories to import when merging into COCO.
 - Training-job class counts come from the selected dataset.
 - Default model/training configuration dropdowns, file refresh and YAML loading.
+- Monitoring now shows a **Console Output** card: the complete stdout/stderr
+  of each run is captured to `autotrain-console.log` next to the checkpoints,
+  with live tail, "Load earlier", full-file search and download. AMP
+  "Found inf or nan" loss-scale overflows are highlighted and summarised in a
+  new alert. Runs started before this update fall back to parsed log rows.
+- Monitoring loads the full log history of a job (cursor-based paging,
+  compact rows) instead of the latest 500; charts over 4000 points are
+  min/max-decimated so long runs stay readable and loss spikes remain
+  visible.
+- Labelme image matching (Merge into COCO, LabelMe → COCO, LabelMe →
+  PaddleSeg): images are found by the `imagePath` file name anywhere under
+  `data/imgs` (including subfolders), falling back to the image with the same
+  name as the JSON file. BOM-prefixed JSON files are accepted, and unmatched
+  files report the names that were tried.
 
 No database schema migration is required for this update.
 
@@ -89,7 +106,24 @@ remove those only if you also want to undo the new defaults.
 
 ## Building this package
 
-On the build workstation (Node.js, npm and tsx available):
+On the build workstation (Node.js, npm and tsx available), one command does
+the typecheck, regression scripts, build, archive verification and a packaged
+-server smoke test:
+
+```powershell
+npm run package:update -- -Label <name>
+# or directly:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows-offline\New-UpdatePackage.ps1 -Label <name>
+```
+
+Per-machine paths live in `local-upgrade.config.json` (gitignored; copy
+`local-upgrade.config.example.json`): `outputDirectory`, `defaultConfigsPath`,
+`tscBaseline`. CLI parameters override the config. `-SkipChecks` skips tsc +
+check scripts, `-SkipBuild` reuses an already verified production build,
+`-SkipSmokeTest` skips only the packaged-server probe. The manifest records
+`sourceRevision` (short git SHA, `-dirty` when the tree is dirty).
+
+The low-level driver remains available for one-off use:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows-offline\Build-MinimalUpgrade.ps1 -OutputDirectory "E:\AutoTrainOfflineBuild\output" -DefaultConfigsPath "D:\_work\projects\autoTraining\userConfigBase"

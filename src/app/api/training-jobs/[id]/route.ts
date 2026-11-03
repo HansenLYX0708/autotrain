@@ -6,7 +6,8 @@ import { logActivity } from "@/lib/activity-log";
 import { getCurrentUser, notFoundOrDenied, requireOwnedScope } from "@/lib/auth";
 import { frameworkMeta, getWorkDir, isTorch, resolvePythonPath, tracksIterations } from "@/lib/frameworks";
 import * as path from "path";
-import { existsSync } from "fs";
+import { createWriteStream, existsSync, mkdirSync, type WriteStream } from "fs";
+import { jobConsoleLogPath, runFooter, runHeader } from "@/lib/job-console";
 import {
   createParserState,
   feed as feedParser,
@@ -425,6 +426,7 @@ export async function PUT(
                 systemConfig.condaEnv || null,
                 systemConfig.condaPath || null,
                 framework,
+                jobConsoleLogPath(existingJob.outputDir, workDir),
               );
               console.log(`[Job ${id}] Training process started successfully`);
             } catch (error) {
@@ -633,6 +635,7 @@ function startTrainingProcess(
   condaEnv: string | null = null,
   condaPath: string | null = null,
   framework: string = 'PaddleDetection',
+  consoleLogPath: string | null = null,
 ) {
   console.log(`\n========== TRAINING PROCESS START ==========`);
   console.log(`[Job ${jobId}] GPU(s): ${gpuIds}`);
@@ -773,10 +776,64 @@ function startTrainingProcess(
   const stdoutDecoder = new StringDecoder("utf8");
   const stderrDecoder = new StringDecoder("utf8");
 
+  // Verbatim console capture: `paddle.distributed.launch` echoes the worker's
+  // stdout (including AMP "Found inf or nan" lines the parsers ignore), but
+  // nothing unparsed is persisted anywhere else. Every decoded chunk lands in
+  // `<outputDir>/autotrain-console.log` so the monitoring page can show the
+  // full run output, not just chart rows. Any failure here is logged and
+  // swallowed — a broken log file must never break training.
+  let consoleStream: WriteStream | null = null;
+  if (consoleLogPath) {
+    try {
+      mkdirSync(path.dirname(consoleLogPath), { recursive: true });
+      consoleStream = createWriteStream(consoleLogPath, { flags: "a" });
+      consoleStream.on("error", (streamErr) => {
+        console.error(`[Job ${jobId}] console log stream error:`, streamErr);
+        consoleStream = null;
+      });
+      consoleStream.write(runHeader(new Date()));
+    } catch (streamErr) {
+      console.error(`[Job ${jobId}] could not open console log:`, streamErr);
+      consoleStream = null;
+    }
+  }
+  const writeConsole = (text: string) => {
+    try {
+      consoleStream?.write(text);
+    } catch {
+      // Console capture is best-effort.
+    }
+  };
+  // The tee is line-buffered *per stream*: stdout and stderr are independent
+  // pipes, so a raw stderr chunk can land between the halves of an unfinished
+  // stdout line — corrupting it (e.g. splitting an AMP `Found inf or nan`
+  // line, which the summary regex would then miss). Buffering each stream to
+  // the last '\n' keeps every line contiguous; the remainder is held until
+  // its newline arrives or the process closes.
+  const consolePending: Record<"out" | "err", string> = { out: "", err: "" };
+  const writeConsoleLines = (which: "out" | "err", text: string) => {
+    consolePending[which] += text;
+    const nl = consolePending[which].lastIndexOf("\n");
+    if (nl === -1) return;
+    writeConsole(consolePending[which].slice(0, nl + 1));
+    consolePending[which] = consolePending[which].slice(nl + 1);
+  };
+  const drainConsolePending = () => {
+    consolePending.out += stdoutDecoder.end();
+    consolePending.err += stderrDecoder.end();
+    for (const which of ["out", "err"] as const) {
+      const rem = consolePending[which];
+      if (!rem) continue;
+      writeConsole(rem.endsWith("\n") ? rem : rem + "\n");
+      consolePending[which] = "";
+    }
+  };
+
   childProcess.stdout?.on("data", async (data: Buffer) => {
     const output = stdoutDecoder.write(data);
     if (!output) return;
     console.log(`[Job ${jobId}] ${output}`);
+    writeConsoleLines("out", output);
 
     // Split chunk into complete lines and dispatch each to the appropriate
     // per-framework parser. Zero, one, or many rows may come back per chunk.
@@ -790,6 +847,7 @@ function startTrainingProcess(
     const stderrOutput = stderrDecoder.write(data);
     if (!stderrOutput) return;
     console.error(`[Job ${jobId} ERROR] ${stderrOutput}`);
+    writeConsoleLines("err", stderrOutput);
     // Collect stderr for error message
     stderrCollector.push(stderrOutput);
     // Keep only last 50 lines to avoid memory issues
@@ -824,6 +882,13 @@ function startTrainingProcess(
     const wasStopped = stoppingJobs.delete(jobId);
     const status = wasStopped ? "stopped" : code === 0 ? "completed" : "failed";
     try {
+      drainConsolePending();
+      writeConsole(runFooter(status, code));
+      consoleStream?.end();
+    } catch {
+      // Console capture is best-effort.
+    }
+    try {
       const updateData: Record<string, unknown> = {
         status,
         completedAt: new Date(),
@@ -854,6 +919,13 @@ function startTrainingProcess(
 
   childProcess.on("error", async (error) => {
     console.error(`[Job ${jobId} PROCESS ERROR]`, error);
+    drainConsolePending();
+    writeConsole(`[process error] ${error.message}\n`);
+    try {
+      consoleStream?.end();
+    } catch {
+      // Console capture is best-effort.
+    }
     runningProcesses.delete(jobId);
     const errState = jobParserStates.get(jobId);
     if (errState) {
@@ -895,9 +967,16 @@ async function writeParsedLog(
   framework?: string | null,
 ): Promise<void> {
   try {
+    // Defensive: SQLite accepts NaN/Infinity writes but silently stores them
+    // as NULL, and a stray non-finite number must never reach the DB anyway.
+    const finite = (v: number | null | undefined): number | null =>
+      typeof v === "number" && Number.isFinite(v) ? v : null;
+
     // 1. Roll the TrainingJob progress snapshot forward. Only touch columns
     //    the parser actually produced so an EVAL row (which has no loss/lr)
-    //    doesn't wipe the last known progress.
+    //    doesn't wipe the last known progress. `currentLoss`/`currentLr` are
+    //    assigned only when finite — a `loss: nan` line must not overwrite the
+    //    last known finite value with null.
     const jobUpdate: Record<string, unknown> = {};
     // `currentEpoch` must be in the same unit as `totalEpochs`, which holds
     // *iterations* for every framework whose `stepUnit` is `iter` (segmentation
@@ -910,14 +989,14 @@ async function writeParsedLog(
     } else if (log.epoch) {
       jobUpdate.currentEpoch = log.epoch;
     }
-    if (log.loss !== null && log.loss !== undefined) jobUpdate.currentLoss = log.loss;
-    if (log.learningRate !== null && log.learningRate !== undefined) {
+    if (finite(log.loss) !== null) jobUpdate.currentLoss = log.loss;
+    if (finite(log.learningRate) !== null) {
       jobUpdate.currentLr = log.learningRate;
     }
-    if (log.bestIter !== null && log.bestIter !== undefined) {
+    if (finite(log.bestIter) !== null) {
       jobUpdate.bestIter = log.bestIter;
     }
-    if (log.bestMetric !== null && log.bestMetric !== undefined) {
+    if (finite(log.bestMetric) !== null) {
       jobUpdate.bestMetric = log.bestMetric;
     }
     if (Object.keys(jobUpdate).length > 0) {
@@ -929,47 +1008,50 @@ async function writeParsedLog(
     //    column carries any anomaly metric that has no dedicated column (see
     //    `ParsedTrainLog.extraMetrics`), which is how a newly added anomalib
     //    metric survives instead of being silently dropped.
-    const classMetrics =
-      log.classIoU || log.classPrecision || log.classRecall
-        ? JSON.stringify({
-            iou: log.classIoU ?? null,
-            precision: log.classPrecision ?? null,
-            recall: log.classRecall ?? null,
-          })
-        : log.extraMetrics
-          ? JSON.stringify({ metrics: log.extraMetrics })
-          : null;
+    const classMetricsObj: Record<string, unknown> = {};
+    if (log.classIoU || log.classPrecision || log.classRecall) {
+      classMetricsObj.iou = log.classIoU?.map(finite) ?? null;
+      classMetricsObj.precision = log.classPrecision?.map(finite) ?? null;
+      classMetricsObj.recall = log.classRecall?.map(finite) ?? null;
+    }
+    if (log.extraMetrics) classMetricsObj.metrics = log.extraMetrics;
+    // `nonFinite` records which metrics printed NaN/Inf — the monitoring page
+    // turns it into a divergence warning instead of silently charting a gap.
+    if (log.nonFinite?.length) classMetricsObj.nonFinite = log.nonFinite;
+    const classMetrics = Object.keys(classMetricsObj).length > 0
+      ? JSON.stringify(classMetricsObj)
+      : null;
 
     await db.trainingLog.create({
       data: {
         jobId,
-        epoch: log.epoch,
-        iteration: log.iteration,
-        totalIter: log.totalIter,
-        loss: log.loss,
-        lossCls: log.lossCls ?? null,
-        lossIou: log.lossIou ?? null,
-        lossDfl: log.lossDfl ?? null,
-        lossL1: log.lossL1 ?? null,
-        learningRate: log.learningRate,
-        mIoU: log.mIoU ?? null,
-        acc: log.acc ?? null,
-        kappa: log.kappa ?? null,
-        dice: log.dice ?? null,
-        mAP: log.mAP ?? null,
-        mAP50: log.mAP50 ?? null,
-        imageAuroc: log.imageAuroc ?? null,
-        imageF1: log.imageF1 ?? null,
-        pixelAuroc: log.pixelAuroc ?? null,
-        pixelF1: log.pixelF1 ?? null,
-        threshold: log.threshold ?? null,
+        epoch: finite(log.epoch) ?? 0,
+        iteration: finite(log.iteration) ?? 0,
+        totalIter: finite(log.totalIter) ?? 0,
+        loss: finite(log.loss),
+        lossCls: finite(log.lossCls),
+        lossIou: finite(log.lossIou),
+        lossDfl: finite(log.lossDfl),
+        lossL1: finite(log.lossL1),
+        learningRate: finite(log.learningRate),
+        mIoU: finite(log.mIoU),
+        acc: finite(log.acc),
+        kappa: finite(log.kappa),
+        dice: finite(log.dice),
+        mAP: finite(log.mAP),
+        mAP50: finite(log.mAP50),
+        imageAuroc: finite(log.imageAuroc),
+        imageF1: finite(log.imageF1),
+        pixelAuroc: finite(log.pixelAuroc),
+        pixelF1: finite(log.pixelF1),
+        threshold: finite(log.threshold),
         eta: log.eta,
-        batchCost: log.batchCost,
-        dataCost: log.dataCost,
-        readerCost: log.readerCost,
-        ips: log.ips,
-        memReserved: log.memReserved,
-        memAllocated: log.memAllocated,
+        batchCost: finite(log.batchCost),
+        dataCost: finite(log.dataCost),
+        readerCost: finite(log.readerCost),
+        ips: finite(log.ips),
+        memReserved: finite(log.memReserved),
+        memAllocated: finite(log.memAllocated),
         classMetrics,
         rawLog: log.rawLog.slice(0, 2000),
       },

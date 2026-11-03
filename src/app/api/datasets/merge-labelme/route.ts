@@ -7,6 +7,7 @@ import { existsSync } from "fs";
 import * as path from "path";
 import { randomInt } from "crypto";
 import { appendCategories, assessLabelmeMerge, convertLabelmeShapes } from "@/lib/labelme-coco-merge";
+import { buildImageIndex, parseLabelmeJson, resolveLabelmeImage } from "@/lib/labelme-images";
 import { isMap, parseDocument } from "yaml";
 
 interface CocoCategory { id: number; name: string; supercategory?: string }
@@ -71,33 +72,47 @@ async function annotationFiles(datasetRoot: string) {
 async function sourceSamples(datasetRoot: string) {
   const imageDirectory = path.join(datasetRoot, "data", "imgs");
   const jsonDirectory = path.join(datasetRoot, "data", "jsons");
+  const index = await buildImageIndex(imageDirectory);
   const files = (await readdir(jsonDirectory)).filter((file) => file.toLowerCase().endsWith(".json"));
   const samples: SourceSample[] = [];
   const categories = new Set<string>();
   const shapeCounts: Record<string, number> = {};
   const invalid: string[] = [];
+  let matchedByJsonName = 0;
+  const usedImages = new Map<string, string>();
   for (const file of files) {
     try {
       const jsonPath = path.join(jsonDirectory, file);
-      const data = JSON.parse(await readFile(jsonPath, "utf-8")) as LabelmeDocument;
-      const imageName = String(data.imagePath || "").split(/[\\/]/).pop() || "";
-      const imagePath = resolveWithin(imageDirectory, imageName);
-      if (!imageName || !imagePath || !existsSync(imagePath)) {
-        invalid.push(`${file}: image not found`);
+      // Keep only what merge needs: Labelme embeds the whole image as base64
+      // `imageData`, and retaining it for every sample exhausted the Node heap.
+      const { imagePath, imageWidth, imageHeight, shapes } =
+        parseLabelmeJson(await readFile(jsonPath, "utf-8")) as LabelmeDocument;
+      const data: LabelmeDocument = { imagePath, imageWidth, imageHeight, shapes };
+      const resolved = resolveLabelmeImage(index, file, data.imagePath);
+      if ("error" in resolved) {
+        invalid.push(`${file}: ${resolved.error}`);
         continue;
       }
+      const previous = usedImages.get(path.resolve(resolved.path).toLowerCase());
+      if (previous) {
+        invalid.push(`${file}: image already used by ${previous}`);
+        continue;
+      }
+      usedImages.set(path.resolve(resolved.path).toLowerCase(), file);
+      if (resolved.via === "jsonName") matchedByJsonName++;
+      const imageName = path.basename(resolved.path);
       for (const shape of data.shapes || []) {
         const label = shape.label?.trim();
         if (!label) continue;
         categories.add(label);
         shapeCounts[label] = (shapeCounts[label] || 0) + 1;
       }
-      samples.push({ jsonPath, imagePath, imageName, data });
+      samples.push({ jsonPath, imagePath: resolved.path, imageName, data });
     } catch (error) {
       invalid.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { samples, categories: [...categories].sort(), shapeCounts, invalid, totalJson: files.length };
+  return { samples, categories: [...categories].sort(), shapeCounts, invalid, totalJson: files.length, matchedByJsonName };
 }
 
 function uniqueImageName(original: string, sourceName: string, used: Set<string>): string {
@@ -208,7 +223,7 @@ export async function POST(request: NextRequest) {
     );
     const preview = {
       canMerge: assessment.canMerge && categoryIdsMatch,
-      labelme: { name: body.labelmeDataset, categories: source.categories, shapeCounts: source.shapeCounts, totalJson: source.totalJson, validSamples: source.samples.length, invalidSamples: source.invalid },
+      labelme: { name: body.labelmeDataset, categories: source.categories, shapeCounts: source.shapeCounts, totalJson: source.totalJson, validSamples: source.samples.length, invalidSamples: source.invalid, matchedByJsonName: source.matchedByJsonName },
       coco: { name: body.cocoDataset, categories: assessment.cocoCategories, trainCategories, valCategories },
       differences: assessment.differences,
       before,

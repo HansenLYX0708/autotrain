@@ -30,12 +30,7 @@
  */
 
 import type { ParsedTrainLog } from './types'
-
-function extractFloat(line: string, key: string): number | null {
-  // Word-boundary + optional whitespace after colon, mirrors the original.
-  const m = line.match(new RegExp(`${key}:\\s*([\\d.e-]+)`, 'i'))
-  return m ? parseFloat(m[1]) : null
-}
+import { NUMERIC_TOKEN, NonFiniteCollector, parseNumericToken, readMetric } from './numbers'
 
 interface OpenCocoEval {
   mAP: number | null
@@ -61,8 +56,8 @@ export function createDetState(): DetParserState {
 }
 
 /** `Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.212` */
-const AP_ALL_100 = /Average Precision\s+\(AP\)\s*@\[\s*IoU=0\.50:0\.95\s*\|\s*area=\s*all\s*\|\s*maxDets=\s*100\s*\]\s*=\s*(-?[\d.]+)/i
-const AP50_ALL_100 = /Average Precision\s+\(AP\)\s*@\[\s*IoU=0\.50\s*\|\s*area=\s*all\s*\|\s*maxDets=\s*100\s*\]\s*=\s*(-?[\d.]+)/i
+const AP_ALL_100 = new RegExp(`Average Precision\\s+\\(AP\\)\\s*@\\[\\s*IoU=0\\.50:0\\.95\\s*\\|\\s*area=\\s*all\\s*\\|\\s*maxDets=\\s*100\\s*\\]\\s*=\\s*(${NUMERIC_TOKEN})`, 'i')
+const AP50_ALL_100 = new RegExp(`Average Precision\\s+\\(AP\\)\\s*@\\[\\s*IoU=0\\.50\\s*\\|\\s*area=\\s*all\\s*\\|\\s*maxDets=\\s*100\\s*\\]\\s*=\\s*(${NUMERIC_TOKEN})`, 'i')
 const COCO_ROW = /Average (?:Precision|Recall)\s+\((?:AP|AR)\)\s*@\[/i
 const COCO_BLOCK_START = /Evaluate annotation type\s+\*(\w+)\*/i
 /** Total rows pycocotools' `summarize()` prints per annotation type. */
@@ -153,9 +148,9 @@ export function parseDetectionLines(line: string, state: DetParserState): Parsed
   // --- COCO block: metric rows ----------------------------------------
   if (state.open && COCO_ROW.test(line)) {
     const ap = line.match(AP_ALL_100)
-    if (ap) state.open.mAP = parseFloat(ap[1])
+    if (ap) state.open.mAP = parseNumericToken(ap[1]).value
     const ap50 = line.match(AP50_ALL_100)
-    if (ap50) state.open.mAP50 = parseFloat(ap50[1])
+    if (ap50) state.open.mAP50 = parseNumericToken(ap50[1]).value
     state.open.rawLines.push(line.trim())
     state.open.rows += 1
     if (state.open.rows >= COCO_ROWS_PER_BLOCK) {
@@ -209,39 +204,41 @@ export function parseDetectionLine(line: string): ParsedTrainLog | null {
   const iteration = parseInt(lastMatch[1], 10)
   const totalIter = parseInt(lastMatch[2], 10)
 
+  const nonFinite = new NonFiniteCollector()
+
   // Learning rate is emitted as `learning_rate` (Detection) or `lr` (Seg but
   // we also accept it here for eval-mode logs coming through detection code
   // paths — matches the pre-refactor behaviour).
-  const lr =
-    extractFloat(line, 'learning_rate') ??
-    extractFloat(line, 'lr')
+  const lrRead = readMetric(line, 'learning_rate') ?? readMetric(line, 'lr')
+  const lr = nonFinite.add(lrRead, 'lr')
 
-  // `loss:` but not `loss_cls:` / `loss_iou:` etc.
-  const lossMatch = line.match(/(?:^|\s)loss:\s*([\d.]+)(?!\w)/i)
-  const loss = lossMatch ? parseFloat(lossMatch[1]) : null
+  // `loss:` but not `loss_cls:` / `loss_iou:` etc. (readMetric requires the
+  // next char after the key to be `:`/`=`, so `loss_cls:` can't fire `loss`).
+  const lossRead = readMetric(line, 'loss')
+  const loss = nonFinite.add(lossRead, 'loss')
 
-  const lossCls = extractFloat(line, 'loss_cls')
-  const lossIou = extractFloat(line, 'loss_iou')
-  const lossDfl = extractFloat(line, 'loss_dfl')
-  const lossL1 = extractFloat(line, 'loss_l1')
+  const lossCls = nonFinite.read(line, 'loss_cls')
+  const lossIou = nonFinite.read(line, 'loss_iou')
+  const lossDfl = nonFinite.read(line, 'loss_dfl')
+  const lossL1 = nonFinite.read(line, 'loss_l1')
 
   // Detection ETA supports both plain "0:02:24" and "1 day, 20:03:57".
   const etaMatch = line.match(/eta:\s*([^\s,]+(?:,\s*\d{1,2}:\d{2}:\d{2})?)/i)
   const eta = etaMatch ? etaMatch[1].trim() : null
 
-  const batchCost = extractFloat(line, 'batch_cost')
-  const dataCost = extractFloat(line, 'data_cost')
-
-  const ipsMatch = line.match(/ips:\s*([\d.]+)/i)
-  const ips = ipsMatch ? parseFloat(ipsMatch[1]) : null
+  const batchCost = nonFinite.read(line, 'batch_cost')
+  const dataCost = nonFinite.read(line, 'data_cost')
+  const ips = nonFinite.read(line, 'ips')
 
   const memReservedMatch = line.match(/max_mem_reserved:\s*(\d+)/i)
   const memAllocatedMatch = line.match(/max_mem_allocated:\s*(\d+)/i)
   const memReserved = memReservedMatch ? parseInt(memReservedMatch[1], 10) : null
   const memAllocated = memAllocatedMatch ? parseInt(memAllocatedMatch[1], 10) : null
 
-  // No usable training metrics? Not a training line.
-  if (!epochMatch && loss === null && lr === null) return null
+  // No usable training metrics? Not a training line. A metric that was
+  // printed but read non-finite (`loss: nan`) still counts as present —
+  // otherwise a diverged line would be silently skipped instead of recorded.
+  if (!epochMatch && lossRead === null && lrRead === null) return null
 
   return {
     kind: 'train',
@@ -261,6 +258,7 @@ export function parseDetectionLine(line: string): ParsedTrainLog | null {
     lossIou,
     lossDfl,
     lossL1,
+    nonFinite: nonFinite.names(),
     rawLog: line.trim(),
   }
 }
