@@ -8,6 +8,7 @@ import * as path from "path";
 import { randomInt } from "crypto";
 import { appendCategories, assessLabelmeMerge, convertLabelmeShapes } from "@/lib/labelme-coco-merge";
 import { buildImageIndex, parseLabelmeJson, resolveLabelmeImage } from "@/lib/labelme-images";
+import { localizationConversionError } from "@/lib/localization-annotations";
 import { isMap, parseDocument } from "yaml";
 
 interface CocoCategory { id: number; name: string; supercategory?: string }
@@ -78,6 +79,7 @@ async function sourceSamples(datasetRoot: string) {
   const categories = new Set<string>();
   const shapeCounts: Record<string, number> = {};
   const invalid: string[] = [];
+  const incompatible: string[] = [];
   let matchedByJsonName = 0;
   const usedImages = new Map<string, string>();
   for (const file of files) {
@@ -88,6 +90,11 @@ async function sourceSamples(datasetRoot: string) {
       const { imagePath, imageWidth, imageHeight, shapes } =
         parseLabelmeJson(await readFile(jsonPath, "utf-8")) as LabelmeDocument;
       const data: LabelmeDocument = { imagePath, imageWidth, imageHeight, shapes };
+      const issue = localizationConversionError(data);
+      if (issue) {
+        incompatible.push(`${file}: ${issue}`);
+        continue;
+      }
       const resolved = resolveLabelmeImage(index, file, data.imagePath);
       if ("error" in resolved) {
         invalid.push(`${file}: ${resolved.error}`);
@@ -112,7 +119,7 @@ async function sourceSamples(datasetRoot: string) {
       invalid.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { samples, categories: [...categories].sort(), shapeCounts, invalid, totalJson: files.length, matchedByJsonName };
+  return { samples, categories: [...categories].sort(), shapeCounts, invalid, incompatible, totalJson: files.length, matchedByJsonName };
 }
 
 function uniqueImageName(original: string, sourceName: string, used: Set<string>): string {
@@ -210,6 +217,9 @@ export async function POST(request: NextRequest) {
       readCoco(files.train),
       readCoco(files.val),
     ]);
+    if (source.incompatible.length) {
+      return NextResponse.json({ success: false, error: source.incompatible[0] }, { status: 400 });
+    }
     const trainCategories = trainDocument.categories.map((category) => category.name);
     const valCategories = valDocument.categories.map((category) => category.name);
     const before = { trainImages: trainDocument.images.length, valImages: valDocument.images.length, trainAnnotations: trainDocument.annotations.length, valAnnotations: valDocument.annotations.length };

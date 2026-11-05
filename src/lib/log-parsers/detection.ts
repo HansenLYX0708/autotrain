@@ -190,12 +190,15 @@ export function parseDetectionLines(line: string, state: DetParserState): Parsed
 export function parseDetectionLine(line: string): ParsedTrainLog | null {
   if (!line || !line.trim()) return null
 
-  // Iteration markers: Detection prints `Epoch: [E] [i/total]`.
-  const iterPatterns = line.matchAll(/\[(\d+)\/(\d+)\]/g)
+  // Iteration markers: Detection prints `Epoch: [E] [i/total]`, right-aligning
+  // `i` to the width of `total` (`[  0/347]`, `[ 20/347]`), so whitespace
+  // inside the brackets must be accepted — otherwise every row before the
+  // iteration reaches the total's digit count is silently dropped.
+  const iterPatterns = line.matchAll(/\[\s*(\d+)\s*\/\s*(\d+)\s*\]/g)
   const iterMatches = Array.from(iterPatterns)
   if (iterMatches.length === 0) return null
 
-  const epochMatch = line.match(/Epoch:\s*\[(\d+)\]/i)
+  const epochMatch = line.match(/Epoch:\s*\[\s*(\d+)\s*\]/i)
   const epoch = epochMatch ? parseInt(epochMatch[1], 10) : 0
 
   // Detection places [iter/total] AFTER [epoch]; take the last [x/y] as
@@ -222,8 +225,11 @@ export function parseDetectionLine(line: string): ParsedTrainLog | null {
   const lossDfl = nonFinite.read(line, 'loss_dfl')
   const lossL1 = nonFinite.read(line, 'loss_l1')
 
-  // Detection ETA supports both plain "0:02:24" and "1 day, 20:03:57".
-  const etaMatch = line.match(/eta:\s*([^\s,]+(?:,\s*\d{1,2}:\d{2}:\d{2})?)/i)
+  // Detection ETA is "0:02:24", or past 24h Python's timedelta text
+  // "1 day, 20:03:57" / "2 days, 10:20:35".
+  const etaMatch =
+    line.match(/eta:\s*((?:\d+\s+days?,\s*)?\d+:\d{2}:\d{2})/i) ??
+    line.match(/eta:\s*([^\s,]+)/i)
   const eta = etaMatch ? etaMatch[1].trim() : null
 
   const batchCost = nonFinite.read(line, 'batch_cost')

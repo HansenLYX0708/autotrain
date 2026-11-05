@@ -481,6 +481,17 @@ body：`projectId`（必填）, `name`（必填）, `type`（`eval` \| `infer`�
 
 **无鉴权**。列出已保存的标注。
 
+### `GET | POST /api/annotation/projects`
+
+**管理员**。新的完整标注项目接口，只访问当前管理员自己的文件。
+
+- `POST`：body 为 `autotrain-localization` v1 项目（`id` UUID、`name`、`labels`、`keypointNames`、`images`）。验证结构、重复实例/图片、类别与点位引用；允许未完成草稿。返回 `{success:true,data:{id}}`。无效数据返回 400，大于 20 MB 返回 413。
+- 保存路径：`annotations/{userId}/projects/{id}.json`，先写临时文件再原子替换。项目含旋转框、实例关键点、可见性、采集批次、划分和确认状态，不含原图，不修改数据库。
+- `GET`：返回 `{success:true,data:[{id,name,images,modified}]}`。
+- `GET ?id=<UUID>`：返回完整项目；非法 ID 返回 400，不存在/非本人项目返回 404。
+
+Labelme→COCO、Labelme→PaddleSeg、合并 Labelme 到 COCO 三个旧转换接口遇到 `point` 或 `flags.autotrain_obb=true` 时返回 400，提示使用定位数据准备工具，避免悄悄丢失关键点/方向监督。
+
 ### `GET /api`
 
 健康检查，返回 `{ message: "Hello, world!" }`。

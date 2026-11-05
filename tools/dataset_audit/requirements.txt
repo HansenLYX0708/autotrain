@@ -1,0 +1,7 @@
+numpy>=1.24,<2
+opencv-python>=4.5,<5
+Pillow>=10,<11
+scipy>=1.10,<1.11
+scikit-learn>=1.0,<1.4
+matplotlib>=3.3,<3.8
+Markdown>=3.3,<3.8

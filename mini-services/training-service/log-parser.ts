@@ -45,7 +45,7 @@ export function parsePaddleDetectionLog(line: string): ParsedLog | null {
   const timestamp = timestampMatch ? timestampMatch[1] : ''
 
   // Match epoch: Epoch: [0] or Epoch: [8]
-  const epochMatch = line.match(/Epoch:\s*\[(\d+)\]/)
+  const epochMatch = line.match(/Epoch:\s*\[\s*(\d+)\s*\]/)
   const epoch = epochMatch ? parseInt(epochMatch[1], 10) : 0
 
   // Match iteration: [iter/total] - must find the one AFTER the epoch bracket
@@ -55,7 +55,8 @@ export function parsePaddleDetectionLog(line: string): ParsedLog | null {
   let totalIter = 0
   
   // Find all [x/y] patterns in the line
-  const iterPatterns = line.matchAll(/\[(\d+)\/(\d+)\]/g)
+  // PaddleDetection right-aligns the iteration: `[  0/347]`.
+  const iterPatterns = line.matchAll(/\[\s*(\d+)\s*\/\s*(\d+)\s*\]/g)
   const iterMatches = Array.from(iterPatterns)
   
   // If there's an epoch match, the iteration is the next [x/y] pattern after it
@@ -81,7 +82,9 @@ export function parsePaddleDetectionLog(line: string): ParsedLog | null {
   const lossL1 = extractFloat(line, 'loss_l1')
 
   // Extract ETA (format: "eta: 0:02:24" or "eta: 1 day, 20:03:57")
-  const etaMatch = line.match(/eta:\s*([^\s,]+(?:,\s*\d{1,2}:\d{2}:\d{2})?)/)
+  const etaMatch =
+    line.match(/eta:\s*((?:\d+\s+days?,\s*)?\d+:\d{2}:\d{2})/) ??
+    line.match(/eta:\s*([^\s,]+)/)
   const eta = etaMatch ? etaMatch[1].trim() : null
 
   // Extract costs

@@ -36,7 +36,7 @@ Copy-Directory (Join-Path $Payload "frameworks") (Join-Path $InstallRoot "framew
 Copy-Directory (Join-Path $Payload "runtime\node") (Join-Path $InstallRoot "runtime\node")
 Copy-Directory (Join-Path $Payload "requirements") (Join-Path $InstallRoot "runtime\requirements")
 if (Test-Path (Join-Path $Payload "cache")) { Copy-Directory (Join-Path $Payload "cache") (Join-Path $InstallRoot "data\cache") }
-foreach ($File in @("Start.ps1", "Stop.ps1", "Test-Installation.ps1", "Start-AutoTrain.cmd", "Stop-AutoTrain.cmd", "configure_db.py")) {
+foreach ($File in @("Start.ps1", "Stop.ps1", "Test-Installation.ps1", "Start-AutoTrain.cmd", "Stop-AutoTrain.cmd", "configure_db.py", "New-GpuEnvironment.ps1")) {
     Copy-Item (Join-Path $Payload $File) (Join-Path $InstallRoot $File) -Force
 }
 $Database = Join-Path $InstallRoot "data\autotrain.db"

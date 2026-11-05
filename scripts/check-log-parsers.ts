@@ -404,6 +404,37 @@ console.log("\n[8] PaddleDetection TRAIN line full of NaN/Inf");
 }
 
 // --------------------------------------------------------------------------
+console.log("\n[8b] PaddleDetection right-aligned iteration + multi-day ETA (real workerlog lines)");
+{
+  // Verbatim from a 347-iteration epoch: `[  0/347]` / `[ 20/347]` are padded
+  // to the total's width. The old `\[(\d+)\/(\d+)\]` dropped them, so the GUI
+  // showed nothing until iteration 100 of every epoch.
+  const lines = [
+    "[11/03 09:35:18] ppdet.engine.callbacks INFO: Epoch: [0] [  0/347] learning_rate: 0.000000 loss: 4.420106 loss_cls: 2.072895 loss_iou: 0.605060 loss_dfl: 1.669122 loss_l1: 1.516249 eta: 2 days, 10:20:35 batch_cost: 3.7831 data_cost: 2.5500 ips: 3.1720 images/s, max_mem_reserved: 11984 MB, max_mem_allocated: 10717 MB",
+    "[11/03 09:36:19] ppdet.engine.callbacks INFO: Epoch: [0] [ 20/347] learning_rate: 0.000012 loss: 4.536658 loss_cls: 2.395790 loss_iou: 0.535189 loss_dfl: 1.628239 loss_l1: 1.449805 eta: 1 day, 23:20:33 batch_cost: 3.0353 data_cost: 2.6815 ips: 3.9535 images/s, max_mem_reserved: 17530 MB, max_mem_allocated: 15596 MB",
+    "Found inf or nan, current scale is: 1024.0, decrease to: 1024.0*0.5",
+    "[11/03 09:40:20] ppdet.engine.callbacks INFO: Epoch: [0] [100/347] learning_rate: 0.000060 loss: 4.1 eta: 0:59:07 batch_cost: 3.0 data_cost: 2.6 ips: 4.0 images/s",
+    "[11/03 09:41:20] ppdet.engine.callbacks INFO: Epoch: [ 12] [  0/347] learning_rate: 0.000100 loss: 3.9 eta: 9:05:01",
+  ];
+  const st = createParserState("PaddleDetection");
+  const rows = feed(st, lines.join("\n") + "\n").filter((r) => r.kind === "train");
+  check("all 4 train lines parsed (AMP line ignored)", rows.length === 4, rows.length);
+  check(
+    "padded iterations read as 0, 20, 100, 0",
+    JSON.stringify(rows.map((r) => r.iteration)) === "[0,20,100,0]",
+    rows.map((r) => r.iteration),
+  );
+  check("totalIter 347", rows.every((r) => r.totalIter === 347), rows.map((r) => r.totalIter));
+  check("padded epoch [ 12] read as 12", rows[3]?.epoch === 12, rows[3]?.epoch);
+  check("first loss parsed", rows[0]?.loss === 4.420106 && rows[0]?.lossL1 === 1.516249, rows[0]);
+  check(
+    "multi-day ETAs kept whole",
+    rows[0]?.eta === "2 days, 10:20:35" && rows[1]?.eta === "1 day, 23:20:33" && rows[2]?.eta === "0:59:07",
+    rows.map((r) => r.eta),
+  );
+}
+
+// --------------------------------------------------------------------------
 console.log("\n[9] PaddleSeg: NaN loss/lr on TRAIN + NaN inside EVAL block");
 {
   const st = createParserState("PaddleSeg");

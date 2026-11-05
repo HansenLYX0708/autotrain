@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomInt } from 'crypto';
 import { buildImageIndex, parseLabelmeJson, resolveLabelmeImage } from '@/lib/labelme-images';
+import { localizationConversionError } from '@/lib/localization-annotations';
 
 // Helper to get folder size recursively
 function getFolderSize(folderPath: string): number {
@@ -235,6 +236,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Refuse task-changing conversions before copying any images or creating output.
+    const labelmeFiles = fs.readdirSync(absoluteAnnotationsPath)
+      .filter(file => file.toLowerCase().endsWith('.json'));
+    for (const file of labelmeFiles) {
+      let data: unknown;
+      try { data = parseLabelmeJson(fs.readFileSync(path.join(absoluteAnnotationsPath, file), 'utf-8')); }
+      catch { continue; } // Existing conversion reports malformed files in skipped.
+      const issue = localizationConversionError(data);
+      if (issue) return NextResponse.json({ error: `${file}: ${issue}` }, { status: 400 });
+    }
+
     // Create output directories
     const trainImagesDir = path.join(absoluteDatasetDir, 'data', 'train');
     const valImagesDir = path.join(absoluteDatasetDir, 'data', 'val');
@@ -248,9 +260,6 @@ export async function POST(request: NextRequest) {
     });
 
     // Read all labelme annotation files
-    const labelmeFiles = fs.readdirSync(absoluteAnnotationsPath)
-      .filter(file => file.toLowerCase().endsWith('.json'));
-
     if (labelmeFiles.length === 0) {
       return NextResponse.json(
         { error: 'No labelme annotation files found (.json files)' },

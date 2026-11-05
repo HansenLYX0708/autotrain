@@ -6,6 +6,7 @@ import * as path from 'path';
 import { deflateSync } from 'zlib';
 import { getSegColorMap, type RGB } from '@/lib/seg-colors';
 import { buildImageIndex, parseLabelmeJson, resolveLabelmeImage } from '@/lib/labelme-images';
+import { localizationConversionError } from '@/lib/localization-annotations';
 
 /**
  * Convert a labelme polygon-annotated dataset into a PaddleSeg-compatible
@@ -364,6 +365,8 @@ export async function POST(request: NextRequest) {
         // `JSON.parse` rejects with `Unexpected token '\uFEFF'`.
         const raw = fs.readFileSync(jsonPath, 'utf-8');
         const data = parseLabelmeJson(raw) as LabelmeData;
+        const issue = localizationConversionError(data);
+        if (issue) return NextResponse.json({ error: `${file}: ${issue}` }, { status: 400 });
         parsedJsons.push({ file, data });
         for (const shape of data.shapes || []) {
           if (shape.shape_type !== 'polygon' || (shape.points?.length ?? 0) < 3) continue;

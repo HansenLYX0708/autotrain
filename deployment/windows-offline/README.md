@@ -227,6 +227,16 @@ http://localhost:3000
 
 第一次注册的账号自动成为管理员。注册后进入“设置”，确认六个框架和三个 Python 环境均显示正常。
 
+### 给某块 GPU 单独建一个 Python 环境
+
+`New-GpuEnvironment.ps1`（安装目录中）按现有环境的 `pip freeze` 清单，从离线 wheel 目录重建一个独立 venv，复制框架 `.pth`，并在指定 GPU 上验证导入：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File <安装目录>\New-GpuEnvironment.ps1 -GpuId 1 -SourceEnv paddle -WheelDir <离线包>\payload\wheels -Register
+```
+
+`-Register` 会先备份数据库，再把 `PaddleDetection:1` / `PaddleClas:1` / `PaddleSeg:1` 写入框架 Python 映射；不加则只打印要手动添加的条目。必须用 `<框架>:<GPU>` 键：安装后每个框架都已有框架级映射，`gpuPythonMappings` 不会被用到。重新运行 `Install.ps1` 会覆盖这些映射，需要再执行一次 `-Register`。
+
 局域网其他机器访问：
 
 ```text

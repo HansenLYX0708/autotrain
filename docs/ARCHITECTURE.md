@@ -482,6 +482,19 @@ Buffer chunk
 
 ---
 
+### 定位标注与独立训练工具
+
+`src/lib/localization-annotations.ts` 定义共享的项目 schema、旋转矩形几何、Labelme 往返和训练前检查。
+Annotation 使用原图像素坐标，SVG 显示变换不改变存储坐标；每实例拥有自己的命名关键点和 0/1/2 可见性。
+项目文件由 `/api/annotation/projects` 按管理员隔离、原子保存，不存入 Prisma，也不上传本地图像。
+
+`labelme-image-match.ts` 是浏览器与 `labelme-images.ts` 文件系统索引共用的纯图像匹配规则。
+旧检测/分割转换接口拒绝显式 OBB 与关键点标注；不能将框外包为水平框后声称完成了旋转/关键点训练。
+
+`tools/localization/prepare.py` 将审核过的项目生成 YOLO OBB/Pose 数据，独立检查组级/文件内容泄漏、图像尺寸和坐标。
+`run.py` 提供独立 Ultralytics 的训练、验证、推理、导出，**尚未注册为网页 Training Jobs 框架**。
+生产级的两模型实例关联、ROI 逆变换、标定和精度统计仍需后续实现，详见 [LOCALIZATION_WORKFLOW.md](LOCALIZATION_WORKFLOW.md)。
+
 ## 15. 发布模型（DeployedModel）
 
 把一个训练出的检查点（可带导出目录）提升为一等公民的「生产模型」，按 `product` 标签快速切换。同一 `product` 可以有多条记录，**同时只应有一条 `isActive = true`**，这一点在应用层用事务保证（`POST /api/deployed-models/[id]/activate`）。

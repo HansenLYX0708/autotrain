@@ -10,6 +10,12 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import assert from "node:assert/strict";
+import { resolveUploadedLabelmeImage } from "../src/lib/labelme-image-match";
+import {
+  boxCorners, boxFromThreePoints, containsPoint, fromLabelme, imageIssues,
+  localizationConversionError, projectSchema, toLabelme, type AnnotationImage,
+} from "../src/lib/localization-annotations";
 import {
   buildImageIndex,
   parseLabelmeJson,
@@ -92,6 +98,61 @@ async function main() {
   check("plain JSON", (parseLabelmeJson('{"a":1}') as { a: number }).a === 1);
   check("BOM stripped", (parseLabelmeJson("\uFEFF" + '{"a":2}') as { a: number }).a === 2);
   check("dot-dir skipped", index.byName.get("hidden.jpg") === undefined || true);
+
+  console.log("[6] localization geometry and Labelme round trips");
+  const geometry = boxFromThreePoints({ x: 30, y: 20 }, { x: 70, y: 50 }, { x: 58, y: 66 });
+  assert.ok(Math.abs(geometry.width - 50) < 1e-8);
+  assert.ok(Math.abs(geometry.height - 20) < 1e-8);
+  const sample: AnnotationImage = {
+    name: "batch/sample.png", width: 100, height: 100, reviewed: true, split: "train", group: "batch",
+    objects: [{
+      id: "slider-1", label: "slider", kind: "obb", ...geometry,
+      keypoints: { hole: { x: 44, y: 34, visibility: 2 }, notch: { x: 50, y: 45, visibility: 1 }, hidden: { x: 0, y: 0, visibility: 0 } },
+    }, {
+      id: "slider-2", label: "slider", kind: "rectangle", cx: 15, cy: 15, width: 10, height: 12, angle: 0,
+      keypoints: { hole: { x: 12, y: 14, visibility: 2 }, notch: { x: 0, y: 0, visibility: 0 }, hidden: { x: 0, y: 0, visibility: 0 } },
+    }],
+  };
+  const keys = ["hole", "notch", "hidden"];
+  const exported = toLabelme(sample, keys);
+  assert.equal(exported.shapes.find(s => s.shape_type === "rectangle")?.points.length, 2);
+  const restored = fromLabelme(exported, sample.name);
+  assert.deepEqual(restored.keypointNames, keys);
+  assert.deepEqual(restored.image.objects.map(o => o.keypoints), sample.objects.map(o => o.keypoints));
+  assert.deepEqual(imageIssues(restored.image, keys), []);
+  const restoredCorners = boxCorners(restored.image.objects[0]);
+  boxCorners(sample.objects[0]).forEach((p, i) => assert.ok(Math.hypot(p.x - restoredCorners[i].x, p.y - restoredCorners[i].y) < 1e-8));
+  assert.ok(containsPoint(sample.objects[0], { x: geometry.cx, y: geometry.cy }));
+  assert.ok(!containsPoint(sample.objects[0], { x: 0, y: 0 }));
+  const nonRectangle = structuredClone(exported);
+  nonRectangle.shapes[0].points[2][0] += 5;
+  assert.throws(() => fromLabelme(nonRectangle, sample.name), /非矩形/);
+  const orphan = structuredClone(exported);
+  orphan.shapes.find(s => s.shape_type === "point")!.group_id = 999;
+  assert.throws(() => fromLabelme(orphan, sample.name), /group_id/);
+  assert.ok(localizationConversionError(exported));
+  assert.equal(localizationConversionError({ shapes: [{ shape_type: "rectangle" }] }), null);
+  const outOfBounds = structuredClone(sample);
+  outOfBounds.objects[0].cx = -100;
+  assert.ok(imageIssues(outOfBounds, keys).some(s => s.includes("超出")));
+  const blank = { ...sample, objects: [], reviewed: false };
+  assert.ok(imageIssues(blank, keys).some(s => s.includes("确认")));
+  const project = {
+    format: "autotrain-localization", version: 1, id: "6cc338da-dfeb-44c8-a345-1043910a392f",
+    name: "fixture", labels: ["slider"], keypointNames: keys, images: [sample],
+  };
+  assert.ok(projectSchema.safeParse(project).success);
+  assert.ok(!projectSchema.safeParse({ ...project, images: [{ ...sample, name: "../escape.png" }] }).success);
+  assert.ok(!projectSchema.safeParse({ ...project, images: [sample, sample] }).success);
+  check("rotation, visibility, instances, legacy rectangles, bounds and task guards", true);
+  const uploadIndex = {
+    byName: new Map([["a.png", ["batch1/a.png", "batch2/a.png"]], ["b.png", ["batch1/b.png"]]]),
+    byStem: new Map([["a", ["batch1/a.png", "batch2/a.png"]], ["b", ["batch1/b.png"]]]),
+  };
+  assert.deepEqual(resolveUploadedLabelmeImage(uploadIndex, "batch1/a.json", "b.png"), { path: "batch1/b.png", via: "imagePath" });
+  assert.deepEqual(resolveUploadedLabelmeImage(uploadIndex, "batch1/a.json", "a.png"), { path: "batch1/a.png", via: "jsonName" });
+  assert.ok("error" in resolveUploadedLabelmeImage(uploadIndex, "elsewhere/a.json", "a.png"));
+  check("browser matching preserves imagePath precedence and directory disambiguation", true);
 
   fs.rmSync(dir, { recursive: true, force: true });
   if (failures > 0) {

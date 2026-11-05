@@ -266,13 +266,17 @@
 
 ## 9. Annotation（仅 admin）
 
-内置的轻量**矩形框标注**工具：
+内置的**旋转框 + 结构关键点标注**工具，面向 slider ABS / tapring 等生产定位：
 
-- 选择一个图片文件夹，逐张浏览（显示 `当前/总数`）。
-- 在图上拉框，给框指定标签；**Add New Label** 可即时新增标签名。
-- **Selected Box** 面板编辑或删除当前选中的框。
-- **View** 控制显示方式。
-- **Save All** 把标注写成 JSON 文件（`POST /api/annotation/save`）。
+- 水平框两点绘制、旋转矩形三点绘制，支持数值调整、实例拖动、缩放和平移。
+- 关键点按名称与实例关联，区分可见、遮挡但位置确定、无法确定；支持单点拖动。
+- 可配置类别/关键点模板，50 步撤销/重做，按采集批次设置 train/val/test，确认已完成标注或负样本。
+- 导入标准两点 Labelme 矩形和旋转矩形，保留关键点关联；任意透视四边形不会被错误转换为 OBB。
+- **保存项目**通过管理员专用 `/api/annotation/projects` 原子保存元数据；**打开已保存项目**恢复后重新关联本地原图。项目 JSON 可下载备份，单图可导出 Labelme。原图不上传。
+- **检查 OBB/Pose 数据**提示漏标、越界、类别覆盖和组级泄漏；配套 CLI 生成训练目录，并提供独立的训练/验证/推理/导出入口。
+
+完整标注规范、详细计划与运行命令见 [LOCALIZATION_WORKFLOW.md](LOCALIZATION_WORKFLOW.md)。
+**OBB / Pose 尚未接入 Training Jobs 页面**；当前使用独立 Ultralytics 环境运行配套 CLI，不能选择普通检测模型直接训练。旧 `/api/annotation/save` 文件仍保留，旧标注可作为 Labelme 文件随原图导入。
 
 需要更强的分割标注能力时，用独立的 Python 工具：
 

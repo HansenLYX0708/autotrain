@@ -95,7 +95,7 @@ Copy-Item $VcRedistInstaller (Join-Path $Payload "installers\VC_redist.x64.exe")
 Copy-Item (Join-Path $ScriptRoot "requirements-paddle.txt") (Join-Path $Payload "requirements")
 Copy-Item (Join-Path $ScriptRoot "requirements-torch.txt") (Join-Path $Payload "requirements")
 Copy-Item (Join-Path $ScriptRoot "requirements-anomaly.txt") (Join-Path $Payload "requirements")
-foreach ($File in @("Start.ps1", "Stop.ps1", "Test-Installation.ps1", "Start-AutoTrain.cmd", "Stop-AutoTrain.cmd", "configure_db.py")) {
+foreach ($File in @("Start.ps1", "Stop.ps1", "Test-Installation.ps1", "Start-AutoTrain.cmd", "Stop-AutoTrain.cmd", "configure_db.py", "New-GpuEnvironment.ps1")) {
     Copy-Item (Join-Path $ScriptRoot "payload\$File") (Join-Path $Payload $File)
 }
 Copy-Item (Join-Path $ScriptRoot "Install.ps1") $BundleRoot

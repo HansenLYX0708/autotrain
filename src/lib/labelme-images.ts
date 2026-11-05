@@ -1,5 +1,7 @@
 import { promises as fsp } from "fs";
 import * as path from "path";
+import { resolveIndexedLabelmeImage, type ImageResolution } from "./labelme-image-match";
+export type { ImageResolution } from "./labelme-image-match";
 
 /**
  * Labelme JSON → image resolution.
@@ -60,23 +62,6 @@ export function parseLabelmeJson(raw: string): unknown {
   return JSON.parse(raw.replace(/^\uFEFF/, ""));
 }
 
-export type ImageResolution =
-  | { path: string; via: "imagePath" | "jsonName" }
-  | { error: string };
-
-// Path segments of an imagePath value, with `.`/`..`/empties removed — a
-// Labelme `..\MC\a.JPG` contributes ["mc", "a.jpg"] for suffix matching.
-const rawSegments = (value: string) =>
-  value
-    .split(/[\\/]/)
-    .filter((s) => s && s !== "." && s !== "..")
-    .map((s) => s.toLowerCase());
-
-/** Relative path inside the index root, '/'-separated, lower-cased. */
-function relKey(index: ImageIndex, absolute: string): string {
-  return path.relative(index.root, absolute).split(path.sep).join("/").toLowerCase();
-}
-
 /**
  * Resolution order:
  *  1. The file name recorded in `imagePath` (last path segment). Ambiguous
@@ -90,50 +75,6 @@ export function resolveLabelmeImage(
   jsonFileName: string,
   imagePath: unknown,
 ): ImageResolution {
-  const raw = imagePath == null ? "" : String(imagePath);
-  const segments = rawSegments(raw);
-  const name = segments.length ? segments[segments.length - 1] : "";
-  const jsonStem = jsonFileName.replace(/\.json$/i, "");
-
-  // 1. imagePath basename, case-insensitive, anywhere under root.
-  if (name) {
-    const candidates = index.byName.get(name.toLowerCase()) ?? [];
-    if (candidates.length === 1) return { path: candidates[0], via: "imagePath" };
-    if (candidates.length > 1) {
-      // Keep candidates whose relative path ends with the imagePath's own
-      // trailing segments ("MC/a.jpg" prefers imgs/MC/a.jpg over imgs/NA/a.jpg).
-      const wanted = segments;
-      const scored = candidates.filter((candidate) => {
-        const rel = relKey(index, candidate).split("/");
-        const take = Math.min(wanted.length, rel.length);
-        return rel.slice(-take).join("/") === wanted.slice(-take).join("/");
-      });
-      if (scored.length === 1) return { path: scored[0], via: "imagePath" };
-      const listed = candidates.slice(0, 3).map((c) => relKey(index, c)).join(", ");
-      return { error: `ambiguous image "${name}": ${candidates.length} files under imgs (${listed}${candidates.length > 3 ? ", …" : ""})` };
-    }
-  }
-
-  // 2. JSON-stem fallback (image renamed to the JSON's file name).
-  if (jsonStem) {
-    const candidates = index.byStem.get(jsonStem.toLowerCase()) ?? [];
-    if (candidates.length === 1) return { path: candidates[0], via: "jsonName" };
-    if (candidates.length > 1) {
-      const wantedExt = path.extname(name).toLowerCase();
-      const sameExt = candidates.filter(
-        (c) => path.extname(c).toLowerCase() === wantedExt,
-      );
-      if (sameExt.length === 1) return { path: sameExt[0], via: "jsonName" };
-      const listed = candidates.slice(0, 3).map((c) => relKey(index, c)).join(", ");
-      return { error: `ambiguous image "${jsonStem}.*": ${candidates.length} files under imgs (${listed}${candidates.length > 3 ? ", …" : ""})` };
-    }
-  }
-
-  const imageExt = path.extname(name);
-  return {
-    error:
-      `image not found: imagePath "${raw}"; looked for ` +
-      (name ? `"${name}" and ` : "") +
-      `"${jsonStem}${imageExt || ".*"}" under imgs (including subfolders)`,
-  };
+  return resolveIndexedLabelmeImage(index, jsonFileName, imagePath,
+    file => path.relative(index.root, file).split(path.sep).join("/").toLowerCase());
 }

@@ -10,6 +10,7 @@ Hawkeye+ AutoTrain Platform 的全部文档。项目总览见 [../README.md](../
 |---|---|---|
 | 1 | [USER_MANUAL.md](USER_MANUAL.md) | 用户手册：环境要求、安装、快速开始、逐模块操作、常见问题 |
 | 2 | [FEATURES.md](FEATURES.md) | 功能模块说明：每个页面能做什么、背后发生了什么、故障速查表 |
+| 3 | [LOCALIZATION_WORKFLOW.md](LOCALIZATION_WORKFLOW.md) | slider ABS / tapring 旋转框与结构关键点：实施计划、标注规范、数据准备、训练/推理命令、生产验收 |
 
 应用内顶栏的 **Manual** 按钮也能直接打开一份同源手册。
 
@@ -53,6 +54,7 @@ Hawkeye+ AutoTrain Platform 的全部文档。项目总览见 [../README.md](../
 | 文档 | 内容 |
 |---|---|
 | [../tools/napari_seg/readme.md](../tools/napari_seg/readme.md) | 基于 napari 的分割标注工具 |
+| [../tools/dataset_audit/README.md](../tools/dataset_audit/README.md) | 缺陷局部多维覆盖、精确重复与来源隔离审计；[Slider 数据集报告](dataset-audits/slider-20261102/report.html)、可复现指标与候选五折划分 |
 | [../tools/tem_analysis/readme.md](../tools/tem_analysis/readme.md) | TEM 图像几何测量与报告生成 |
 | [../tools/tem_analysis/PLAN.md](../tools/tem_analysis/PLAN.md) | TEM 分析工具的设计与推进计划 |
 | [../mini-services/training-service/README.md](../mini-services/training-service/README.md) | Socket.io 训练服务原型（**mock，未接入主应用**） |
