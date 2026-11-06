@@ -482,7 +482,7 @@ Buffer chunk
 
 ---
 
-### 定位标注与独立训练工具
+### 定位标注、训练与预标注
 
 `src/lib/localization-annotations.ts` 定义共享的项目 schema、旋转矩形几何、Labelme 往返和训练前检查。
 Annotation 使用原图像素坐标，SVG 显示变换不改变存储坐标；每实例拥有自己的命名关键点和 0/1/2 可见性。
@@ -492,8 +492,15 @@ Annotation 使用原图像素坐标，SVG 显示变换不改变存储坐标；�
 旧检测/分割转换接口拒绝显式 OBB 与关键点标注；不能将框外包为水平框后声称完成了旋转/关键点训练。
 
 `tools/localization/prepare.py` 将审核过的项目生成 YOLO OBB/Pose 数据，独立检查组级/文件内容泄漏、图像尺寸和坐标。
-`run.py` 提供独立 Ultralytics 的训练、验证、推理、导出，**尚未注册为网页 Training Jobs 框架**。
-生产级的两模型实例关联、ROI 逆变换、标定和精度统计仍需后续实现，详见 [LOCALIZATION_WORKFLOW.md](LOCALIZATION_WORKFLOW.md)。
+`TorchOBB` / `TorchPose` 在 `FRAMEWORK_META` 注册；三段配置分别提供 `localization.data`、`localization.model`、`localization.train`，共用既有任务 runner、日志和检查点数据库。`torchtrain/tools/localization_{train,eval,infer,export}.py` 是单文件脚本入口，CLI 子命令不能塞进 `scripts.*` 文件名，否则 argv 调用会把空格当成文件名。
+
+`localization-import.ts` 验证用户保存的标注、生成稳定分组划分，再调用数据准备器复制图片并创建四类数据库记录。导入报告和原图 SHA256 保存在版本目录。Pose 漏点明确报错。
+
+适配器输出结构化 `AUTOTRAIN_*` 行；`log-parsers/localization.ts` 写入通用损失/mAP 字段，附加指标放 `classMetrics`。最佳权重复制到 `best_model/model.pt`；Ultralytics 在最终最佳模型验证后会再次调用 epoch callback，适配器去重，避免把最佳指标与末轮权重混配。
+
+`/api/annotation/predict` 从完成训练的检查点做临时批量推理，上传的图片和临时结果随后清理。前端将输出转换为原图坐标的待审核实例，保存模型来源；`reviewed` 是能否用于训练的门槛，任何编辑都会撤回。拖动角点/边在框自身坐标系缩放，固定对侧边；旋转围绕中心，关键点保留原图位置。
+
+生产坐标标定、两个模型的实例关联和 ROI 逆变换仍需另行实现，详见 [LOCALIZATION_WORKFLOW.md](LOCALIZATION_WORKFLOW.md)。
 
 ## 15. 发布模型（DeployedModel）
 

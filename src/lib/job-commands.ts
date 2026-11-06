@@ -13,6 +13,7 @@
  */
 
 import { frameworkMeta, isClassification, launchPrefix, type Framework } from "./frameworks";
+import { toSafeSlug } from "./safe-slug";
 
 /** Quote a path for a shell that is invoked with `shell: true`. */
 function q(value: string): string {
@@ -123,6 +124,17 @@ export interface ExportCommandOptions extends EvalCommandOptions {
   outputDir: string;
   /** torchtrain only: `torchscript` (default) or `onnx`. */
   format?: string;
+}
+
+/** Keep exports of different localization checkpoints from overwriting each other. */
+export function checkpointExportDir(framework: string | null | undefined, saveDir: string, checkpoint: string): string {
+  const meta = frameworkMeta(framework);
+  if (!meta.localizationTask) return joinPath(saveDir, "export_model");
+  const parts = checkpoint.replace(/\\/g, "/").split("/");
+  const filename = parts.pop() || meta.weightFile;
+  const folder = parts.pop() || "checkpoint";
+  const name = filename === meta.weightFile ? folder : `${folder}-${filename}`;
+  return joinPath(saveDir, "export_model", toSafeSlug(name, "checkpoint"));
 }
 
 /** Export command, or `null` when the framework has no export entrypoint. */

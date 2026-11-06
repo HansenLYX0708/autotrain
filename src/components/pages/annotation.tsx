@@ -13,7 +13,9 @@ import {
   type AnnotationImage, type AnnotationObject, type AnnotationProject, type Point, type Split,
   boxCorners, boxFromThreePoints, containsPoint, fromLabelme, imageIssues, insideImage,
   newProject, projectIssues, projectSchema, toLabelme,
+  resizeBox, rotateBox,
 } from '@/lib/localization-annotations'
+import { predictionsSchema, predictionToImage } from '@/lib/localization-predictions'
 
 type History = { present: AnnotationProject; past: AnnotationProject[]; future: AnnotationProject[] }
 type Action = { type: 'load' | 'edit'; project: AnnotationProject } | { type: 'undo' | 'redo' }
@@ -63,7 +65,7 @@ export function AnnotationPage() {
   const [zoom, setZoom] = useState(1)
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<AnnotationObject | null>(null)
-  const drag = useRef<{ start: Point; object: AnnotationObject; key?: string } | null>(null)
+  const drag = useRef<{ start: Point; object: AnnotationObject; key?: string; handle?: string } | null>(null)
   const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const viewport = useRef<HTMLDivElement>(null)
   const svg = useRef<SVGSVGElement>(null)
@@ -73,6 +75,13 @@ export function AnnotationPage() {
   const [serverProjects, setServerProjects] = useState<Array<{ id: string; name: string; images: number; modified: string }> | null>(null)
   const [validation, setValidation] = useState<string[] | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [predictionOpen, setPredictionOpen] = useState(false)
+  const [models, setModels] = useState<{ id: string; name: string; framework: string }[]>([])
+  const [predictionJob, setPredictionJob] = useState('')
+  const [predictionScope, setPredictionScope] = useState('empty')
+  const [confidence, setConfidence] = useState(0.25)
+  const [predictionProgress, setPredictionProgress] = useState('')
+  const stopPrediction = useRef(false)
   const image = project.images[index]
   const selected = image?.objects.find(o => o.id === selectedId)
   const activeLabel = project.labels.includes(label) ? label : project.labels[0]
@@ -240,7 +249,7 @@ export function AnnotationPage() {
     return { x: point.x, y: point.y }
   }
   function pointerDown(event: React.PointerEvent<SVGSVGElement>) {
-    if (!image || !asset) return
+    if (!image || !asset || busy) return
     if (event.button === 1 || (event.button === 0 && event.altKey)) {
       if (viewport.current) {
         event.preventDefault()
@@ -259,7 +268,7 @@ export function AnnotationPage() {
       const object = image.objects.find(o => o.id === id) ?? [...image.objects].reverse().find(o => containsPoint(o, p))
       setSelectedId(object?.id ?? null)
       if (object) {
-        drag.current = { start: p, object, key }
+        drag.current = { start: p, object, key, handle: target.getAttribute('data-handle') ?? undefined }
         event.currentTarget.setPointerCapture(event.pointerId)
       }
       return
@@ -298,7 +307,11 @@ export function AnnotationPage() {
     setHover(p)
     const d = drag.current
     if (!d) return
-    if (d.key && d.object.keypoints[d.key]) {
+    if (d.handle) {
+      const resized = d.handle === 'rotate' ? rotateBox(d.object, d.start, p, event.shiftKey) :
+        resizeBox(d.object, p, ...d.handle.split(',').map(Number) as [number, number])
+      if (boxCorners(resized).every(point => insideImage(point, image))) setPreview(resized)
+    } else if (d.key && d.object.keypoints[d.key]) {
       const point = { ...d.object.keypoints[d.key], x: Math.max(0, Math.min(image.width, p.x)), y: Math.max(0, Math.min(image.height, p.y)) }
       setPreview({ ...d.object, keypoints: { ...d.object.keypoints, [d.key]: point } })
     } else {
@@ -344,6 +357,60 @@ export function AnnotationPage() {
       toast({ title: '项目已导出', description: '包含所有标注和模板，不包含原图。请与原图一起备份。' })
     } catch (error) { report(error) }
   }
+  async function openPrediction() {
+    try {
+      const response = await fetch('/api/annotation/predict')
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      setModels(result.data)
+      setPredictionJob(result.data[0]?.id || '')
+      setPredictionProgress('')
+      setPredictionOpen(true)
+    } catch (error) { report(error) }
+  }
+  async function predict() {
+    if (!predictionJob || busy) return
+    const targets = predictionScope === 'current' ? [image].filter(Boolean) : project.images.filter(item => !item.objects.length && !item.reviewed)
+    if (!targets.length) { report(new Error('没有符合条件的图片')); return }
+    if (targets.some(item => !assets[item.name])) { report(new Error('请先关联所有待预测的原图')); return }
+    if (predictionScope === 'current' && image?.objects.length && !window.confirm('本次预测将替换当前图的实例和关键点；可以撤销。是否继续？')) return
+    setBusy(true)
+    stopPrediction.current = false
+    const changed = new Map<string, AnnotationImage>()
+    let nextLabels = project.labels, nextNames = project.keypointNames
+    try {
+      for (let offset = 0; offset < targets.length && !stopPrediction.current; offset += 8) {
+        const batch = targets.slice(offset, offset + 8)
+        setPredictionProgress(`正在预测 ${offset + 1}–${offset + batch.length} / ${targets.length}`)
+        const data = new FormData()
+        data.append('jobId', predictionJob); data.append('confidence', String(confidence))
+        data.append('names', JSON.stringify(batch.map(item => item.name)))
+        for (const item of batch) data.append('images', await (await fetch(assets[item.name].url)).blob(), item.name.split('/').pop()!)
+        const response = await fetch('/api/annotation/predict', { method: 'POST', body: data })
+        const raw = await response.json()
+        if (!response.ok) throw new Error(raw.error)
+        const result = predictionsSchema.parse(raw.data)
+        if (result.task === 'pose' && project.keypointNames.length && JSON.stringify(project.keypointNames) !== JSON.stringify(result.keypointNames)) throw new Error('模型关键点名称或顺序与项目模板不同；请使用匹配的模板。')
+        nextLabels = [...new Set([...project.labels, ...result.labels])]
+        if (result.task === 'pose') nextNames = result.keypointNames
+        if (result.images.length !== batch.length) throw new Error('模型没有返回本批全部图片')
+        for (const predicted of result.images) {
+          const source = batch.find(item => item.name === predicted.source)
+          if (!source) throw new Error('模型返回了未知图片')
+          changed.set(source.name, predictionToImage(source, result, predicted))
+        }
+      }
+    } catch (error) { report(error) }
+    finally {
+      if (changed.size) {
+        edit(projectSchema.parse({ ...project, labels: nextLabels, keypointNames: nextNames, images: project.images.map(item => changed.get(item.name) || item) }))
+        navigate(project.images.findIndex(item => changed.has(item.name)))
+        setTool('select')
+        toast({ title: '预测已显示，等待人工审核', description: `${changed.size} 张图片。请调整框和点，并逐图确认；未确认的预测不能导入训练。` })
+      }
+      setBusy(false); setPredictionOpen(false); setPredictionProgress('')
+    }
+  }
   if (user?.role !== 'admin') return <p className="text-muted-foreground">请使用管理员账号访问标注工具。</p>
   const issues = image ? imageIssues(image, project.keypointNames) : []
 
@@ -353,6 +420,7 @@ export function AnnotationPage() {
         <div>
           <h1 className="text-2xl font-bold">定位标注 · OBB + 关键点</h1>
           <p className="text-sm text-muted-foreground">{project.name} · {project.images.length} 张 · {dirty ? '有未保存修改' : '已保存 / 未修改'}</p>
+          {image?.prediction && <p className={`text-sm ${image.reviewed ? 'text-green-600' : 'text-amber-600'}`}>{image.reviewed ? '模型辅助标注 · 已人工确认' : '模型预测 · 待人工审核，尚不能用于训练'}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => setShowHelp(true)}>标注与训练指南</Button>
@@ -385,6 +453,7 @@ export function AnnotationPage() {
                 try { loadProject(JSON.parse((await file.text()).replace(/^\uFEFF/, ''))) } catch (error) { report(error) }
               }} />
             </label>
+            <Button className="w-full" variant="outline" disabled={busy || !project.images.length} onClick={openPrediction}>模型预测预标注</Button>
             <Button className="w-full" variant="outline" onClick={() => loadProject(newProject())}>新建项目</Button>
             <Button className="w-full" variant="outline" onClick={() => { setLabelsDraft(project.labels.join('\n')); setPointsDraft(project.keypointNames.join('\n')); setSettings(true) }}>类别与关键点模板</Button>
             <p className="text-xs text-muted-foreground">原图保留在本地。续标时先打开项目，再关联原图根目录。支持同目录同名 Labelme JSON。</p>
@@ -413,7 +482,7 @@ export function AnnotationPage() {
           <p className="text-xs text-muted-foreground">
             {tool === 'obb' ? `依次点击第一条边的两端，再点击对边位置（${pending.length}/3）；Esc 取消。` :
               tool === 'rectangle' ? '依次点击对角两点；Esc 取消。' :
-                tool === 'point' ? `在选中实例上放置 ${activeKey || '关键点'}；可重复点击修正。` : '点击选择实例；拖动框整体移动，拖动圆点修改关键点。'}
+                tool === 'point' ? `在选中实例上放置 ${activeKey || '关键点'}；可重复点击修正。` : '拖动框移动；拖动方形手柄缩放，旋转手柄调角度（Shift 吸附 15°）；拖动关键点修正位置。'}
             {' '}Alt + 拖动或鼠标中键平移；滚动条浏览放大后的图片。
           </p>
           <div ref={viewport} className="relative h-[600px] overflow-auto rounded border bg-slate-950">
@@ -430,6 +499,20 @@ export function AnnotationPage() {
                 return <g key={object.id} data-instance={object.id}>
                   <polygon points={corners.map(p => `${p.x},${p.y}`).join(' ')} fill={active ? '#4ade8014' : 'transparent'} stroke={color} strokeWidth={2 / zoom} />
                   <text x={corners[0].x} y={corners[0].y - 5 / zoom} fill={color} stroke="#000" strokeWidth={2 / zoom} paintOrder="stroke" fontSize={13 / zoom}>{i + 1}: {object.label}</text>
+                  {active && tool === 'select' && <>
+                    {([[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]] as const).map(([sx, sy]) => {
+                      const angle = shown.angle * Math.PI / 180
+                      const x = shown.cx + sx * shown.width / 2 * Math.cos(angle) - sy * shown.height / 2 * Math.sin(angle)
+                      const y = shown.cy + sx * shown.width / 2 * Math.sin(angle) + sy * shown.height / 2 * Math.cos(angle)
+                      return <rect key={`${sx},${sy}`} data-handle={`${sx},${sy}`} aria-label={`缩放手柄 ${sx},${sy}`} x={x - 5 / zoom} y={y - 5 / zoom} width={10 / zoom} height={10 / zoom} fill="#fff" stroke={color} strokeWidth={1.5 / zoom} style={{ cursor: 'nwse-resize' }} />
+                    })}
+                    {(() => {
+                      const angle = shown.angle * Math.PI / 180
+                      const x = Math.max(9 / zoom, Math.min(image.width - 9 / zoom, shown.cx + (shown.height / 2 + 30 / zoom) * Math.sin(angle)))
+                      const y = Math.max(9 / zoom, Math.min(image.height - 9 / zoom, shown.cy - (shown.height / 2 + 30 / zoom) * Math.cos(angle)))
+                      return <><line x1={(corners[0].x + corners[1].x) / 2} y1={(corners[0].y + corners[1].y) / 2} x2={x} y2={y} stroke={color} strokeWidth={1 / zoom} pointerEvents="none" /><circle data-handle="rotate" aria-label="旋转手柄" cx={x} cy={y} r={6 / zoom} fill="#facc15" stroke="#000" strokeWidth={1 / zoom} style={{ cursor: 'grab' }} /></>
+                    })()}
+                  </>}
                   {Object.entries(shown.keypoints).filter(([, p]) => p.visibility > 0).map(([name, p]) => <g key={name}>
                     <circle data-key={name} cx={p.x} cy={p.y} r={5 / zoom} fill={p.visibility === 1 ? 'transparent' : color} stroke={color} strokeWidth={2 / zoom} strokeDasharray={p.visibility === 1 ? `${3 / zoom} ${2 / zoom}` : undefined} />
                     <text pointerEvents="none" x={p.x + 8 / zoom} y={p.y - 5 / zoom} fontSize={12 / zoom} fill={color} stroke="#000" strokeWidth={2 / zoom} paintOrder="stroke">{name}</text>
@@ -489,7 +572,7 @@ export function AnnotationPage() {
                   }} />
                 </label>)}
               </div>
-              <p className="text-xs text-muted-foreground">几何数值修改只调整框，不改变特征点的图像位置。拖动框会整体移动框和关键点。</p>
+              <p className="text-xs text-muted-foreground">缩放/旋转手柄只调整框，特征点保留原图位置；整体移动会同时移动框和点。每次调整可撤销。</p>
               <Button variant="destructive" size="sm" onClick={removeSelected}><Trash2 className="mr-1 size-4" />删除实例和关联点</Button>
             </>}
           </CardContent></Card>
@@ -518,6 +601,17 @@ export function AnnotationPage() {
           </CardContent></Card>
         </div>
       </div>
+      <Dialog open={predictionOpen} onOpenChange={open => { if (!busy) setPredictionOpen(open) }}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>模型预测预标注</DialogTitle><DialogDescription>结果直接显示在画布上，保持“待审核”；逐图确认后才可作为真实标签导入训练。</DialogDescription></DialogHeader>
+        <fieldset disabled={busy} className="space-y-3">
+          <label className="block text-sm">已训练模型<select aria-label="预标注模型" className={selectClass} value={predictionJob} onChange={event => setPredictionJob(event.target.value)}><option value="">选择模型</option>{models.map(model => <option key={model.id} value={model.id}>{model.name} · {model.framework}</option>)}</select></label>
+          {!models.length && <p className="text-sm text-muted-foreground">尚无可用的 OBB/Pose 最佳检查点。请先在 Jobs 完成训练。</p>}
+          <label className="block text-sm">范围<select aria-label="预测范围" className={selectClass} value={predictionScope} onChange={event => setPredictionScope(event.target.value)}><option value="empty">未标注且未确认的图片（保留人工标签）</option><option value="current">当前图（替换当前实例，可撤销）</option></select></label>
+          <label className="block text-sm">目标置信度阈值<Input aria-label="预测置信度" type="number" min={0.01} max={0.99} step={0.05} value={confidence} onChange={event => setConfidence(Number(event.target.value))} /></label>
+          <p className="text-xs text-muted-foreground">Pose 点置信度低于 0.5 时保留为待标注；它不代表“不可见”。原图仅上传到临时预测目录，任务结束后清理。</p>
+          <Button disabled={!predictionJob || !Number.isFinite(confidence) || confidence < 0.01 || confidence > 0.99} onClick={predict}>开始预测</Button>
+        </fieldset>
+        {busy && <div className="space-y-2"><p>{predictionProgress}</p><Button variant="outline" onClick={() => { stopPrediction.current = true; setPredictionProgress('当前批次完成后停止，保留已完成结果') }}>停止后续图片</Button></div>}
+      </DialogContent></Dialog>
       <Dialog open={settings} onOpenChange={setSettings}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>类别与关键点模板</DialogTitle><DialogDescription>每行一个名称，顺序就是训练类别 / 关键点顺序。模板应用于项目内所有类别；结构不同的工件建议分项目标注。</DialogDescription></DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm">类别<textarea className="mt-1 h-48 w-full rounded border bg-background p-2" value={labelsDraft} onChange={e => setLabelsDraft(e.target.value)} /></label>
@@ -551,7 +645,7 @@ export function AnnotationPage() {
           <li>保存并导出项目，保留原图。在仓库目录执行下面的命令；具体训练、验证、推理步骤见 docs/LOCALIZATION_WORKFLOW.md。</li>
         </ol>
         <pre className="overflow-auto rounded bg-muted p-3 text-xs">python tools/localization/prepare.py --project localization-project.json --images D:/images --output D:/localization-data --task both</pre>
-        <p className="text-sm text-muted-foreground">本页提供标注与训练数据准备。OBB / Pose 使用独立 Ultralytics 环境和配套命令行训练入口；当前 Training Jobs 尚未接入这两种任务。标注项目不包含原图，浏览器关闭前请保存。</p>
+        <p className="text-sm text-muted-foreground">在 Datasets 点击“导入定位标注”，创建数据集和三段配置；在 Jobs 启动 TorchOBB / TorchPose 训练。训练完成后可回本页做模型预标注。标注项目不包含原图，浏览器关闭前请保存。</p>
       </DialogContent></Dialog>
     </div>
   )

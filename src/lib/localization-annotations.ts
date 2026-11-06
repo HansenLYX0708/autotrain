@@ -18,6 +18,7 @@ export const objectSchema = z.object({
   // Clockwise degrees in image coordinates (x right, y down).
   angle: finite.min(-180).max(180),
   keypoints: z.record(name, z.object({ x: finite, y: finite, visibility: z.union([z.literal(0), z.literal(1), z.literal(2)]) })),
+  prediction: z.object({ jobId: z.string().min(1), confidence: finite.min(0).max(1) }).optional(),
 })
 export const imageSchema = z.object({
   name: relativePath,
@@ -26,6 +27,7 @@ export const imageSchema = z.object({
   reviewed: z.boolean(),
   split: z.enum(['unassigned', 'train', 'val', 'test']),
   group: z.string().trim().max(200),
+  prediction: z.object({ jobId: z.string().min(1), createdAt: z.string(), task: z.enum(['obb', 'pose']) }).optional(),
 })
 export const projectSchema = z.object({
   format: z.literal('autotrain-localization'),
@@ -98,6 +100,26 @@ export function containsPoint(box: AnnotationObject, p: Point): boolean {
   const dx = p.x - box.cx, dy = p.y - box.cy
   return Math.abs(dx * Math.cos(angle) - dy * Math.sin(angle)) <= box.width / 2 &&
     Math.abs(dx * Math.sin(angle) + dy * Math.cos(angle)) <= box.height / 2
+}
+
+/** Resize along the object's own axes, keeping the opposite edge/corner fixed. */
+export function resizeBox(box: AnnotationObject, p: Point, sx: number, sy: number): AnnotationObject {
+  const radians = box.angle * Math.PI / 180, c = Math.cos(radians), s = Math.sin(radians)
+  const dx = p.x - box.cx, dy = p.y - box.cy
+  const localX = dx * c + dy * s, localY = -dx * s + dy * c
+  const width = sx ? Math.max(1, sx * (localX + sx * box.width / 2)) : box.width
+  const height = sy ? Math.max(1, sy * (localY + sy * box.height / 2)) : box.height
+  const offsetX = sx * (width - box.width) / 2, offsetY = sy * (height - box.height) / 2
+  return { ...box, width, height, cx: box.cx + offsetX * c - offsetY * s, cy: box.cy + offsetX * s + offsetY * c }
+}
+
+export function rotateBox(box: AnnotationObject, start: Point, p: Point, snap = false): AnnotationObject {
+  const from = Math.atan2(start.y - box.cy, start.x - box.cx)
+  const to = Math.atan2(p.y - box.cy, p.x - box.cx)
+  let angle = box.angle + (to - from) * 180 / Math.PI
+  if (snap) angle = Math.round(angle / 15) * 15
+  angle = ((angle + 180) % 360 + 360) % 360 - 180
+  return { ...box, kind: 'obb', angle }
 }
 
 export function insideImage(p: Point, image: Pick<AnnotationImage, 'width' | 'height'>): boolean {

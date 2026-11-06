@@ -37,6 +37,8 @@ export function getDefaultFolderName(framework: string): string {
   if (framework === 'TorchSeg') return 'defaultTorchSeg';
   if (framework === 'TorchDet') return 'defaultTorchDet';
   if (framework === 'TorchAnomaly') return 'defaultTorchAnomaly';
+  if (framework === 'TorchOBB') return 'defaultTorchOBB';
+  if (framework === 'TorchPose') return 'defaultTorchPose';
   if (framework === 'PaddleClas') return 'defaultClas';
   return 'default';
 }

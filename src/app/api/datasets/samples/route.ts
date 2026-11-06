@@ -5,7 +5,8 @@ import { db } from '@/lib/db';
 import { sessions } from '../../auth/route';
 import { getSegColorMap } from '@/lib/seg-colors';
 import { parseListFile } from '@/lib/paddleseg-list';
-import { isAnomaly, isSegmentation } from '@/lib/frameworks';
+import { isAnomaly, isSegmentation, isLocalization } from '@/lib/frameworks';
+import { readLocalizationDataset } from '@/lib/localization-dataset';
 
 interface CocoAnnotation {
   id: number;
@@ -119,8 +120,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Get dataset from database
-    const dataset = await db.dataset.findUnique({
-      where: { id: datasetId },
+    const dataset = await db.dataset.findFirst({
+      where: { id: datasetId, ...(user.role === 'admin' ? {} : { userId }) },
       include: { project: { select: { framework: true } } },
     });
 
@@ -129,6 +130,16 @@ export async function GET(request: NextRequest) {
         { success: false, error: 'Dataset not found' },
         { status: 404 }
       );
+    }
+
+    if (isLocalization(dataset.project.framework)) {
+      if (!dataset.datasetDir || !path.isAbsolute(dataset.datasetDir)) throw new Error('Invalid localization dataset path');
+      const data = readLocalizationDataset(dataset.datasetDir);
+      const filtered = categoryId === null ? data.samples : data.samples.filter(sample => sample.annotations.some(annotation => annotation.categoryId === Number(categoryId)));
+      return NextResponse.json({ success: true, data: {
+        samples: filtered.slice(0, Math.max(1, Math.min(Number.isFinite(limit) ? limit : 20, 100))),
+        categories: data.categories, totalImages: data.samples.length, totalAnnotations: data.columns.numAnnotations,
+      } });
     }
 
     // Anomaly datasets: plain image folders, no annotation file to parse. The

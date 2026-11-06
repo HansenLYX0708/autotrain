@@ -33,6 +33,8 @@ export const FRAMEWORKS = {
   TorchDet: "TorchDet",
   TorchSeg: "TorchSeg",
   TorchAnomaly: "TorchAnomaly",
+  TorchOBB: "TorchOBB",
+  TorchPose: "TorchPose",
 } as const;
 
 export type Framework = (typeof FRAMEWORKS)[keyof typeof FRAMEWORKS];
@@ -44,6 +46,8 @@ export const FRAMEWORK_LIST: Framework[] = [
   "TorchDet",
   "TorchSeg",
   "TorchAnomaly",
+  "TorchOBB",
+  "TorchPose",
 ];
 
 /** Which deep-learning runtime a framework belongs to. */
@@ -96,7 +100,9 @@ export interface FrameworkMeta {
   /** Weight file name (nested) or extension (flat). */
   weightFile: string;
   /** Dataset format this framework consumes. */
-  datasetFormat: "COCO" | "PaddleSeg" | "AnomalyFolder";
+  datasetFormat: "COCO" | "PaddleSeg" | "AnomalyFolder" | "YOLOOBB" | "YOLOPose";
+  /** Ultralytics localization task; distinct data and checkpoint semantics. */
+  localizationTask?: "obb" | "pose";
   /**
    * Training length unit. Segmentation and anomaly frameworks count iterations,
    * which is also what `TrainingJob.currentEpoch/totalEpochs` then hold — see
@@ -124,6 +130,24 @@ export const TORCH_WEIGHT_FILE = "model.pt";
 export const ANOMALY_WEIGHT_FILE = "model.ckpt";
 
 export const FRAMEWORK_META: Record<Framework, FrameworkMeta> = {
+  TorchOBB: {
+    label: "PyTorch Rotated Detection (OBB)", family: "torch", taskKind: "detection",
+    defaultTask: "oriented_detection", pythonModule: "ultralytics",
+    installHint: "Install torch, torchvision and ultralytics in this framework's Python environment.",
+    pathField: "torchPath", requiredFiles: ["tools/localization.py", "tools/localization_train.py", "tools/localization_eval.py", "tools/localization_infer.py", "tools/localization_export.py"],
+    scripts: { train: "tools/localization_train.py", eval: "tools/localization_eval.py", infer: "tools/localization_infer.py", export: "tools/localization_export.py" },
+    cliStyle: "config-flags", saveDirOnCli: true, checkpointLayout: "nested",
+    weightFile: TORCH_WEIGHT_FILE, datasetFormat: "YOLOOBB", localizationTask: "obb", stepUnit: "epoch",
+  },
+  TorchPose: {
+    label: "PyTorch Keypoints (Pose)", family: "torch", taskKind: "detection",
+    defaultTask: "keypoint_detection", pythonModule: "ultralytics",
+    installHint: "Install torch, torchvision and ultralytics in this framework's Python environment.",
+    pathField: "torchPath", requiredFiles: ["tools/localization.py", "tools/localization_train.py", "tools/localization_eval.py", "tools/localization_infer.py", "tools/localization_export.py"],
+    scripts: { train: "tools/localization_train.py", eval: "tools/localization_eval.py", infer: "tools/localization_infer.py", export: "tools/localization_export.py" },
+    cliStyle: "config-flags", saveDirOnCli: true, checkpointLayout: "nested",
+    weightFile: TORCH_WEIGHT_FILE, datasetFormat: "YOLOPose", localizationTask: "pose", stepUnit: "epoch",
+  },
   PaddleDetection: {
     label: "PaddleDetection",
     family: "paddle",
@@ -277,6 +301,10 @@ export function isAnomaly(framework: string | null | undefined): boolean {
   return frameworkMeta(framework).taskKind === "anomaly";
 }
 
+export function isLocalization(framework: string | null | undefined): boolean {
+  return Boolean(frameworkMeta(framework).localizationTask);
+}
+
 /**
  * True when this framework's step columns hold **iterations** rather than epochs.
  *
@@ -318,7 +346,7 @@ export function resolveTask(
   // Detection frameworks additionally support instance segmentation; every other
   // framework has exactly one task, so a stale request must not survive a
   // framework switch.
-  if (meta.taskKind === "detection" && requestedTask === "instance_segmentation") {
+  if (meta.taskKind === "detection" && !meta.localizationTask && requestedTask === "instance_segmentation") {
     return "instance_segmentation";
   }
   return meta.defaultTask;

@@ -52,6 +52,8 @@ import { toast } from '@/hooks/use-toast'
 import { ConfigYamlPane, yamlSyntaxError } from '@/components/config-yaml-pane'
 import { DefaultConfigPicker } from '@/components/default-config-picker'
 import { asConfigFramework, configSchemaOf, type ConfigFramework } from '@/lib/training-yaml'
+import { isLocalization } from '@/lib/frameworks'
+import { localizationArchitectures } from '@/lib/localization-yaml'
 import {
   ANOMALY_MODEL_SIZES,
   ANOMALY_PRESETS,
@@ -202,6 +204,7 @@ export function ModelsPage() {
   const isClas = dialogFramework === 'PaddleClas'
   const isTorchDet = dialogFramework === 'TorchDet'
   const isAnomalyModel = dialogFramework === 'TorchAnomaly'
+  const isLocalizationModel = isLocalization(dialogFramework)
   const anomalyPresetInfo = anomalyPreset(params.architecture)
   const preset = DETECTION_PRESETS[detectionPreset] ?? DETECTION_PRESETS['PP-YOLOE']
   // Architecture vocabularies are framework-specific: TorchSeg offers torchvision
@@ -846,7 +849,20 @@ export function ModelsPage() {
                       </TabsContent>
 
                       <TabsContent value="architecture" className="space-y-4 mt-4">
-                        {isSeg ? (
+                        {isLocalizationModel ? (
+                          <div className="space-y-2">
+                            <Label>Localization Architecture</Label>
+                            <Select value={params.architecture} onValueChange={value => setParams(previous => ({
+                              ...previous, architecture: value, pretrainWeights: `${value}.pt`,
+                            }))}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {localizationArchitectures(dialogFramework).map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-sm text-muted-foreground">Use an absolute path to a local pretrained checkpoint in Pretrained Weights. Class counts and keypoint order come from the selected dataset.</p>
+                          </div>
+                        ) : isSeg ? (
                           <>
                             <div className="space-y-2">
                               <Label>Architecture</Label>
@@ -1273,7 +1289,7 @@ export function ModelsPage() {
                             id="pretrainWeights"
                             value={params.pretrainWeights}
                             onChange={(e) => setParam('pretrainWeights', e.target.value)}
-                            placeholder="https://paddledet.bj.bcebos.com/models/..."
+                              placeholder={isLocalizationModel ? 'D:\\models\\yolo11n-obb.pt' : 'https://paddledet.bj.bcebos.com/models/...'}
                           />
                         </div>
                       </TabsContent>
@@ -1320,6 +1336,8 @@ export function ModelsPage() {
                               </p>
                             )}
                           </div>
+                        ) : isLocalizationModel ? (
+                          <p className="text-sm text-muted-foreground">Localization model structure is fixed by the selected YOLO architecture. Image size, optimizer and augmentations belong to the training configuration.</p>
                         ) : isTorchDet ? (
                           <div className="space-y-3">
                             <p className="text-sm text-muted-foreground">

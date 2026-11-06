@@ -518,5 +518,16 @@ console.log("\n[10] TorchAnomaly: nan loss + nan metric key");
   check("nonFinite includes image_auroc", !!e?.nonFinite?.includes("image_auroc"), e?.nonFinite);
 }
 
+console.log("\n[11] Localization JSON, chunk boundaries and non-finite diagnostics");
+for (const framework of ["TorchOBB", "TorchPose"]) {
+  const state = createParserState(framework);
+  const line = 'AUTOTRAIN_LOCALIZATION {"kind":"eval","epoch":4,"mAP":0.7,"mAP50":0.9,"loss":1e999,"bestIter":3,"extraMetrics":{"metrics/recall":0.8},"nonFinite":["lossCls"]}\n';
+  const rows = [...line].flatMap(character => feed(state, character));
+  check(`${framework}: one chunked eval`, rows.length === 1);
+  check(`${framework}: native epoch and mAP`, rows[0]?.epoch === 4 && rows[0]?.mAP === 0.7);
+  check(`${framework}: diagnostics survive`, rows[0]?.loss === null && !!rows[0]?.nonFinite?.includes("loss") && !!rows[0]?.nonFinite?.includes("lossCls"));
+  check(`${framework}: extra metrics`, rows[0]?.extraMetrics?.["metrics/recall"] === 0.8);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} CHECK(S) FAILED`}\n`);
 process.exit(failures === 0 ? 0 : 1);

@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { defaultInferOutputDir } from '@/lib/frameworks'
-import { buildEvalCommand, buildExportCommand, buildInferCommand } from '@/lib/job-commands'
+import { defaultInferOutputDir, isLocalization, resolvePythonPath } from '@/lib/frameworks'
+import { buildEvalCommand, buildExportCommand, buildInferCommand, checkpointExportDir } from '@/lib/job-commands'
 import { useToast } from '@/hooks/use-toast'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -94,7 +94,8 @@ interface GpuPythonMapping {
 
 interface SystemConfig {
   paddleDetectionPath: string
-  gpuPythonMappings?: GpuPythonMapping[] | Record<string, { pythonPath: string }>
+  gpuPythonMappings?: string | null
+  frameworkPythonMappings?: string | null
 }
 
 interface ValidationJob {
@@ -172,6 +173,14 @@ interface EvalMetrics {
   // result parser so the display can branch on intent instead of guessing from
   // which metric happens to be non-null.
   taskKind?: string | null
+  split?: string
+  extraMetrics?: Record<string, number | null>
+  geometry?: {
+    matched: number; targets: number; falsePositives: number; missedTargets: number;
+    centerErrorPx?: { count: number; mean: number | null; p95: number | null };
+    angleErrorDegMod180?: { count: number; mean: number | null; p95: number | null };
+    keypointErrorPx?: Record<string, { count: number; mean: number | null; p95: number | null; targets?: number; missed?: number }>;
+  }
   imageAuroc?: number | null
   imageF1?: number | null
   pixelAuroc?: number | null
@@ -259,6 +268,21 @@ const getImageUrl = (imagePath: string): string => {
 
 // Metrics Display Component
 function MetricsDisplay({ result, compact = false }: { result: EvalMetrics; compact?: boolean }) {
+  if (result.taskKind === 'obb' || result.taskKind === 'pose') {
+    const display = (value: number | null | undefined, percent = false) => value == null ? 'N/A' : `${(value * (percent ? 100 : 1)).toFixed(2)}${percent ? '%' : ''}`
+    const errors = result.geometry
+    return <div className="space-y-3 text-sm">
+      <div className="font-medium">{result.taskKind === 'obb' ? 'OBB · Rotated IoU' : 'Pose · OKS'} · {result.split || 'val'} · {result.samplesCount ?? '—'} images</div>
+      <div className="flex gap-6"><span>mAP50–95: <strong>{display(result.mAP, true)}</strong></span><span>mAP50: <strong>{display(result.mAP50, true)}</strong></span></div>
+      {errors && !compact && <div className="space-y-1">
+        <p>Matched {errors.matched}/{errors.targets}; missed {errors.missedTargets}; false positives {errors.falsePositives} (confidence 0.25, matching IoU 0.5).</p>
+        {errors.centerErrorPx && <p>Center error: mean {display(errors.centerErrorPx.mean)} px · P95 {display(errors.centerErrorPx.p95)} px</p>}
+        {errors.angleErrorDegMod180 && <p>Long-edge angle error (mod 180°): mean {display(errors.angleErrorDegMod180.mean)}° · P95 {display(errors.angleErrorDegMod180.p95)}°</p>}
+        {Object.entries(errors.keypointErrorPx || {}).map(([name, values]) => <p key={name}>{name}: mean {display(values.mean)} px · P95 {display(values.p95)} px · {values.count}/{values.targets ?? '—'} points · missed {values.missed ?? '—'}</p>)}
+        <p className="text-muted-foreground">Pixel errors cover matched instances only. Missed targets remain listed above.</p>
+      </div>}
+    </div>
+  }
   // Anomaly detection: AUROC/F1 at image and pixel level, plus the score
   // threshold. Checked first because it is the only branch with an explicit
   // marker, and because a mask-less run has *only* image-level numbers, which
@@ -576,6 +600,7 @@ export function ValidationPage() {
   // Export state
   const [exportRunning, setExportRunning] = useState(false)
   const [exportedFiles, setExportedFiles] = useState<string[]>([])
+  const [localizationExportFormat, setLocalizationExportFormat] = useState('onnx')
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null)
 
   // Deployed models: when the user loads a registered model whose weights path
@@ -591,7 +616,7 @@ export function ValidationPage() {
       const response = await fetch('/api/settings')
       if (response.ok) {
         const data = await response.json()
-        setSystemConfig(data)
+        setSystemConfig(data.data ?? data)
       }
     } catch (error) {
       console.error('Failed to fetch system config:', error)
@@ -601,9 +626,6 @@ export function ValidationPage() {
   // Get Python path for a job based on its GPU configuration
   const getPythonPathForJob = (job: TrainingJob | null): string => {
     if (!job) return 'python'
-
-    const gpuMappings = systemConfig?.gpuPythonMappings
-    if (!gpuMappings) return 'python'
 
     // Parse trainingParams to get GPU IDs
     let gpuIds = '0'
@@ -618,26 +640,7 @@ export function ValidationPage() {
 
     const primaryGpuId = String(gpuIds).split(',')[0].trim()
 
-    // Handle array format
-    if (Array.isArray(gpuMappings)) {
-      const mapping = gpuMappings.find(m => String(m.gpuId) === primaryGpuId)
-      if (mapping?.pythonPath) return mapping.pythonPath
-      // Fallback to first mapping
-      const fallback = gpuMappings[0]
-      if (fallback?.pythonPath) return fallback.pythonPath
-      return 'python'
-    }
-
-    // Handle object format
-    if (typeof gpuMappings === 'object') {
-      const mapping = gpuMappings[primaryGpuId] ||
-                      gpuMappings[parseInt(primaryGpuId)] ||
-                      gpuMappings['0'] ||
-                      gpuMappings[0]
-      if (mapping?.pythonPath) return mapping.pythonPath
-    }
-
-    return 'python'
+    return resolvePythonPath(job.project?.framework, primaryGpuId, systemConfig).pythonPath || 'python'
   }
 
   // Generate export command with absolute paths. All three preview builders below
@@ -649,7 +652,8 @@ export function ValidationPage() {
       framework: selectedJob.project?.framework,
       configPath: selectedJob.absoluteConfigPath,
       weightsPath: selectedCheckpoint,
-      outputDir: `${saveDir}/export_model`,
+      outputDir: checkpointExportDir(selectedJob.project?.framework, saveDir, selectedCheckpoint),
+      format: isLocalization(selectedJob.project?.framework) ? localizationExportFormat : undefined,
       python: getPythonPathForJob(selectedJob),
     })
   }
@@ -1026,7 +1030,7 @@ export function ValidationPage() {
     })
   }
 
-  // Export checkpoint to TensorRT
+  // Export the selected checkpoint in the framework's supported format.
   const exportCheckpoint = async () => {
     if (!selectedJob || !selectedCheckpoint) return
 
@@ -1043,6 +1047,7 @@ export function ValidationPage() {
           checkpointName: checkpoints.find(cp => cp.relativePath === selectedCheckpoint)?.name || 'model',
           configPath: selectedJob.absoluteConfigPath,
           outputDir: saveDir,
+          format: isLocalization(selectedJob.project?.framework) ? localizationExportFormat : undefined,
         }),
       })
 
@@ -1385,7 +1390,12 @@ export function ValidationPage() {
                 </Button>
 
                 <div className="p-4 rounded-lg border bg-muted/50">
-                  <div className="text-sm font-medium mb-2">Export TRT Command</div>
+                  {isLocalization(selectedJob?.project?.framework) && <label className="block text-sm mb-3">Export format
+                    <select aria-label="Export format" className="ml-3 rounded border bg-background p-1" value={localizationExportFormat} disabled={exportRunning} onChange={event => { setLocalizationExportFormat(event.target.value); setExportedFiles([]) }}>
+                      <option value="onnx">ONNX</option><option value="torchscript">TorchScript</option>
+                    </select>
+                  </label>}
+                  <div className="text-sm font-medium mb-2">Export Model Command</div>
                   <code className="text-xs break-all block">
                     {generateExportCommand() || 'Select a training job and checkpoint first'}
                   </code>
@@ -1412,7 +1422,7 @@ export function ValidationPage() {
                   <div className="p-3 rounded-lg border bg-amber-50 border-amber-200">
                     <div className="flex items-center gap-2 text-sm text-amber-700">
                       <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                      <span>No exported TRT model found. Click "Download" to export and download.</span>
+                      <span>Click "Download" to export and download this checkpoint.</span>
                     </div>
                   </div>
                 )}

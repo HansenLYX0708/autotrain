@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveCocoValidationPaths } from '../src/lib/coco-annotations';
-import { buildTrainCommand } from '../src/lib/job-commands';
+import { buildTrainCommand, checkpointExportDir, buildExportCommand } from '../src/lib/job-commands';
 import { validateTrainingValidation } from '../src/lib/training-validation';
 
 for (const framework of ['PaddleDetection', 'TorchDet', 'PaddleSeg', 'TorchSeg', 'PaddleClas'] as ConfigFramework[]) {
@@ -36,6 +36,21 @@ for (const framework of ['PaddleDetection', 'TorchDet', 'PaddleSeg', 'TorchSeg',
   if (!seg && framework !== 'PaddleClas') assert.equal(doc.getIn(['PPYOLOEHead', 'num_classes']), 7);
 }
 const anomaly = 'model: {class_path: anomalib.models.Patchcore}\n';
+for (const framework of ['TorchOBB', 'TorchPose'] as const) {
+  const task = framework === 'TorchOBB' ? 'obb' : 'pose';
+  const dataYaml = `num_classes: 2\nlocalization:\n  task: ${task}\n  data: "H:/data with spaces/data.yaml"\n`;
+  const merged = mergeYamlConfigs([
+    { label: 'dataset', content: dataYaml },
+    { label: 'model', content: generateModelYaml(framework, defaultModelParams(framework)) },
+  ]).yaml;
+  const bound = parseDocument(applyDatasetClasses(merged, framework, { yamlConfig: dataYaml, numClasses: 2 })).toJS();
+  assert.equal(bound.num_classes, 2);
+  assert.equal(bound.localization.data, 'H:/data with spaces/data.yaml');
+  const directory = checkpointExportDir(framework, 'H:/user data/job', 'H:/user data/job/best_model/model.pt');
+  assert.equal(directory, 'H:/user data/job/export_model/best_model');
+  assert.notEqual(directory, checkpointExportDir(framework, 'H:/user data/job', 'H:/user data/job/epoch_10/model.pt'));
+  assert.ok(buildExportCommand({ framework, configPath: 'H:/user data/config.yml', weightsPath: 'model.pt', outputDir: directory, format: 'onnx' })?.includes('--format onnx'));
+}
 assert.equal(applyDatasetClasses(anomaly, 'TorchAnomaly', { yamlConfig: null, numClasses: 2 }), anomaly);
 assert.throws(() => applyDatasetClasses('model: {}', 'PaddleSeg', {
   yamlConfig: 'train_dataset: {num_classes: 2}\nval_dataset: {num_classes: 3}', numClasses: 2,

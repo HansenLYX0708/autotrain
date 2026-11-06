@@ -10,7 +10,8 @@ import { sessions } from '../../auth/route';
 import sharp from 'sharp';
 import { buildColorIndex } from '@/lib/seg-colors';
 import { parseListFile } from '@/lib/paddleseg-list';
-import { isSegmentation } from '@/lib/frameworks';
+import { isSegmentation, isLocalization } from '@/lib/frameworks';
+import { readLocalizationDataset } from '@/lib/localization-dataset';
 
 const execAsync = promisify(exec);
 
@@ -159,6 +160,19 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'Dataset not found' },
         { status: 404 }
       );
+    }
+
+    if (isLocalization(dataset.project.framework)) {
+      if (!dataset.datasetDir || !path.isAbsolute(dataset.datasetDir)) throw new Error('Invalid localization dataset path');
+      const data = readLocalizationDataset(dataset.datasetDir);
+      const updated = await db.dataset.update({
+        where: { id: dataset.id }, data: data.columns,
+        include: { project: { select: { id: true, name: true, framework: true, status: true } } },
+      });
+      const classes = JSON.parse(data.columns.classStats);
+      return NextResponse.json({ success: true, data: updated, stats: {
+        ...data.columns, classStats: classes.train, evalClassStats: classes.eval,
+      }, message: 'Localization dataset parsed successfully' });
     }
 
     // PaddleSeg datasets: compute counts from list files and a sampled per-class

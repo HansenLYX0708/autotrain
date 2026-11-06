@@ -29,8 +29,9 @@ import { parseDetectionLines, createDetState, type DetParserState } from './dete
 import { parseSegLine, createSegState, type SegParserState } from './segmentation'
 import { parseAnomalyLine, createAnomalyState, type AnomalyParserState } from './anomaly'
 import { parseClassificationLine } from './classification'
+import { parseLocalizationLine } from './localization'
 import type { ParsedTrainLog } from './types'
-import { isAnomaly, isClassification, isSegmentation, normalizeFramework, type Framework } from '@/lib/frameworks'
+import { isAnomaly, isClassification, isSegmentation, isLocalization, normalizeFramework, type Framework } from '@/lib/frameworks'
 
 export type { ParsedTrainLog } from './types'
 export {
@@ -69,6 +70,7 @@ export function createParserState(framework: string | null | undefined): JobPars
  * bulk import from a log file) can bypass the buffering step.
  */
 export function parseLine(line: string, state: JobParserState): ParsedTrainLog[] {
+  if (isLocalization(state.framework)) return parseLocalizationLine(line)
   // Dispatch on the *task kind*, not the framework name: `torchtrain` emits
   // byte-identical log lines to PaddleSeg (segmentation) and PaddleDetection
   // (detection) precisely so these parsers, and the monitoring charts they feed,

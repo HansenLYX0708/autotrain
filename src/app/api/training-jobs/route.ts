@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, buildUserFilter } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
-import { getWorkDir, isAnomaly, isClassification } from "@/lib/frameworks";
+import { getWorkDir, isAnomaly, isClassification, isLocalization, frameworkMeta } from "@/lib/frameworks";
 import { validateTrainingValidation } from "@/lib/training-validation";
 import {
   bestWeightsPath,
@@ -301,8 +301,11 @@ export async function POST(request: NextRequest) {
     // Get system config for framework path and userConfigsPath
     const systemConfig = await db.systemConfig.findFirst();
     const framework = project.framework || "PaddleDetection";
-    if (isAnomaly(framework) && !doEval) {
-      return NextResponse.json({ error: "TorchAnomaly requires validation to calibrate anomaly scores and select a checkpoint." }, { status: 400 });
+    if ((isAnomaly(framework) || isLocalization(framework)) && !doEval) {
+      return NextResponse.json({ error: `${framework} requires validation to select a checkpoint.` }, { status: 400 });
+    }
+    if (isLocalization(framework) && dataset.format !== frameworkMeta(framework).datasetFormat) {
+      return NextResponse.json({ error: 'Dataset format must match the project OBB/Pose task.' }, { status: 400 });
     }
     const workDir = getWorkDir(framework, systemConfig);
     const userConfigsPath = (systemConfig as any)?.userConfigsPath;
@@ -459,6 +462,9 @@ export async function POST(request: NextRequest) {
         { error: "Invalid gpuIds: expected a comma-separated list of GPU indices, e.g. \"0\" or \"0,1\"" },
         { status: 400 }
       );
+    }
+    if (isLocalization(framework) && gpuIds.includes(',')) {
+      return NextResponse.json({ error: "TorchOBB/TorchPose currently support one selected GPU per job." }, { status: 400 });
     }
     const useAmp = body.useAmp === true;
     const useVdl = body.useVdl === true;

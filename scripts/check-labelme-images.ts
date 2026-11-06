@@ -14,8 +14,9 @@ import assert from "node:assert/strict";
 import { resolveUploadedLabelmeImage } from "../src/lib/labelme-image-match";
 import {
   boxCorners, boxFromThreePoints, containsPoint, fromLabelme, imageIssues,
-  localizationConversionError, projectSchema, toLabelme, type AnnotationImage,
+  localizationConversionError, projectSchema, toLabelme, type AnnotationImage, resizeBox, rotateBox,
 } from "../src/lib/localization-annotations";
+import { predictionToImage, predictionsSchema } from "../src/lib/localization-predictions";
 import {
   buildImageIndex,
   parseLabelmeJson,
@@ -145,6 +146,27 @@ async function main() {
   assert.ok(!projectSchema.safeParse({ ...project, images: [{ ...sample, name: "../escape.png" }] }).success);
   assert.ok(!projectSchema.safeParse({ ...project, images: [sample, sample] }).success);
   check("rotation, visibility, instances, legacy rectangles, bounds and task guards", true);
+  const original = sample.objects[0];
+  const corner = boxCorners(original)[2];
+  const resized = resizeBox(original, { x: corner.x + 20, y: corner.y + 10 }, 1, 1);
+  assert.ok(Math.hypot(boxCorners(resized)[0].x - boxCorners(original)[0].x, boxCorners(resized)[0].y - boxCorners(original)[0].y) < 1e-8, "opposite corner must stay fixed");
+  assert.deepEqual(resized.keypoints, original.keypoints);
+  const rotated = rotateBox(original, { x: original.cx + 10, y: original.cy }, { x: original.cx, y: original.cy + 10 });
+  assert.ok(Math.abs(((rotated.angle - original.angle + 360) % 360) - 90) < 1e-8);
+  assert.equal(rotated.cx, original.cx);
+  assert.deepEqual(rotated.keypoints, original.keypoints);
+  const predictions = predictionsSchema.parse({
+    jobId: "trained-job", task: "obb", labels: ["slider"], keypointNames: [],
+    images: [{ source: sample.name, width: sample.width, height: sample.height, instances: [{
+      label: "slider", confidence: 0.9, center_px: [original.cx, original.cy],
+      long_side_px: original.width, short_side_px: original.height, angle_deg_mod180: original.angle,
+    }] }],
+  });
+  const pending = predictionToImage(sample, predictions, predictions.images[0]);
+  assert.equal(pending.reviewed, false, "predictions must never inherit an existing human confirmation");
+  assert.equal(pending.objects[0].prediction?.jobId, "trained-job");
+  assert.throws(() => predictionToImage(sample, predictions, { ...predictions.images[0], width: sample.width + 1 }), /尺寸/);
+  check("mouse geometry preserves anchors/keypoints and predictions always require review", true);
   const uploadIndex = {
     byName: new Map([["a.png", ["batch1/a.png", "batch2/a.png"]], ["b.png", ["batch1/b.png"]]]),
     byStem: new Map([["a", ["batch1/a.png", "batch2/a.png"]], ["b", ["batch1/b.png"]]]),

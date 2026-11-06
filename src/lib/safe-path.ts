@@ -23,15 +23,7 @@ import * as path from 'path';
  * Strips separators, drive letters, and leading dots, so the result can never
  * escape its parent directory. Returns `fallback` when nothing usable remains.
  */
-export function toSafeSlug(input: string | null | undefined, fallback: string): string {
-  const slug = (input ?? '')
-    .replace(/\s+/g, '_')
-    .replace(/[^a-zA-Z0-9_.-]/g, '')
-    .replace(/^\.+/, '')
-    .toLowerCase()
-    .slice(0, 100);
-  return slug.length > 0 ? slug : fallback;
-}
+export { toSafeSlug } from './safe-slug';
 
 /**
  * True when `target` resolves to `base` itself or something beneath it.

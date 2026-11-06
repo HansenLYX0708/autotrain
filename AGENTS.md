@@ -38,6 +38,8 @@ Supported frameworks (`project.framework` selects one):
 | `TorchDet` | PyTorch | detection | bundled `torchtrain/`, `torchPath` | epochs |
 | `TorchSeg` | PyTorch | segmentation | bundled `torchtrain/`, `torchPath` | iterations |
 | `TorchAnomaly` | PyTorch + anomalib | unsupervised anomaly | bundled `torchtrain/`, `torchPath` | steps |
+| `TorchOBB` | PyTorch + Ultralytics | rotated detection | bundled `torchtrain/`, `torchPath` | epochs |
+| `TorchPose` | PyTorch + Ultralytics | instance keypoints | bundled `torchtrain/`, `torchPath` | epochs |
 
 `src/lib/frameworks.ts` is the **single source of truth**: `FRAMEWORK_META`
 declares each framework's repo path field, Python module, CLI dialect, script
@@ -232,7 +234,7 @@ New framework, backed by **anomalib** through a thin adapter at
 `torchtrain/torchtrain/ad/`. Full rationale and the config shapes are in
 `docs/ANOMALY_DETECTION_DESIGN.md`. The parts that will bite:
 
-- **It is the only framework that does not reuse a Paddle schema.** The merged job
+- **This framework does not reuse a Paddle schema.** The merged job
   config is anomalib's own `model:` / `data:` / `trainer:` (jsonargparse
   `class_path` + `init_args`), plus an `autotrain:` block that is ours and is
   stripped before anomalib sees it. The three-config split maps onto those three
@@ -313,6 +315,21 @@ Things that bite:
   `TORCH_SEG_ARCHITECTURES` / `TORCH_DET_PRESETS` in `src/lib/model-yaml.ts`
   (UI + validation) and `torchtrain/torchtrain/{seg,det}/models.py` (what actually
   builds).
+
+### Localization frameworks (TorchOBB / TorchPose)
+
+- Their three configs merge into `localization.data`, `localization.model` and
+  `localization.train`; class/point schemas travel with the prepared dataset.
+- `FRAMEWORK_META.scripts.*` must remain a single file path. Use the dedicated
+  `tools/localization_{train,eval,infer,export}.py` wrappers, not a filename
+  containing a space and a CLI subcommand: validation spawns an argv array.
+- Ultralytics invokes `on_fit_epoch_end` again after evaluating the best model.
+  Deduplicate by epoch or the callback can copy **last** weights under a
+  **best** metric. Checkpoints follow `best_model/model.pt`.
+- Python 3.8 needs a compatible Polars wheel (`polars==1.8.2` verified).
+  Ultralytics imports it late when saving results, after GPU training has begun.
+- Prediction drafts must set `reviewed=false`; editing accepted labels also
+  clears confirmation. Missing Pose points must not be synthesized as invisible.
 
 ### PaddleDetection specifics
 
@@ -424,3 +441,13 @@ render *wider* than intended, so fixing those makes them smaller.)
 - `mini-services/training-service` is a **mock** (synthetic logs on a timer) and
   imports Prisma from a hardcoded `/home/z/my-project/...` path. Real training
   runs in `src/app/api/training-jobs/[id]/route.ts`.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

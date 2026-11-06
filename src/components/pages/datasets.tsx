@@ -1,5 +1,7 @@
 'use client'
 
+import { LocalizationImportDialog } from '@/components/localization-import-dialog'
+
 import { useEffect, useState, useRef } from 'react'
 import { frameworkMeta, isAnomaly, isSegmentation } from '@/lib/frameworks'
 
@@ -148,12 +150,14 @@ interface SampleImage {
   height: number
   imagePath: string
   maskPath?: string
-  annotations: {
+    annotations: {
     id: number
     categoryId: number
     categoryName: string
-    bbox: number[]
-    area: number
+      bbox: number[]
+      area: number
+      polygon?: { x: number; y: number }[]
+      keypoints?: Record<string, { x: number; y: number; visibility: number }>
   }[]
 }
 
@@ -1233,7 +1237,8 @@ export function DatasetsPage() {
             Manage your training datasets
           </p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <LocalizationImportDialog onImported={() => { fetchDatasets(); fetchProjects() }} />
           <Dialog open={mergeDialogOpen} onOpenChange={(open) => {
             setMergeDialogOpen(open)
             setMergePreview(null)
@@ -2714,10 +2719,10 @@ export function DatasetsPage() {
                             }}
                           />
                           {/* Annotation overlays */}
-                          <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                            <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${sample.width} ${sample.height}`}>
                             {sample.annotations.map((ann, annIndex) => (
                               <g key={ann.id}>
-                                <rect
+                                  {ann.polygon ? <polygon points={ann.polygon.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#ef4444" strokeWidth={3} /> : <rect
                                   x={(ann.bbox[0] / sample.width) * 100 + '%'}
                                   y={(ann.bbox[1] / sample.height) * 100 + '%'}
                                   width={(ann.bbox[2] / sample.width) * 100 + '%'}
@@ -2725,7 +2730,8 @@ export function DatasetsPage() {
                                   fill="none"
                                   stroke="#ef4444"
                                   strokeWidth="2"
-                                />
+                                  />}
+                                  {Object.entries(ann.keypoints || {}).filter(([, point]) => point.visibility > 0).map(([name, point]) => <circle key={name} cx={point.x} cy={point.y} r={6} fill={point.visibility === 2 ? '#22d3ee' : 'none'} stroke="#22d3ee" strokeWidth={2} />)}
                               </g>
                             ))}
                           </svg>
@@ -2857,7 +2863,7 @@ export function DatasetsPage() {
                     >
                       {selectedSample.annotations.map((ann) => (
                         <g key={ann.id}>
-                          <rect
+                            {ann.polygon ? <polygon points={ann.polygon.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#ef4444" strokeWidth={2} /> : <rect
                             x={ann.bbox[0]}
                             y={ann.bbox[1]}
                             width={ann.bbox[2]}
@@ -2865,7 +2871,8 @@ export function DatasetsPage() {
                             fill="none"
                             stroke="#ef4444"
                             strokeWidth="2"
-                          />
+                            />}
+                            {Object.entries(ann.keypoints || {}).filter(([, point]) => point.visibility > 0).map(([name, point]) => <g key={name}><circle cx={point.x} cy={point.y} r={4} fill={point.visibility === 2 ? '#22d3ee' : 'none'} stroke="#22d3ee" /><text x={point.x + 6} y={point.y - 6} fill="#22d3ee" fontSize={12}>{name}</text></g>)}
                           <text
                             x={ann.bbox[0]}
                             y={ann.bbox[1] - 4}

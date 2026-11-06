@@ -508,3 +508,33 @@ Labelme→COCO、Labelme→PaddleSeg、合并 Labelme 到 COCO 三个旧转换�
 4. 解释器**必须**用 `resolvePythonPath(framework, gpuId, systemConfig)` 解析，不要直接读 `gpuPythonMappings`。
 5. 任何进入路径段的用户字符串必须过 `toSafeSlug`；任何拼好的路径在销毁性操作前必须过 `isInside`。
 6. PATCH 类接口必须白名单字段，绝不把 body 整体透传给 `update({ data: body })`。
+
+## 定位数据导入与模型预标注
+
+### `POST /api/datasets/import-localization`
+
+管理员专用，只读取当前用户保存的标注项目。JSON 参数：
+
+- `annotationProjectId`：已保存标注项目 UUID；`imagesRoot`：服务器原图绝对目录。
+- `name`：数据版本名称；`task`：`obb` / `pose`。
+- `splitMode`：`existing` 保留人工划分；`filename-index` 按 `-编号.扩展名` 分组。
+- `seed`（默认 42）、`valRatio` / `testRatio`（默认各 0.2）。
+- `preview`（默认 true）：仅检查并返回报告；正式提交传 false 及预览返回的 `sourceRevision`，源标注变化时拒绝旧提交。
+
+返回 `{success,data}`。预览包含 `report`（保留/排除图片、类别、实例、分组、错误和 SHA256 版本）；正式提交还返回 `project`、`dataset`、`model`、`trainingConfig`。无实例图片排除；未审核实例、Pose 漏点、数据泄漏和错误几何会阻止导入。成功后可直接创建系统训练任务。
+
+### `GET /api/annotation/predict`
+
+管理员专用，列出存在最佳检查点的已完成/停止的 TorchOBB、TorchPose 训练任务。管理员可选用其权限范围内的模型。返回 `{success,data:[{id,name,framework,projectName,bestMetric}]}`。
+
+### `POST /api/annotation/predict`
+
+管理员专用。`multipart/form-data` 字段：`jobId`、`confidence`（0.01–0.99，默认 0.25）、`names`（原项目相对图片名称的 JSON 数组）和重复 `images` 文件字段。每批 1–16 张、总计≤128 MB，支持 JPEG/PNG/BMP/WebP。
+
+使用任务保存的配置和最佳权重，通过配置的 Python/CUDA 环境实际推理；临时上传文件与可视化输出随后清理。返回任务、类别/点位 schema 和原图像素坐标的实例结果。接口不改写人工标注；浏览器将结果设为 `reviewed:false`，人工确认并通过项目保存接口持久化后，才可被训练导入。
+
+### 定位模型导出约定
+
+`POST /api/checkpoints/export` 对 TorchOBB / TorchPose 支持 `format: "onnx" | "torchscript"`，默认 ONNX；使用任务冻结的合并配置，要求检查点位于该任务目录。输出按检查点隔离于 `<job.outputDir>/export_model/<checkpoint>/<obb|pose>_<format>/`。`exportedFiles` 只返回本次请求格式的模型包，避免下载到旧格式或其他检查点的结果。模型包包含权重/计算图、类别与点位 schema、预处理和后处理说明；下载接口按目录打包 ZIP。
+
+定位训练目前每个任务只支持一张 GPU；请求多个 GPU 会返回 400。验证/推理继承训练任务的首张 GPU，并通过 `resolvePythonPath` 选择框架对应的 Python 环境。验证命令由服务端生成，客户端 `customCommand` 不作为执行命令。

@@ -21,6 +21,8 @@
  */
 
 import { parseDocument, isMap, isSeq, type Document } from 'yaml';
+import { isLocalization } from './frameworks';
+import { localizationTrainingYaml, parseLocalizationTraining } from './localization-yaml';
 
 export type ConfigFramework =
   | 'PaddleDetection'
@@ -28,7 +30,9 @@ export type ConfigFramework =
   | 'PaddleSeg'
   | 'TorchDet'
   | 'TorchSeg'
-  | 'TorchAnomaly';
+  | 'TorchAnomaly'
+  | 'TorchOBB'
+  | 'TorchPose';
 
 const CONFIG_FRAMEWORKS: ConfigFramework[] = [
   'PaddleDetection',
@@ -37,6 +41,8 @@ const CONFIG_FRAMEWORKS: ConfigFramework[] = [
   'TorchDet',
   'TorchSeg',
   'TorchAnomaly',
+  'TorchOBB',
+  'TorchPose',
 ];
 
 export function asConfigFramework(value: string | null | undefined): ConfigFramework {
@@ -53,7 +59,7 @@ export function asConfigFramework(value: string | null | undefined): ConfigFrame
  * shared instead of forked, and a project can be migrated between runtimes by
  * changing `project.framework` alone.
  */
-type ConfigSchema = 'detection' | 'classification' | 'segmentation' | 'anomaly';
+type ConfigSchema = 'detection' | 'classification' | 'segmentation' | 'anomaly' | 'localization';
 
 const CONFIG_SCHEMA: Record<ConfigFramework, ConfigSchema> = {
   PaddleDetection: 'detection',
@@ -66,6 +72,8 @@ const CONFIG_SCHEMA: Record<ConfigFramework, ConfigSchema> = {
   // `trainer:` / `data:` / `model:` shape. The three-config split still lines up
   // one-to-one with those three blocks.
   TorchAnomaly: 'anomaly',
+  TorchOBB: 'localization',
+  TorchPose: 'localization',
 };
 
 export function configSchemaOf(framework: ConfigFramework): ConfigSchema {
@@ -73,7 +81,7 @@ export function configSchemaOf(framework: ConfigFramework): ConfigSchema {
 }
 
 export function isTorchConfigFramework(framework: ConfigFramework): boolean {
-  return framework === 'TorchDet' || framework === 'TorchSeg' || framework === 'TorchAnomaly';
+  return framework === 'TorchDet' || framework === 'TorchSeg' || framework === 'TorchAnomaly' || isLocalization(framework);
 }
 
 /** True when the framework measures training length in iterations, not epochs. */
@@ -269,6 +277,8 @@ const SEG_DEFAULTS: Partial<TrainingParams> = {
 
 /** Per-framework defaults that differ from the shared baseline. */
 const FRAMEWORK_DEFAULT_OVERRIDES: Record<ConfigFramework, Partial<TrainingParams>> = {
+  TorchOBB: {},
+  TorchPose: {},
   PaddleDetection: {},
   PaddleClas: {
     optimizerType: 'Momentum',
@@ -332,6 +342,11 @@ const FRAMEWORK_DEFAULT_OVERRIDES: Record<ConfigFramework, Partial<TrainingParam
 };
 
 export function defaultTrainingParams(framework: ConfigFramework): TrainingParams {
+  if (isLocalization(framework)) return {
+    ...DEFAULT_TRAINING_PARAMS, epochs: 100, maxEpochs: 100, trainBatchSize: 4, evalBatchSize: 4,
+    imageWidth: 1024, imageHeight: 1024, optimizerType: 'AdamW', baseLr: 0.001,
+    workerNum: 0, warmupEpochs: 3, snapshotEpoch: 10, useAmp: false, useGpu: true,
+  };
   return { ...DEFAULT_TRAINING_PARAMS, ...FRAMEWORK_DEFAULT_OVERRIDES[framework] };
 }
 
@@ -409,6 +424,8 @@ const ANOMALY_FIELDS: TrainingFieldKey[] = [
 ];
 
 export const TRAINING_FIELD_SUPPORT: Record<ConfigFramework, Set<TrainingFieldKey>> = {
+  TorchOBB: new Set(['epochs', 'trainBatchSize', 'imageWidth', 'workerNum', 'optimizerType', 'baseLr', 'momentum', 'weightDecay', 'warmupEpochs', 'scheduler', 'snapshotEpoch', 'useAmp', 'useGpu', 'logIter']),
+  TorchPose: new Set(['epochs', 'trainBatchSize', 'imageWidth', 'workerNum', 'optimizerType', 'baseLr', 'momentum', 'weightDecay', 'warmupEpochs', 'scheduler', 'snapshotEpoch', 'useAmp', 'useGpu', 'logIter']),
   PaddleDetection: new Set(DETECTION_FIELDS),
   PaddleClas: new Set(CLAS_FIELDS),
   PaddleSeg: new Set(SEG_FIELDS),
@@ -426,6 +443,8 @@ export function supportsField(framework: ConfigFramework, field: TrainingFieldKe
 
 /** Selectable optimizer / scheduler values, per framework. */
 export const OPTIMIZER_OPTIONS: Record<ConfigFramework, string[]> = {
+  TorchOBB: ['SGD', 'Adam', 'AdamW'],
+  TorchPose: ['SGD', 'Adam', 'AdamW'],
   PaddleDetection: ['Momentum', 'SGD', 'Adam', 'AdamW', 'RMSProp'],
   PaddleClas: ['Momentum', 'SGD', 'Adam', 'AdamW'],
   PaddleSeg: ['SGD', 'Momentum', 'Adam', 'AdamW'],
@@ -438,6 +457,8 @@ export const OPTIMIZER_OPTIONS: Record<ConfigFramework, string[]> = {
 };
 
 export const SCHEDULER_OPTIONS: Record<ConfigFramework, string[]> = {
+  TorchOBB: ['CosineDecay', 'Linear'],
+  TorchPose: ['CosineDecay', 'Linear'],
   PaddleDetection: ['CosineDecay', 'PiecewiseDecay', 'ExpDecay', 'ConstLR'],
   PaddleClas: ['Cosine', 'Piecewise', 'Linear', 'MultiStepDecay', 'Constant'],
   PaddleSeg: ['PolynomialDecay', 'CosineAnnealingDecay', 'PiecewiseDecay', 'StepDecay', 'ExponentialDecay'],
@@ -844,6 +865,7 @@ export function generateTrainingYaml(
   params: TrainingParams,
   configName = 'Training Config',
 ): string {
+  if (isLocalization(framework)) return localizationTrainingYaml(params);
   switch (CONFIG_SCHEMA[framework]) {
     case 'classification':
       return generateClasYaml(params, configName);
@@ -924,6 +946,8 @@ export function parseTrainingParams(
   const out: Partial<TrainingParams> = {};
 
   switch (CONFIG_SCHEMA[framework]) {
+    case 'localization':
+      return parseLocalizationTraining(doc);
     case 'segmentation':
       parseSeg(doc, out);
       break;

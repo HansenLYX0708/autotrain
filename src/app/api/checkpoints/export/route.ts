@@ -4,9 +4,11 @@ import { spawn, exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
-import { requireAuth } from '@/lib/auth';
+import { requireAuth, buildUserFilter } from '@/lib/auth';
 import { logActivity } from '@/lib/activity-log';
 import { frameworkMeta, getWorkDir, resolvePythonPath } from '@/lib/frameworks';
+import { isInside } from '@/lib/safe-path';
+import { checkpointExportDir } from '@/lib/job-commands';
 
 const execAsync = promisify(exec);
 
@@ -40,8 +42,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Get job details
-    const job = await db.trainingJob.findUnique({
-      where: { id: jobId },
+    const job = await db.trainingJob.findFirst({
+      where: { id: jobId, ...buildUserFilter(userId, authResult.role) },
       include: {
         project: { select: { id: true, name: true, framework: true } },
         config: true,
@@ -72,6 +74,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (meta.localizationTask && (!job.outputDir || !isInside(path.resolve(workDir, job.outputDir), path.resolve(checkpointPath)))) {
+      return NextResponse.json({ error: 'Choose a checkpoint inside this training job output directory.' }, { status: 400 });
+    }
 
     // GPU the job ran on. `trainingParams` is a JSON *string*, so the previous
     // `(job.trainingParams as any)?.gpuIds` was always undefined and every export
@@ -101,7 +106,7 @@ export async function POST(request: NextRequest) {
     const pythonPath = resolvedPython;
 
     // Use provided config path, else the job's own merged config.
-    let configPath: string | null = providedConfigPath || null;
+    let configPath: string | null = meta.localizationTask ? null : providedConfigPath || null;
 
     if (!configPath) {
       const userConfigsPath = (systemConfig as any)?.userConfigsPath || process.env.USER_CONFIGS_PATH;
@@ -138,7 +143,13 @@ export async function POST(request: NextRequest) {
     // Export API: 统一使用标准路径 {userDatabasePath}/{username}/jobs/{jobName}/export_model
     const userDatabasePath = (systemConfig as any)?.userDatabasePath || process.env.DATABASE_PATH || process.cwd();
     const username = user?.username || 'default';
-    const outputDir = path.join(userDatabasePath, username, 'jobs', job.name, 'export_model');
+    const outputDir = meta.localizationTask
+      ? checkpointExportDir(framework, path.resolve(workDir, job.outputDir!), checkpointPath)
+      : path.join(userDatabasePath, username, 'jobs', job.name, 'export_model');
+    const format = String(body.format || (meta.localizationTask ? 'onnx' : 'torchscript'));
+    if (meta.localizationTask && !['onnx', 'torchscript'].includes(format)) {
+      return NextResponse.json({ error: 'Localization export supports onnx or torchscript.' }, { status: 400 });
+    }
 
     // Ensure output directory exists
     if (!fs.existsSync(outputDir)) {
@@ -153,12 +164,12 @@ export async function POST(request: NextRequest) {
 
     const args = meta.cliStyle === 'config-flags'
       ? [
-          meta.scripts.export,
+          ...meta.scripts.export.split(' '),
           '--config', absoluteConfigPath,
           '--model_path', absoluteCheckpointPath,
           '--save_dir', absoluteOutputDir,
           // torchtrain writes TorchScript by default; PaddleSeg ignores --format.
-          ...(meta.family === 'torch' ? ['--format', String(body.format || 'torchscript')] : []),
+          ...(meta.family === 'torch' ? ['--format', format] : []),
         ]
       : [
           meta.scripts.export,
@@ -188,10 +199,10 @@ export async function POST(request: NextRequest) {
     console.log('[Export Debug] Full Command:', `${pythonPath} ${args.join(' ')}`);
 
     // Execute export command
-    return new Promise((resolve) => {
+    return new Promise<NextResponse>((resolve) => {
       const exportProcess = spawn(pythonPath, args, {
         cwd: workDir,
-        env: { ...process.env, PYTHONPATH: workDir, PYTHONUNBUFFERED: '1' },
+        env: { ...process.env, PYTHONPATH: workDir, PYTHONUNBUFFERED: '1', CUDA_VISIBLE_DEVICES: primaryGpuId },
       });
 
       let stdout = '';
@@ -212,7 +223,7 @@ export async function POST(request: NextRequest) {
           if (fs.existsSync(outputDir)) {
             const entries = fs.readdirSync(outputDir, { withFileTypes: true });
             entries.forEach((entry) => {
-              if (entry.isDirectory()) {
+              if (entry.isDirectory() && (!meta.localizationTask || entry.name === `${meta.localizationTask}_${format}`)) {
                 exportedFolders.push(path.join(outputDir, entry.name));
               }
             });

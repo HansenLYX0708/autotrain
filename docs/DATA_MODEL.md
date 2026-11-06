@@ -268,3 +268,9 @@ anomalib 会取 test 划分的一半作验证，并**在其上拟合异常分数
 `gpuId`、`utilization`、`memoryUsed`（MB）、`memoryTotal`（MB）、`temperature`（℃）、`timestamp`。
 
 用于 GPU 历史曲线，但**当前没有任何代码定时写入这张表**，Dashboard 读到的通常是空集；实时数值来自 `GET /api/system/gpu`（现场调用 `nvidia-smi`）。
+
+## 定位任务的数据约定
+
+`TorchOBB` / `TorchPose` 复用现有表，无 schema 迁移。`Dataset.format` 分别为 `YOLO_OBB` / `YOLO_POSE`；标签、关键点顺序和来源报告在版本目录中，三段 `yamlConfig` 使用 `localization` 配置块。`TrainingJob.currentEpoch`、`totalEpochs` 和训练配置的 epoch 列都以 epoch 计数；`TrainingLog.mAP` 为 OBB 的旋转 IoU mAP 或 Pose 的 OKS mAP，额外指标继续保存在 `classMetrics` JSON。
+
+原始标注 JSON 的 `image.reviewed` 是人工确认状态。模型预标注将它设为 false；`image.prediction` 保存任务、时间、任务类型，`object.prediction` 保存任务和置信度。确认后仍保留来源；任何框/点编辑再次撤回确认。只有通过导入校验的审核数据才进入训练数据快照。

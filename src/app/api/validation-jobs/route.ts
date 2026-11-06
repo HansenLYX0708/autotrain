@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth, buildUserFilter } from '@/lib/auth';
-import { defaultInferOutputDir, frameworkMeta, getWorkDir, isAnomaly, isSegmentation, resolvePythonPath } from '@/lib/frameworks';
+import { defaultInferOutputDir, frameworkMeta, getWorkDir, isAnomaly, isSegmentation, isLocalization, resolvePythonPath } from '@/lib/frameworks';
 import { buildEvalCommand, buildInferCommand } from '@/lib/job-commands';
 import { NUMERIC_TOKEN, parseNumericToken } from '@/lib/log-parsers';
 import { spawn, exec } from 'child_process';
@@ -111,10 +111,10 @@ const runningProcesses = new Map<string, ReturnType<typeof spawn>>();
  * bare `python`; and it had no notion of framework, so a torch job would have
  * been handed a PaddlePaddle interpreter.
  */
-async function getPythonPathForJob(trainingJobId: string, framework?: string | null): Promise<string> {
+async function getExecutionForJob(trainingJobId: string, framework?: string | null): Promise<{ pythonPath: string; gpuId: string }> {
   if (!trainingJobId) {
     const systemConfig = await db.systemConfig.findFirst();
-    return resolvePythonPath(framework, 0, systemConfig).pythonPath || 'python';
+    return { pythonPath: resolvePythonPath(framework, 0, systemConfig).pythonPath || 'python', gpuId: '0' };
   }
 
   try {
@@ -137,10 +137,10 @@ async function getPythonPathForJob(trainingJobId: string, framework?: string | n
     const systemConfig = await db.systemConfig.findFirst();
     const effectiveFramework = framework || job?.project?.framework;
     const { pythonPath } = resolvePythonPath(effectiveFramework, primaryGpuId, systemConfig);
-    return pythonPath || 'python';
+    return { pythonPath: pythonPath || 'python', gpuId: String(primaryGpuId) };
   } catch (error) {
     console.error('Error getting Python path for job:', error);
-    return 'python';
+    return { pythonPath: 'python', gpuId: '0' };
   }
 }
 
@@ -341,12 +341,12 @@ export async function POST(request: NextRequest) {
     const workDir = getWorkDir(framework, systemConfig);
 
     // Get Python path based on the training job's GPU + this project's framework
-    const pythonPath = await getPythonPathForJob(body.trainingJobId, framework);
+    const { pythonPath, gpuId } = await getExecutionForJob(body.trainingJobId, framework);
 
-    // Build command based on type - use customCommand if provided.
+    // Commands always come from server-side builders; client command text is ignored.
     // The strings come from `@/lib/job-commands`, the same module the UI preview
     // uses, so the command a user reviews is the command that runs.
-    let command = body.customCommand || '';
+    let command = '';
 
     if (!command) {
       const configPath = body.configPath || '';
@@ -448,7 +448,8 @@ export async function POST(request: NextRequest) {
         body.weightsPath,
         effectiveInferInput,
         body.inferOutputPath,
-        framework
+        framework,
+        gpuId
       );
     }
 
@@ -478,7 +479,8 @@ function startValidationProcess(
   weightsPath?: string,
   inferInputPath?: string,
   inferOutputPath?: string,
-  framework: string = 'PaddleDetection'
+  framework: string = 'PaddleDetection',
+  gpuId: string = '0'
 ) {
   console.log(`\n========== VALIDATION PROCESS START ==========`);
   console.log(`[Validation ${jobId}] Type: ${type}`);
@@ -504,6 +506,7 @@ function startValidationProcess(
   // argv array (rather than a shell string) is what makes paths with spaces work
   // without quoting, so this mirrors `@/lib/job-commands` rather than reusing it.
   const meta = frameworkMeta(framework);
+  if (meta.family === 'torch') env.CUDA_VISIBLE_DEVICES = gpuId;
   const defaultOutput = defaultInferOutputDir(framework);
 
   if (meta.cliStyle === 'config-flags') {
@@ -577,7 +580,13 @@ function startValidationProcess(
     let resultJson: string | null = null;
     let resultPath: string | null = null;
 
-    if (type === 'eval' && status === 'completed' && isAnomaly(framework)) {
+    if (type === 'eval' && status === 'completed' && isLocalization(framework)) {
+      const result = fullOutput.split(/\r?\n/).findLast(line => line.startsWith('AUTOTRAIN_RESULT '));
+      if (result) {
+        try { resultJson = JSON.stringify(JSON.parse(result.slice('AUTOTRAIN_RESULT '.length))); }
+        catch { resultJson = JSON.stringify({ error: 'Invalid localization evaluation result' }); }
+      }
+    } else if (type === 'eval' && status === 'completed' && isAnomaly(framework)) {
       // Anomaly eval prints a single line, e.g.
       //   [EVAL] #Images: 40 image_auroc: 0.9812 image_f1: 0.9231 pixel_auroc: ... threshold: 12.3456
       // Read every `key: value` pair rather than a fixed list: anomalib's

@@ -8,14 +8,15 @@
 |---|---|---|
 | 数据规范 | 按采集批次组织；固定类别与关键点顺序；区分可见/遮挡/无法确定；每实例独立关联 | 工具与约定已实现，业务点位待样图确定 |
 | 标注工具 | 水平框、旋转框、结构点、可见性、编辑、撤销/重做、保存恢复、Labelme 兼容 | 已实现 |
-| 数据准备 | 输出 OBB/Pose 训练目录；检查几何、点位、划分、同批次泄漏和同文件内容泄漏 | 已实现，CLI |
-| 基线训练 | 独立环境，标准 OBB 和 Pose 模型，训练/验证/推理/导出入口 | CLI 已实现；真实数据和权重尚未提供，尚无训练精度结论 |
+| 数据准备 | 输出 OBB/Pose 训练目录；检查几何、点位、划分、同批次泄漏和同文件内容泄漏 | 已接入 Datasets 导入、预览和数据库 |
+| 基线训练 | 标准 OBB 和 Pose 模型，训练/验证/推理/导出入口 | 已接入真实 Training Jobs；GPU 集成试跑完成 |
 | 生产验收 | 关键点像素误差、方向误差、标定后的毫米误差、拒识策略、现场独立测试集 | 计划，需要相机/工件/精度信息 |
-| 网页任务调度 | 框架注册、三段 YAML、数据导入、任务生命周期、专用指标、Validation 叠加显示、模型发布 | **后续阶段，尚未接入 Training Jobs** |
+| 网页任务调度 | 框架注册、三段 YAML、数据导入、任务生命周期、专用指标、Validation 叠加显示、模型导出 | TorchOBB / TorchPose 已接入 |
+| 模型辅助标注 | 使用已训练检查点预测、鼠标调框、逐图确认 | 已实现并用真实预测完成浏览器验收 |
 
-当前系统的普通 TorchDet / PaddleDetection 模型预设不能直接训练此工具导出的 OBB/Pose 数据。不要仅修改框架名称、把旋转框转为水平框就宣称支持了旋转检测。此次标注项目通过独立文件保存，不修改 Prisma schema 或现有训练数据库。
+项目框架使用 `TorchOBB` 或 `TorchPose`。标注草稿仍保存为用户隔离的 JSON；导入时创建既有 Prisma `Project`、`Dataset`、`Model`、`TrainingConfig` 记录，无需增加数据库表。
 
-网页调度的下一阶段按以下顺序实施：在 `FRAMEWORK_META` 注册 OBB/Pose 能力与环境映射；增加 YOLO 数据集校验和三配置生成器；封装训练/停止/恢复及权重发现；分别接入 OBB mAP、Pose mAP 和关键点误差；最后增加推理叠加、实例关联与生产模型发布。验收需包含 CPU 小样本训练以及目标 GPU 上的真实任务，不能只通过构建检查。
+系统入口及预标注步骤见第 10 节。停止后的“重新开始”会重新执行保存的配置；本适配器尚未提供优化器状态续训。
 
 ## 2. 先确定“定位”输出
 
@@ -179,3 +180,50 @@ python -m unittest discover -s tools/localization -v
 仓库已有 3000 端口开发实例，第二开发实例被锁阻止，因此浏览器与接口验收使用 3010 端口的构建后应用和独立测试数据库，未改动现有业务数据库。
 
 本轮没有训练真实定位模型、评估推理精度或完成设备坐标标定。已查看样图主要是相近视角的 ABS 表面结构局部图，可以用于讨论结构点定义；跨场景定位还需要不同视角、背景、照明和批次，整件 OBB 定位应补充能清楚定义完整工件范围的图像。
+
+## 10. 系统训练和模型辅助标注
+
+1. Settings 配置 `torchPath`，并分别给 `TorchOBB`、`TorchPose` 设置可用 CUDA 的 Python 解释器。安装 `tools/localization/requirements.txt`；ONNX 导出另需 `onnx`，部署检查可用 `onnxruntime`。Python 3.8 环境本次验证使用 torch 2.4.1+cu118、Ultralytics 8.3.232、polars 1.8.2、onnx 1.16.2。
+2. 保存标注项目，在 **Datasets → 导入定位标注** 选择项目、服务器图片根目录和任务。未标注图片被排除；有实例但未审核的图片会阻止导入。Pose 要求每个实例逐点处理，不能把漏标点转换成不可见点。
+3. 预览类别、实例数、排除清单和分组划分，再提交创建数据集及三段配置。导入保存源文件 SHA256、标注快照、随机种子和划分报告。已有明确划分可以保留；自动划分可用采集组或文件名末尾编号。
+4. 在 Models / Configurations 调整预训练权重、输入尺寸、batch、epochs 和学习率，再在 **Jobs** 创建并开始任务。当前适配器支持单张 CUDA GPU。真实 runner 写入训练日志和指标，最佳权重为 `best_model/model.pt`，最终权重为 `model_final/model.pt`。
+5. 在 **Validation** 选择检查点执行评估或推理；评估配置 `localization.evaluation.split` 可选 `val` / `test`。结果包含 mAP、漏检/误检、匹配实例的像素误差和模 180° 方向误差。像素误差使用置信度 0.25、同类 IoU≥0.5 的一对一匹配；漏检不计入误差均值，必须同时看匹配数。Pose 使用 OKS 和命名点误差。
+6. 检查点导出生成 ONNX 或 TorchScript 包，包含模型、`schema.json` 和 `export.json`。导出的原始网络输出仍需按对应任务做缩放还原和 NMS；不能直接把输出张量当作设备坐标。
+7. 回到 **Annotation → 模型预测预标注**，选择完成训练的模型。默认只处理未标注且未确认的图片；替换当前图会提示确认，支持撤销。预测直接显示在原图上，保留模型来源并标为待审核。Pose 中置信度低于 0.5 的点留空，等待人工处理。
+8. 选择实例后，拖动方形角点/边手柄缩放，黄色圆形手柄旋转（Shift 吸附 15°），拖动框整体平移，拖动关键点修正。缩放/旋转只调整框；平移同时移动关联点。点击“确认本图标注完成”并保存后，该图才可导入下一版训练数据。再次编辑会撤回确认状态。
+
+### gen5/corner/abs 实机记录
+
+源目录 `G:/datasets/sliderlocation/gen5/corner/abs`：48 张图，36 张人工确认标注，208 个 `slider_abs` 旋转框；12 张未标注图片排除。`tapring` 没有实例。关键点只有 4 个完整三点实例及 1 个两点实例，完整 Pose 导入被拒绝。
+
+本次使用末尾编号分组、seed 42：train 17 张/101 个实例，val 12 张/65 个实例，test 7 张/42 个实例。同编号不跨集合。编号代表同一次采集是基于文件命名的假设，不能视为已核实的独立生产批次；这批同场景小样本不代表跨场景生产精度。
+
+隔离验收库通过系统真实任务接口，在 RTX 3090 上训练 3 个 epoch（640、batch 2），完成了真实评估、ONNX 导出和预标注。浏览器验收验证了真实预测显示、鼠标缩放/旋转、撤销、逐图确认、保存恢复；测试修改保存在隔离账户，原始人工标签不受影响。截图位于 `temp/localization-smoke/pipeline/model-assisted-annotation.png`。
+
+业务配置已导入 `.env` 实际使用的 `D:/home/z/my-project/db/custom.db`，项目为 `slider-gen5-corner-obb-d4f84092`。两个现有数据库均已备份至 `autotrain_db_backups/before-localization-*-20261105-184045.db`，未切换 `.env`。正式配置为 YOLO11n-OBB、1280、batch 4、最多 100 epochs，计划使用 RTX 4090；运行结果应以系统真实任务和后续验收记录为准。
+
+### 正式 GPU 训练结果（2026-11-06）
+
+任务 `slider-gen5-obb-gpu-1793932021415`（ID `cmw4ct36n0001ui48h72z2heo`）由已登录的标注所有者通过系统任务接口创建并启动。RTX 4090 / CUDA 11.8 实际执行 86 epochs，连续 30 epochs 无提升触发早停；任务状态 completed。数据库记录了训练日志、最佳检查点以及独立 val / test 验证任务。
+
+| 指标 | val（12 张、65 目标） | test（7 张、42 目标） |
+|---|---:|---:|
+| mAP50 | 95.24% | 97.08% |
+| mAP50–95 | 87.17% | 88.37% |
+| 匹配 / 漏检 / 误检 | 59 / 6 / 2 | 39 / 3 / 3 |
+| 中心误差 mean / P95 | 12.18 / 26.20 px | 11.84 / 26.16 px |
+| 长边角度误差 mean / P95 | 8.05° / 25.93° | 3.64° / 9.61° |
+
+匹配采用置信度 0.25、同类 IoU≥0.5；误差只覆盖匹配目标，方向统计排除长短边比<1.1 的近正方形框。AP 的 precision/recall 使用其自身曲线阈值，不等于上述固定阈值计数。该测试集规模小、场景相近，不能据此推断跨场景或毫米级定位效果。
+
+任务目录：`H:/Autotrain_user_database/Hansen Liu/jobs/slider-gen5-obb-gpu-1793932021415/`。
+
+- `best_model/model.pt`：已训练最佳模型，可在 Annotation 选择该任务预标注。
+- `runtime.json` / `autotrain-console.log`：CUDA、GPU 名称、完整配置和原始真实日志。
+- `validation/eval-1d694fc225d3/metrics.json`：验证集结果。
+- `validation/eval-b7041ac932cc/metrics.json`：保留测试集结果。
+- `export_model/obb_onnx/model.onnx`：本次正式导出的模型，旁边为 schema 和导出说明。
+
+后续从网页导出时可选择 ONNX / TorchScript，导出按检查点分目录保存，避免不同 epoch 的导出相互覆盖。OBB 和 Pose 导出均通过真实图片的 ONNX Runtime/PyTorch 张量对比；这验证导出一致性，不代表定位精度。Pose 仅用 4 个真实完整实例裁剪图做了隔离 GPU 适配器测试，未把不完整的全图 Pose 标注用于正式训练。48 张原图及原始标注 JSON 的 SHA256 均保持不变。
+
+最终验收包括两种格式的实际导出及 ZIP 下载、Pose 点位数量校验与 GPU 选择、浏览器格式切换及命令预览。生产构建和修改文件 ESLint 通过；全仓类型检查仍有 5 项已知错误（缺 socket.io/socket.io-client、mini-service stderr、dashboard Date|null），本次修改无新增错误。正式 ONNX 的固定输入为 `1×3×1280×1280`，原始输出为 `1×6×33600`；实际图片推理的最大张量绝对差为 0.013672（PyTorch 对 ONNX Runtime），通过约定的数值容差。原始输出需按模型包说明解码、执行旋转 NMS 并映射回原图。

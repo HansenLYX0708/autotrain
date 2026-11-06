@@ -24,6 +24,8 @@
 
 import { parseDocument, isMap } from 'yaml';
 import type { ConfigFramework } from './training-yaml';
+import { isLocalization } from './frameworks';
+import { localizationArchitectures, localizationModelYaml, parseLocalizationModel } from './localization-yaml';
 
 export type { ConfigFramework };
 
@@ -558,6 +560,11 @@ export function validateModelParams(
   params: ModelParams,
 ): ModelValidationIssue[] {
   const issues: ModelValidationIssue[] = [];
+  if (isLocalization(framework)) {
+    if (!localizationArchitectures(framework).includes(params.architecture)) issues.push({ level: 'error', message: 'Select an architecture for this localization task.' });
+    if (!Number.isInteger(params.numClasses) || params.numClasses < 1) issues.push({ level: 'error', message: 'num_classes must be a positive integer.' });
+    return issues;
+  }
 
   // Anomaly detection has no classes at all — checked before the shared
   // num_classes rule so the dialog does not demand a value it never uses.
@@ -710,6 +717,10 @@ const BASE_MODEL_PARAMS: ModelParams = {
 };
 
 export function defaultModelParams(framework: ConfigFramework): ModelParams {
+  if (isLocalization(framework)) {
+    const architecture = localizationArchitectures(framework)[0];
+    return { ...BASE_MODEL_PARAMS, architecture, backbone: 'Ultralytics', neck: '', head: '', numClasses: 1, pretrainWeights: `${architecture}.pt` };
+  }
   if (framework === 'TorchSeg') {
     // UNet is the default rather than a pretrained backbone network: this
     // platform's segmentation datasets are typically a few dozen single-channel
@@ -1000,6 +1011,7 @@ export function generateModelYaml(
   params: ModelParams,
   modelName = 'Model Config',
 ): string {
+  if (isLocalization(framework)) return localizationModelYaml(framework, params);
   switch (framework) {
     case 'PaddleSeg':
     case 'TorchSeg':
@@ -1052,6 +1064,7 @@ export function parseModelParams(
   if (!doc || typeof doc !== 'object') return {};
 
   const out: Partial<ModelParams> = {};
+  if (isLocalization(framework)) return parseLocalizationModel(doc);
 
   // --- TorchAnomaly (anomalib) ---------------------------------------------
   // Must be tested before PaddleSeg: both schemas use a top-level `model:` key,

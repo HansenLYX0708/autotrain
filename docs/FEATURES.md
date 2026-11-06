@@ -276,7 +276,9 @@
 - **检查 OBB/Pose 数据**提示漏标、越界、类别覆盖和组级泄漏；配套 CLI 生成训练目录，并提供独立的训练/验证/推理/导出入口。
 
 完整标注规范、详细计划与运行命令见 [LOCALIZATION_WORKFLOW.md](LOCALIZATION_WORKFLOW.md)。
-**OBB / Pose 尚未接入 Training Jobs 页面**；当前使用独立 Ultralytics 环境运行配套 CLI，不能选择普通检测模型直接训练。旧 `/api/annotation/save` 文件仍保留，旧标注可作为 Labelme 文件随原图导入。
+**TorchOBB / TorchPose 已接入 Training Jobs**：Datasets 的“导入定位标注”创建数据集、模型和训练参数，Jobs 使用真实 Python/CUDA 进程训练，Validation 执行评估、推理和模型导出。漏标关键点不能当成不可见点导入 Pose。
+
+**模型预测预标注**选择已训练检查点后直接显示预测实例，默认保护已有人工标签。角点/边手柄缩放、黄色手柄旋转（Shift 吸附 15°），支持撤销。结果先待审核，人工逐图确认并保存后可进入训练数据；再次编辑会撤回确认。旧 `/api/annotation/save` 文件仍保留，旧标注可作为 Labelme 文件随原图导入。
 
 需要更强的分割标注能力时，用独立的 Python 工具：
 
