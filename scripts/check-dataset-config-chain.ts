@@ -5,7 +5,7 @@ import { applyDatasetClasses } from '../src/lib/dataset-classes';
 import { defaultModelParams, generateModelYaml } from '../src/lib/model-yaml';
 import { mergeYamlConfigs } from '../src/lib/yaml-merge';
 import { appendCategories, assessLabelmeMerge, convertLabelmeShapes } from '../src/lib/labelme-coco-merge';
-import type { ConfigFramework } from '../src/lib/training-yaml';
+import { defaultTrainingParams, generateTrainingYaml, parseTrainingParams, type ConfigFramework } from '../src/lib/training-yaml';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,6 +50,50 @@ for (const framework of ['TorchOBB', 'TorchPose'] as const) {
   assert.equal(directory, 'H:/user data/job/export_model/best_model');
   assert.notEqual(directory, checkpointExportDir(framework, 'H:/user data/job', 'H:/user data/job/epoch_10/model.pt'));
   assert.ok(buildExportCommand({ framework, configPath: 'H:/user data/config.yml', weightsPath: 'model.pt', outputDir: directory, format: 'onnx' })?.includes('--format onnx'));
+  const training = generateTrainingYaml(framework, { ...defaultTrainingParams(framework), obbAngleWeight: .1, localizationNominalBatchSize: 4, obbSelectionMetric: 'angle' });
+  const parsed = parseTrainingParams(framework, training);
+  assert.equal(parsed.localizationNominalBatchSize, 4);
+  assert.equal(parsed.obbAngleWeight, framework === 'TorchOBB' ? .1 : undefined);
+  assert.equal(parsed.obbSelectionMetric, framework === 'TorchOBB' ? 'angle' : undefined);
+  assert.equal(parseDocument(training).toJS().localization.train.patience, framework === 'TorchOBB' ? 0 : 30);
+  const legacy = { ...defaultTrainingParams(framework), ...parseTrainingParams(framework, 'localization: {train: {epochs: 100}}') };
+  assert.equal(legacy.obbAngleWeight, 0);
+  assert.equal(legacy.localizationNominalBatchSize, 64);
+  const advanced = { ...defaultTrainingParams(framework), ...parseTrainingParams(framework, 'localization: {train: {degrees: 10, warmup_bias_lr: 0.001, nbs: 4}}'), localizationNominalBatchSize: 8 };
+  const regenerated = parseDocument(generateTrainingYaml(framework, advanced)).toJS().localization.train;
+  assert.equal(regenerated.degrees, 10);
+  assert.equal(regenerated.warmup_bias_lr, .001);
+  assert.equal(regenerated.nbs, 8);
+  const geo = { ...defaultTrainingParams(framework), localizationDegrees: 0, localizationFlipLR: .5, localizationFlipUD: .5 };
+  const geoTrain = parseDocument(generateTrainingYaml(framework, geo)).toJS().localization.train;
+  assert.equal(geoTrain.degrees, 0);
+  const geoParsed = parseTrainingParams(framework, generateTrainingYaml(framework, geo));
+  assert.equal(geoParsed.localizationDegrees, 0);
+  if (framework === 'TorchOBB') {
+    assert.equal(geoTrain.fliplr, .5);
+    assert.equal(geoTrain.flipud, .5);
+    assert.equal(geoParsed.localizationFlipLR, .5);
+    assert.equal(geoParsed.localizationFlipUD, .5);
+    for (const key of ['degrees', 'fliplr', 'flipud']) assert.ok(!(key in (geoParsed.localizationTrainExtras ?? {})));
+  }
+  const degOnly = parseTrainingParams(framework, 'localization: {train: {degrees: 10}}');
+  assert.equal(degOnly.localizationDegrees, 10);
+  assert.equal(parseDocument(generateTrainingYaml(framework, { ...defaultTrainingParams(framework), ...degOnly })).toJS().localization.train.degrees, 10);
+  if (framework === 'TorchPose') {
+    const flip = { ...defaultTrainingParams(framework), ...parseTrainingParams(framework, 'localization: {train: {fliplr: 0.5}}') };
+    assert.equal(parseDocument(generateTrainingYaml(framework, flip)).toJS().localization.train.fliplr, 0.5);
+  }
+  if (framework === 'TorchOBB') {
+    const ins = { ...defaultTrainingParams(framework), localizationInscribedDegrees: 10, localizationInscribedProb: .7 };
+    const insTrain = parseDocument(generateTrainingYaml(framework, ins)).toJS().localization.train;
+    assert.equal(insTrain.inscribed_rotate_degrees, 10);
+    assert.equal(insTrain.inscribed_rotate_prob, .7);
+    for (const key of ['degrees', 'translate', 'scale', 'shear', 'perspective', 'mosaic']) assert.equal(insTrain[key], 0);
+    const insParsed = parseTrainingParams(framework, generateTrainingYaml(framework, ins));
+    assert.equal(insParsed.localizationInscribedDegrees, 10);
+    assert.equal(insParsed.localizationInscribedProb, .7);
+    for (const key of ['inscribed_rotate_degrees', 'inscribed_rotate_prob']) assert.ok(!(key in (insParsed.localizationTrainExtras ?? {})));
+  }
 }
 assert.equal(applyDatasetClasses(anomaly, 'TorchAnomaly', { yamlConfig: null, numClasses: 2 }), anomaly);
 assert.throws(() => applyDatasetClasses('model: {}', 'PaddleSeg', {

@@ -63,6 +63,7 @@ import {
   type ConfigFramework,
   type TrainingParams,
 } from '@/lib/training-yaml'
+import { copyText } from '@/lib/browser-safe'
 
 interface Project {
   id: string
@@ -438,8 +439,10 @@ export function TrainingPage() {
 
   const copyYamlToClipboard = () => {
     if (!selectedConfig?.yamlConfig) return
-    navigator.clipboard.writeText(selectedConfig.yamlConfig)
-    toast({ title: 'YAML copied to clipboard' })
+    copyText(selectedConfig.yamlConfig).then((ok) => {
+      if (ok) toast({ title: 'YAML copied to clipboard' })
+      else toast({ title: 'Copy failed', variant: 'destructive' })
+    })
   }
 
   const filteredConfigs = configs.filter((config) => {
@@ -1062,7 +1065,7 @@ export function TrainingPage() {
                               onChange={(e) => setParam('trainBatchSize', Number(e.target.value) || 1)}
                             />
                           </div>
-                          {shows('evalBatchSize') && (
+                            {shows('evalBatchSize') && (
                             <div className="space-y-2">
                               <Label htmlFor="evalBatchSize">Eval Batch Size</Label>
                               <Input
@@ -1121,6 +1124,76 @@ export function TrainingPage() {
                             detection — anomalib applies them inside the model&apos;s pre-processor.
                           </p>
                         )}
+
+                        {shows('localizationNominalBatchSize') && <div className="grid grid-cols-2 gap-4 rounded-lg border p-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="localizationNominalBatchSize">Nominal Batch Size</Label>
+                            <Input id="localizationNominalBatchSize" type="number" min={1} value={params.localizationNominalBatchSize}
+                              onChange={e => setParam('localizationNominalBatchSize', Number(e.target.value) || 1)} />
+                            <p className="text-xs text-muted-foreground">Controls gradient accumulation. Matching the train batch size disables accumulation.</p>
+                          </div>
+                          {shows('obbAngleWeight') && <div className="space-y-2">
+                            <Label htmlFor="obbAngleWeight">OBB Angle Constraint</Label>
+                            <Input id="obbAngleWeight" type="number" min={0} max={1} step={0.05} value={params.obbAngleWeight}
+                              onChange={e => setParam('obbAngleWeight', Math.max(0, Math.min(1, Number(e.target.value) || 0)))} />
+                            <p className="text-xs text-muted-foreground">0 keeps the original loss. Positive values train the model with aligned box representations and an angle constraint.</p>
+                          </div>}
+                          {shows('localizationDegrees') && <div className="space-y-2">
+                            <Label htmlFor="localizationDegrees">Rotation Augmentation (±deg)</Label>
+                            <Input id="localizationDegrees" type="number" min={0} max={180} step={1} value={params.localizationDegrees}
+                              onChange={e => setParam('localizationDegrees', Math.max(0, Math.min(180, Number(e.target.value) || 0)))} />
+                            <p className="text-xs text-muted-foreground">Random rotation range. For a fixed camera, 0 avoids resampling and clipped boundary boxes and gave the most precise angles; raise it only if production images really rotate.</p>
+                          </div>}
+                          {shows('localizationFlipLR') && <div className="space-y-2">
+                            <Label htmlFor="localizationFlipLR">Horizontal Flip Probability</Label>
+                            <Input id="localizationFlipLR" type="number" min={0} max={1} step={0.1} value={params.localizationFlipLR}
+                              onChange={e => setParam('localizationFlipLR', Math.max(0, Math.min(1, Number(e.target.value) || 0)))} />
+                            <p className="text-xs text-muted-foreground">Exact geometric augmentation: mirrored corners keep labels precise.</p>
+                          </div>}
+                          {shows('localizationFlipUD') && <div className="space-y-2">
+                            <Label htmlFor="localizationFlipUD">Vertical Flip Probability</Label>
+                            <Input id="localizationFlipUD" type="number" min={0} max={1} step={0.1} value={params.localizationFlipUD}
+                              onChange={e => setParam('localizationFlipUD', Math.max(0, Math.min(1, Number(e.target.value) || 0)))} />
+                            <p className="text-xs text-muted-foreground">Exact geometric augmentation: mirrored corners keep labels precise.</p>
+                          </div>}
+                          {shows('localizationInscribedDegrees') && <div className="space-y-2">
+                            <Label htmlFor="localizationInscribedDegrees">Inscribed Rotation (±deg, no padding)</Label>
+                            <Input id="localizationInscribedDegrees" type="number" min={0} max={45} step={1} value={params.localizationInscribedDegrees}
+                              onChange={e => setParam('localizationInscribedDegrees', Math.max(0, Math.min(45, Number(e.target.value) || 0)))} />
+                            <p className="text-xs text-muted-foreground">AutoTrain rotation: crops the inscribed rectangle, so cut boxes keep their exact angle. Replaces Ultralytics rotation; requires the field above to be 0.</p>
+                          </div>}
+                          {shows('localizationInscribedProb') && <div className="space-y-2">
+                            <Label htmlFor="localizationInscribedProb">Inscribed Rotation Probability</Label>
+                            <Input id="localizationInscribedProb" type="number" min={0} max={1} step={0.1} value={params.localizationInscribedProb}
+                              onChange={e => setParam('localizationInscribedProb', Math.max(0, Math.min(1, Number(e.target.value) || 0)))} />
+                          </div>}
+                          {params.localizationInscribedDegrees > 0 && params.localizationDegrees > 0 && (
+                            <p className="text-xs text-destructive col-span-2">Inscribed Rotation and Ultralytics Rotation Augmentation cannot both be enabled — set one of them to 0.</p>
+                          )}
+                          {shows('obbSelectionMetric') && <>
+                            <div className="space-y-2">
+                              <Label>Best Checkpoint Selection</Label>
+                              <Select value={params.obbSelectionMetric} onValueChange={v => setParam('obbSelectionMetric', v as 'map' | 'angle')}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent><SelectItem value="map">Highest mAP</SelectItem><SelectItem value="angle">Lowest mean angle error</SelectItem></SelectContent>
+                              </Select>
+                              <p className="text-xs text-muted-foreground">Angle selection evaluates raw validation predictions every epoch and disables mAP early stopping.</p>
+                            </div>
+                            {params.obbSelectionMetric === 'angle' && <>
+                              <div className="space-y-2">
+                                <Label htmlFor="obbSelectionMinRecall">Minimum Matched Recall</Label>
+                                <Input id="obbSelectionMinRecall" type="number" min={0} max={1} step={0.01} value={params.obbSelectionMinRecall}
+                                  onChange={e => setParam('obbSelectionMinRecall', Math.max(0, Math.min(1, Number(e.target.value) || 0)))} />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="obbSelectionMaxFalsePositives">Maximum False Positives</Label>
+                                <Input id="obbSelectionMaxFalsePositives" type="number" min={0} step={1} value={params.obbSelectionMaxFalsePositives}
+                                  onChange={e => setParam('obbSelectionMaxFalsePositives', Math.max(0, Math.floor(Number(e.target.value) || 0)))} />
+                              </div>
+                              <p className="text-xs text-muted-foreground col-span-2">Limits apply to the complete validation split at confidence 0.25 and polygon IoU 0.5. If no epoch qualifies, the job reports failure rather than selecting a model with insufficient coverage.</p>
+                            </>}
+                          </>}
+                        </div>}
 
                         {shows('multiScaleTrain') && (
                           <div className="space-y-3 rounded-lg border p-3">
@@ -1409,7 +1482,7 @@ export function TrainingPage() {
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={saving || !!syntaxError}>
+                  <Button type="submit" disabled={saving || !!syntaxError || (params.localizationInscribedDegrees > 0 && params.localizationDegrees > 0)}>
                     {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     {editingConfig ? 'Save Changes' : 'Create Config'}
                   </Button>

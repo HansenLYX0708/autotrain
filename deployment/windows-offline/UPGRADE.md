@@ -7,36 +7,45 @@ framework environments and model weights are reused from the existing installati
 
 ## Changes included
 
-- Labelme image-path handling and COCO train/val statistics.
-- Recover omitted COCO validation paths on import/re-parse. Invalid validation
-  annotations now produce an error without clearing existing statistics.
-- A **Validate during training** switch when creating a job (enabled by default).
-  PaddleDetection now receives `--eval`; detection/segmentation jobs check their
-  validation annotations before creation when validation is enabled.
-- Monitoring reads validation history separately from recent training logs and
-  plots detection mAP@0.5:0.95 / mAP@0.5 by epoch, including a single result.
-- NaN/Inf values in training and validation logs are stored as empty values
-  instead of corrupting charts. Monitoring shows a divergence warning naming the
-  affected metrics; per-class arrays containing `nan` keep their class order.
-- Select which new Labelme categories to import when merging into COCO.
-- Training-job class counts come from the selected dataset.
-- Default model/training configuration dropdowns, file refresh and YAML loading.
-- Monitoring now shows a **Console Output** card: the complete stdout/stderr
-  of each run is captured to `autotrain-console.log` next to the checkpoints,
-  with live tail, "Load earlier", full-file search and download. AMP
-  "Found inf or nan" loss-scale overflows are highlighted and summarised in a
-  new alert. Runs started before this update fall back to parsed log rows.
-- Monitoring loads the full log history of a job (cursor-based paging,
-  compact rows) instead of the latest 500; charts over 4000 points are
-  min/max-decimated so long runs stay readable and loss spikes remain
-  visible.
-- Labelme image matching (Merge into COCO, LabelMe → COCO, LabelMe →
-  PaddleSeg): images are found by the `imagePath` file name anywhere under
-  `data/imgs` (including subfolders), falling back to the image with the same
-  name as the JSON file. BOM-prefixed JSON files are accepted, and unmatched
-  files report the names that were tried.
+- Dashboard environment check now probes the `ultralytics` and `anomalib`
+  Python modules, so TorchOBB / TorchPose (and any future framework module)
+  report correctly instead of always showing a failed import.
+- Projects page: "Recent 5 / All projects" toggle (Recent 5 is the default),
+  server-side search, and pagination in the All view.
+- Datasets uploads moved to a background **Upload Tasks** page: browser uploads
+  keep running while you navigate, batches small files into fewer requests
+  (much faster for large folders), can be cancelled and resumed after the page
+  is closed. A new **From server folder** mode copies files on the server in
+  the background and survives closing the browser entirely. Note: a
+  server-folder import in progress does not survive an application restart —
+  it is marked "Interrupted by server restart" and can be retried.
+- Axis-aligned rectangle annotations can now be imported as a **COCO detection
+  dataset** for TorchDet / PaddleDetection directly from the localization
+  annotation tool; rotated boxes are converted to their enclosing upright box.
+- Annotation sets management on the Annotation page: active / archived status,
+  rename, export and delete. A set not saved for 7 days is auto-archived on the
+  next listing — **existing annotation sets older than 7 days will appear
+  archived on first listing**; reactivate them from Annotation → Archived.
+- Annotation canvas zoom shortcuts: `+` / `-` / `0` (fit) / `1` (100%),
+  `Ctrl+=` / `Ctrl+-` / `Ctrl+0`, and Ctrl+wheel zoom anchored at the cursor.
+- Fixed COCO dataset sample preview failing for datasets stored under an
+  absolute path.
+- Upload API hardening: chunk paths are validated server-side, the target
+  directory is taken from the server's own record, and upload routes require
+  authentication like the rest of the API.
 
-No database schema migration is required for this update.
+## Database schema update (automatic)
+
+This update adds one **new table** (`UploadTask`, for the Upload Tasks page).
+The installer applies it automatically: before copying the new app it backs up
+`<InstallRoot>\data\autotrain.db` (plus any `-wal`/`-shm`/`-journal` files) to
+`upgrade-backups\<timestamp>\data\`, runs the additive `CREATE TABLE` /
+`CREATE INDEX` statements, and verifies the database matches the shipped
+schema. The step is idempotent — re-running the installer on an already
+updated database detects the table and skips it. If verification fails the
+database files are restored from the backup and the old application is left
+untouched. No destructive migration is performed and no existing data is
+changed.
 
 For a one-time scheduled update on Windows 11, use the companion
 `Schedule-AutoTrainUpdate.cmd` tool. See [SCHEDULED-UPDATE.md](SCHEDULED-UPDATE.md)
@@ -99,9 +108,12 @@ Monitoring does not require VisualDL to plot these results.
 
 ## Backup and rollback
 
-Backups are under `<InstallRoot>/upgrade-backups/<timestamp>/`. Stop the app,
+Backups are under `<InstallRoot>/upgrade-backups/<timestamp>/` (the previous
+`app`, launcher files, and a copy of the database under `data/`). Stop the app,
 replace `<InstallRoot>/app` with the backup's `app`, and restore the backed-up
-launcher files. `added-default-configs.txt` lists templates added by this update;
+launcher files. To also undo the schema addition, restore
+`data/autotrain.db` from the backup — the old app works fine with the extra
+table in place, so this is only needed for a clean rollback. `added-default-configs.txt` lists templates added by this update;
 remove those only if you also want to undo the new defaults.
 
 ## Building this package

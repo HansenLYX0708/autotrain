@@ -1,6 +1,8 @@
 'use client'
 
 import { LocalizationImportDialog } from '@/components/localization-import-dialog'
+import { MergeDatasetsDialog } from '@/components/merge-datasets-dialog'
+import { RotateAugmentDialog } from '@/components/rotate-augment-dialog'
 
 import { useEffect, useState, useRef } from 'react'
 import { frameworkMeta, isAnomaly, isSegmentation } from '@/lib/frameworks'
@@ -95,9 +97,12 @@ import {
   AlertCircle,
   FileArchive,
   Layers,
+  Copy,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
-import { Progress } from '@/components/ui/progress'
+import { ServerPathPicker } from '@/components/server-path-picker'
+import { ToastAction } from '@/components/ui/toast'
+import { useUploadManager } from '@/contexts/upload-manager'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   ChartConfig,
@@ -106,6 +111,7 @@ import {
 import { Slider } from '@/components/ui/slider'
 import { SegSampleView } from '@/components/seg-sample-view'
 import { getSegColorMap, rgbToCss } from '@/lib/seg-colors'
+import { copyText } from '@/lib/browser-safe'
 
 interface Project {
   id: string
@@ -136,6 +142,11 @@ interface Dataset {
   classStats: string | null
   yamlConfig: string | null
   createdAt: string
+  user?: {
+    id: string
+    username: string
+  } | null
+  resolvedDatasetDir?: string | null
   project?: {
     id: string
     name: string
@@ -187,6 +198,7 @@ interface LabelmeMergePreview {
 }
 
 export function DatasetsPage() {
+  const { startBrowserUpload } = useUploadManager()
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
@@ -241,7 +253,8 @@ export function DatasetsPage() {
     format: 'COCO' as 'COCO' | 'labelme',
   })
   const [uploadFiles, setUploadFiles] = useState<FileList | null>(null)
-  const [uploadFolderMode, setUploadFolderMode] = useState(false)
+  const [uploadSourceMode, setUploadSourceMode] = useState<'browser' | 'server'>('browser')
+  const [serverSourcePath, setServerSourcePath] = useState('')
   const [availableDatasets, setAvailableDatasets] = useState<Array<{
     name: string;
     path: string;
@@ -258,30 +271,10 @@ export function DatasetsPage() {
   }>>([])
   const [loadingAvailableDatasets, setLoadingAvailableDatasets] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  // Chunked upload state
-  const [uploadSession, setUploadSession] = useState<{
-    uploadId: string;
-    targetDir: string;
-    tempDir: string;
-    files: Array<{
-      relativePath: string;
-      size: number;
-      totalChunks: number;
-      uploadedChunks: number;
-      progress: number;
-    }>;
-    chunkSize: number;
-    overallProgress: number;
-  } | null>(null)
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'initializing' | 'uploading' | 'completing' | 'completed' | 'error'>('idle')
-  const [currentFile, setCurrentFile] = useState<string>('')
-  const abortControllerRef = useRef<AbortController | null>(null)
-  // Labelme overwrite confirmation state
+  // Labelme overwrite confirmation state (shared by browser + server modes)
   const [confirmOverwriteOpen, setConfirmOverwriteOpen] = useState(false)
   const [confirmOverwriteMessage, setConfirmOverwriteMessage] = useState('')
-  const [pendingUploadSession, setPendingUploadSession] = useState<any>(null)
   const [formData, setFormData] = useState({ ...EMPTY_DATASET_FORM })
 
   // PaddleSeg datasets use list files (train.txt/val.txt) + num_classes instead of COCO annotations.
@@ -807,344 +800,147 @@ export function DatasetsPage() {
     }
   }
 
-  // Chunked upload functions
-  const handleUpload = async (e: React.FormEvent) => {
+  // Upload via the global upload manager — it survives page switches.
+  const openUploadTasks = () => {
+    window.dispatchEvent(new CustomEvent('autotrain:navigate', { detail: 'uploads' }))
+  }
+
+  const handleUpload = async (e: React.FormEvent, openTasksAfter = false) => {
     e.preventDefault()
-    
+    setUploadError(null)
+
+    if (!uploadFormData.name.trim()) {
+      toast({ title: 'Dataset name required', variant: 'destructive' })
+      return
+    }
+
+    if (uploadSourceMode === 'server') {
+      if (!serverSourcePath.trim()) {
+        toast({ title: 'Source folder required', description: 'Pick a folder on the server to import.', variant: 'destructive' })
+        return
+      }
+      setUploading(true)
+      try {
+        const res = await fetch('/api/upload-tasks/server-import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourcePath: serverSourcePath.trim(),
+            datasetName: uploadFormData.name,
+            format: uploadFormData.format,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (data.requiresConfirmation) {
+          setConfirmOverwriteMessage(data.message || '')
+          setConfirmOverwriteOpen(true)
+          return
+        }
+        if (!res.ok) throw new Error(data.error || 'Failed to start server import')
+        setUploadDialogOpen(false)
+        toast({
+          title: 'Server import started',
+          description: 'The server is copying the folder in the background.',
+          action: <ToastAction altText="Open Upload Tasks" onClick={openUploadTasks}>Open Upload Tasks</ToastAction>,
+        })
+        if (openTasksAfter) openUploadTasks()
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : 'Failed to start server import')
+      } finally {
+        setUploading(false)
+      }
+      return
+    }
+
     if (!uploadFiles || uploadFiles.length === 0) {
-      toast({ 
-        title: 'No files selected', 
+      toast({
+        title: 'No files selected',
         description: 'Please select files to upload',
         variant: 'destructive'
       })
       return
     }
 
-    if (!uploadFormData.name.trim()) {
-      toast({ 
-        title: 'Dataset name required', 
-        variant: 'destructive'
-      })
-      return
-    }
-
-    // Start chunked upload
-    await startChunkedUpload()
-  }
-
-  const startChunkedUpload = async () => {
-    if (!uploadFiles) return
-
     setUploading(true)
-    setUploadError(null)
-    setUploadStatus('initializing')
-    abortControllerRef.current = new AbortController()
-
     try {
-      // Build file list with metadata
-      const files = Array.from(uploadFiles).map(file => {
-        const relativePath = (file as any).webkitRelativePath || file.name
-        return {
-          name: file.name,
-          relativePath: relativePath,
-          size: file.size,
-        }
+      const result = await startBrowserUpload({
+        files: Array.from(uploadFiles),
+        datasetName: uploadFormData.name,
+        format: uploadFormData.format,
       })
-
-      const totalSize = files.reduce((acc, f) => acc + f.size, 0)
-
-      // Step 1: Initialize upload session
-      const initResponse = await fetch('/api/datasets/upload/init', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          datasetName: uploadFormData.name,
-          format: uploadFormData.format,
-          totalFiles: files.length,
-          totalSize: totalSize,
-          files: files,
-        }),
-        signal: abortControllerRef.current.signal,
-      })
-
-      if (!initResponse.ok) {
-        const error = await initResponse.json()
-        throw new Error(error.error || 'Failed to initialize upload')
-      }
-
-      const session = await initResponse.json()
-
-      // Check if requires confirmation (labelme overwrite)
-      if (session.requiresConfirmation) {
-        setConfirmOverwriteMessage(session.message)
-        setPendingUploadSession(session)
+      if (result.requiresConfirmation) {
+        setConfirmOverwriteMessage(result.message || '')
         setConfirmOverwriteOpen(true)
-        setUploading(false)
-        setUploadStatus('idle')
         return
       }
-
-      await executeChunkUpload(session)
-    } catch (error) {
-      if ((error as Error).name === 'AbortError') {
-        toast({ 
-          title: 'Upload cancelled', 
-          description: 'Upload was cancelled by user',
-        })
-      } else {
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error'
-        setUploadError(errorMsg)
-        setUploadStatus('error')
-        toast({ 
-          title: 'Upload error', 
-          description: errorMsg,
-          variant: 'destructive'
-        })
-      }
-    } finally {
-      setUploading(false)
-      abortControllerRef.current = null
-    }
-  }
-
-  // Execute file chunk upload after confirmation
-  const executeChunkUpload = async (session: any) => {
-    if (!uploadFiles) return
-
-    setUploadSession(session)
-    setUploadStatus('uploading')
-    setUploading(true)
-
-    try {
-      // Step 2: Upload chunks for each file
-      let totalUploadedChunks = 0
-      const totalExpectedChunks = session.files.reduce((acc: number, f: any) => acc + f.totalChunks, 0)
-
-      for (const fileInfo of session.files) {
-        if (abortControllerRef.current?.signal.aborted) {
-          throw new Error('Upload cancelled')
-        }
-
-        setCurrentFile(fileInfo.relativePath)
-        
-        // Find the actual File object
-        const file = Array.from(uploadFiles).find(f => 
-          ((f as any).webkitRelativePath || f.name) === fileInfo.relativePath
-        )
-        
-        if (!file) continue
-
-        // Upload missing chunks
-        const uploadedChunks = new Set(fileInfo.uploadedChunks)
-        
-        for (let chunkIndex = 0; chunkIndex < fileInfo.totalChunks; chunkIndex++) {
-          if (abortControllerRef.current?.signal.aborted) {
-            throw new Error('Upload cancelled')
-          }
-
-          // Skip already uploaded chunks (resume support)
-          if (uploadedChunks.has(chunkIndex)) {
-            totalUploadedChunks++
-            continue
-          }
-
-          // Calculate chunk boundaries
-          const start = chunkIndex * session.chunkSize
-          const end = Math.min(start + session.chunkSize, file.size)
-          const chunk = file.slice(start, end)
-
-          // Upload chunk
-          const chunkFormData = new FormData()
-          chunkFormData.append('uploadId', session.uploadId)
-          chunkFormData.append('relativePath', fileInfo.relativePath)
-          chunkFormData.append('chunkIndex', chunkIndex.toString())
-          chunkFormData.append('totalChunks', fileInfo.totalChunks.toString())
-          chunkFormData.append('chunk', chunk)
-
-          let retries = 0
-          const maxRetries = 3
-          
-          while (retries < maxRetries) {
-            try {
-              const response = await fetch('/api/datasets/upload/chunk', {
-                method: 'POST',
-                body: chunkFormData,
-                signal: abortControllerRef.current?.signal,
-              })
-
-              if (!response.ok) {
-                throw new Error(`Chunk upload failed: ${response.status}`)
-              }
-
-              break // Success, exit retry loop
-            } catch (err) {
-              retries++
-              if (retries >= maxRetries) throw err
-              await new Promise(r => setTimeout(r, 1000 * retries)) // Exponential backoff
-            }
-          }
-
-          totalUploadedChunks++
-          const progress = Math.round((totalUploadedChunks / totalExpectedChunks) * 100)
-          setUploadProgress(progress)
-
-          // Update file progress in session
-          setUploadSession(prev => {
-            if (!prev) return prev
-            return {
-              ...prev,
-              files: prev.files.map(f => 
-                f.relativePath === fileInfo.relativePath
-                  ? { ...f, uploadedChunks: f.uploadedChunks + 1, progress: Math.round(((f.uploadedChunks + 1) / f.totalChunks) * 100) }
-                  : f
-              ),
-              overallProgress: progress,
-            }
-          })
-        }
-      }
-
-      // Step 3: Complete upload and merge chunks
-      setUploadStatus('completing')
-      setCurrentFile('Merging files...')
-
-      const completeResponse = await fetch('/api/datasets/upload/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          uploadId: session.uploadId,
-          targetDir: session.targetDir,
-          files: session.files,
-          format: uploadFormData.format,
-          datasetName: uploadFormData.name,
-          overwrite: session.requiresConfirmation || false,
-        }),
-        signal: abortControllerRef.current?.signal,
+      setUploadDialogOpen(false)
+      toast({
+        title: 'Upload started',
+        description: 'Upload continues in the background — you can keep working.',
+        action: <ToastAction altText="Open Upload Tasks" onClick={openUploadTasks}>Open Upload Tasks</ToastAction>,
       })
-
-      if (!completeResponse.ok) {
-        const error = await completeResponse.json()
-        throw new Error(error.error || 'Failed to complete upload')
-      }
-
-      const result = await completeResponse.json()
-
-      if (result.success) {
-        setUploadStatus('completed')
-        setUploadProgress(100)
-        toast({ 
-          title: 'Upload successful', 
-          description: `${result.message || `Uploaded ${result.data.files.length} files`}. Use "Import Dataset" to load this data.`
-        })
-        // Reset form
-        setUploadFormData({ name: '', description: '', projectId: '', format: 'COCO' })
-        setUploadFiles(null)
-        setUploadSession(null)
-        setUploadDialogOpen(false)
-      } else {
-        throw new Error(result.error || 'Upload failed')
-      }
-
-    } catch (error) {
-      if ((error as Error).name === 'AbortError') {
-        toast({ 
-          title: 'Upload cancelled', 
-          description: 'Upload was cancelled by user',
-        })
-      } else {
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error'
-        setUploadError(errorMsg)
-        setUploadStatus('error')
-        toast({ 
-          title: 'Upload error', 
-          description: errorMsg,
-          variant: 'destructive'
-        })
-      }
+      if (openTasksAfter) openUploadTasks()
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Failed to start upload')
     } finally {
       setUploading(false)
-      abortControllerRef.current = null
     }
   }
 
-  const cancelUpload = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-  }
-
-  // Handle user confirmation for labelme overwrite - re-init with confirmedOverwrite flag
+  // Handle user confirmation for labelme overwrite — resubmit with the flag.
   const handleConfirmOverwrite = async () => {
     setConfirmOverwriteOpen(false)
-    if (!uploadFiles) return
-
-    setUploading(true)
     setUploadError(null)
-    setUploadStatus('initializing')
-    abortControllerRef.current = new AbortController()
-
+    setUploading(true)
     try {
-      // Build file list with metadata
-      const files = Array.from(uploadFiles).map(file => {
-        const relativePath = (file as any).webkitRelativePath || file.name
-        return {
-          name: file.name,
-          relativePath: relativePath,
-          size: file.size,
-        }
-      })
-
-      const totalSize = files.reduce((acc, f) => acc + f.size, 0)
-
-      // Re-initialize upload session with confirmedOverwrite flag
-      const initResponse = await fetch('/api/datasets/upload/init', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          datasetName: uploadFormData.name,
-          format: uploadFormData.format,
-          totalFiles: files.length,
-          totalSize: totalSize,
-          files: files,
-          confirmedOverwrite: true,
-        }),
-        signal: abortControllerRef.current?.signal,
-      })
-
-      if (!initResponse.ok) {
-        const error = await initResponse.json()
-        throw new Error(error.error || 'Failed to initialize upload')
-      }
-
-      const session = await initResponse.json()
-      await executeChunkUpload(session)
-      setPendingUploadSession(null)
-    } catch (error) {
-      if ((error as Error).name === 'AbortError') {
-        toast({
-          title: 'Upload cancelled',
-          description: 'Upload was cancelled by user',
+      if (uploadSourceMode === 'server') {
+        const res = await fetch('/api/upload-tasks/server-import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourcePath: serverSourcePath.trim(),
+            datasetName: uploadFormData.name,
+            format: uploadFormData.format,
+            confirmedOverwrite: true,
+          }),
         })
-      } else {
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error'
-        setUploadError(errorMsg)
-        setUploadStatus('error')
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.error || 'Failed to start server import')
+        setUploadDialogOpen(false)
         toast({
-          title: 'Upload error',
-          description: errorMsg,
-          variant: 'destructive'
+          title: 'Server import started',
+          description: 'The server is copying the folder in the background.',
+          action: <ToastAction altText="Open Upload Tasks" onClick={openUploadTasks}>Open Upload Tasks</ToastAction>,
         })
+        return
       }
+      if (!uploadFiles) return
+      const result = await startBrowserUpload({
+        files: Array.from(uploadFiles),
+        datasetName: uploadFormData.name,
+        format: uploadFormData.format,
+        confirmedOverwrite: true,
+      })
+      if (result.requiresConfirmation) {
+        setConfirmOverwriteMessage(result.message || '')
+        setConfirmOverwriteOpen(true)
+        return
+      }
+      setUploadDialogOpen(false)
+      toast({
+        title: 'Upload started',
+        description: 'Upload continues in the background — you can keep working.',
+        action: <ToastAction altText="Open Upload Tasks" onClick={openUploadTasks}>Open Upload Tasks</ToastAction>,
+      })
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Failed to start upload')
     } finally {
       setUploading(false)
-      abortControllerRef.current = null
     }
   }
 
-  // Handle user cancellation for labelme overwrite
   const handleCancelOverwrite = () => {
     setConfirmOverwriteOpen(false)
-    setPendingUploadSession(null)
     setConfirmOverwriteMessage('')
   }
 
@@ -1239,6 +1035,8 @@ export function DatasetsPage() {
         </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <LocalizationImportDialog onImported={() => { fetchDatasets(); fetchProjects() }} />
+            <MergeDatasetsDialog datasets={datasets} onMerged={() => { fetchDatasets() }} />
+            <RotateAugmentDialog datasets={datasets} onCreated={() => { fetchDatasets() }} />
           <Dialog open={mergeDialogOpen} onOpenChange={(open) => {
             setMergeDialogOpen(open)
             setMergePreview(null)
@@ -1648,7 +1446,8 @@ export function DatasetsPage() {
             if (!open) {
               setUploadFormData({ name: '', description: '', projectId: '', format: 'COCO' })
               setUploadFiles(null)
-              setUploadProgress(0)
+              setServerSourcePath('')
+              setUploadSourceMode('browser')
               setUploadError(null)
             }
           }}>
@@ -1726,19 +1525,55 @@ export function DatasetsPage() {
                     />
                   </div>
                   <div className="col-span-2 space-y-2">
-                    <Label htmlFor="upload-files">Select Folder</Label>
-                    <input
-                      id="upload-files"
-                      type="file"
-                      {...({ webkitdirectory: '', directory: '' } as any)}
-                      onChange={(e) => setUploadFiles(e.target.files)}
-                      disabled={uploading}
-                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Select a folder containing your dataset files (images, annotations, etc.)
-                    </p>
+                    <Label>Source</Label>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant={uploadSourceMode === 'browser' ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setUploadSourceMode('browser')}
+                      >
+                        From this computer
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={uploadSourceMode === 'server' ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setUploadSourceMode('server')}
+                      >
+                        From server folder
+                      </Button>
+                    </div>
                   </div>
+                  {uploadSourceMode === 'browser' ? (
+                    <div className="col-span-2 space-y-2">
+                      <Label htmlFor="upload-files">Select Folder</Label>
+                      <input
+                        id="upload-files"
+                        type="file"
+                        {...({ webkitdirectory: '', directory: '' } as any)}
+                        onChange={(e) => setUploadFiles(e.target.files)}
+                        disabled={uploading}
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Select a folder containing your dataset files (images, annotations, etc.)
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="col-span-2 space-y-2">
+                      <Label>Server folder</Label>
+                      <ServerPathPicker
+                        mode="dir"
+                        value={serverSourcePath}
+                        onSelect={setServerSourcePath}
+                        title="Select dataset folder on the server"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        The server copies this folder in a background task — you can close the browser.
+                      </p>
+                    </div>
+                  )}
                   {uploadFiles && uploadFiles.length > 0 && (
                     <div className="col-span-2">
                       <p className="text-sm text-muted-foreground">
@@ -1754,40 +1589,21 @@ export function DatasetsPage() {
                       </Alert>
                     </div>
                   )}
-                  {uploading && (
-                    <div className="col-span-2 space-y-3">
-                      <div className="flex justify-between text-sm">
-                        <span className="font-medium">
-                          {uploadStatus === 'initializing' && 'Initializing upload...'}
-                          {uploadStatus === 'uploading' && 'Uploading chunks...'}
-                          {uploadStatus === 'completing' && 'Merging files...'}
-                          {uploadStatus === 'completed' && 'Upload complete!'}
-                          {uploadStatus === 'error' && 'Upload failed'}
-                        </span>
-                        <span className="font-mono">{uploadProgress}%</span>
-                      </div>
-                      <Progress value={uploadProgress} className="h-2" />
-                      {currentFile && (
-                        <p className="text-xs text-muted-foreground truncate">
-                          Current: {currentFile}
-                        </p>
-                      )}
-                      {uploadSession && uploadSession.files.length > 0 && (
-                        <div className="text-xs text-muted-foreground">
-                          {uploadSession.files.filter(f => f.progress === 100).length} / {uploadSession.files.length} files completed
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
                 <DialogFooter className="gap-2">
-                  {uploading && (
-                    <Button type="button" variant="destructive" onClick={cancelUpload}>
-                      Cancel
-                    </Button>
-                  )}
-                  <Button type="submit" disabled={uploading || !uploadFiles || uploadFiles.length === 0}>
-                    {uploading ? 'Uploading...' : 'Start Upload'}
+                  <Button
+                    type="submit"
+                    disabled={uploading || (uploadSourceMode === 'browser' ? !uploadFiles || uploadFiles.length === 0 : !serverSourcePath.trim())}
+                  >
+                    {uploading ? 'Starting...' : 'Start Upload'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={uploading || (uploadSourceMode === 'browser' ? !uploadFiles || uploadFiles.length === 0 : !serverSourcePath.trim())}
+                    onClick={(e) => handleUpload(e as any, true)}
+                  >
+                    Upload in background & open Upload Tasks
                   </Button>
                 </DialogFooter>
               </form>
@@ -2009,6 +1825,9 @@ export function DatasetsPage() {
                         ? 'Absolute path to the segmentation dataset root (contains images, masks and list files).'
                         : `COCO/${formData.name}/`}
                   </p>
+                  {editingDataset && editingDataset.datasetDir && !/^([A-Za-z]:[\\/]|[\\/])/.test(editingDataset.datasetDir) && editingDataset.resolvedDatasetDir && (
+                    <p className="text-xs text-muted-foreground">Resolves to: <code className="break-all">{editingDataset.resolvedDatasetDir}</code></p>
+                  )}
                 </div>
                 {/* Anomaly datasets: four directories, no annotation files.
                     Only `normalDir` is trained on; the rest exist so the run can
@@ -2361,6 +2180,9 @@ export function DatasetsPage() {
                         <span>{dataset.numTrainImages} train / {dataset.numEvalImages} val</span>
                       </div>
                       <Badge variant="secondary">{dataset.format}</Badge>
+                      {dataset.user && dataset.user.id !== user?.id && (
+                        <Badge variant="outline" title="Owner">{dataset.user.username}</Badge>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -2384,6 +2206,42 @@ export function DatasetsPage() {
             <CardContent>
               {selectedDataset ? (
                 <div className="space-y-6">
+                  {/* Location: where this dataset actually lives. Relative
+                      datasetDir values resolve under the OWNER's user folder,
+                      which matters when an admin opens another user's row. */}
+                  <div className="p-3 rounded-lg bg-muted/50 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Location</span>
+                      <span className="text-xs text-muted-foreground">
+                        Owner: {selectedDataset.user?.username ?? '—'}
+                        {selectedDataset.user?.id === user?.id ? ' (you)' : ''}
+                      </span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <code className="text-xs break-all flex-1">{selectedDataset.resolvedDatasetDir || selectedDataset.datasetDir || '—'}</code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0"
+                        title="Copy path"
+                        onClick={async () => {
+                          const p = selectedDataset.resolvedDatasetDir || selectedDataset.datasetDir
+                          if (!p) return
+                          const ok = await copyText(p)
+                          if (ok) toast({ title: 'Path copied' })
+                          else toast({ title: 'Copy failed', description: p, variant: 'destructive' })
+                        }}
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                    {selectedDataset.trainAnnoPath && (
+                      <div className="text-xs text-muted-foreground">train annotations: <code>{selectedDataset.trainAnnoPath}</code></div>
+                    )}
+                    {selectedDataset.evalAnnoPath && (
+                      <div className="text-xs text-muted-foreground">val annotations: <code>{selectedDataset.evalAnnoPath}</code></div>
+                    )}
+                  </div>
                   {/* Summary Stats */}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="p-3 rounded-lg bg-muted/50">

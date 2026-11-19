@@ -461,7 +461,7 @@ Buffer chunk
 
 主要能力（接口细节见 [API_REFERENCE.md](API_REFERENCE.md#数据集)）：
 
-- **分片上传**：`upload/init` → 多次 `upload/chunk` → `upload/complete` 合并，绕开大文件的请求体限制，并在开始前做配额检查。
+- **分片上传**：`upload/init`（创建 `UploadTask`）→ `upload/chunk`（批量 manifest 或旧单分片形态）→ `upload/complete`（流式合并，`targetDir` 取自任务记录）。客户端由 `src/contexts/upload-manager.tsx` 驱动：小文件打包批量请求、4 并发、重试、断点续传，挂在页面切换器上层所以翻页不断传。另有 `POST /api/upload-tasks/server-import`：服务器进程内后台复制本地目录（`src/lib/upload-server-runner.ts`，runner 不随重启存活）。
 - **解析统计**：`/api/datasets/parse` 读 COCO 标注或 PaddleSeg 列表文件，写回 `numClasses`/`numAnnotations`/`numTrainImages`/`numEvalImages`/`classStats`。
 - **Labelme → COCO**：`/api/datasets/labelme-to-coco`。
 - **Labelme → PaddleSeg**：`/api/datasets/labelme-to-paddleseg`，产出 PaddleSeg 官方 `labelme2seg` / Pascal VOC 风格布局：

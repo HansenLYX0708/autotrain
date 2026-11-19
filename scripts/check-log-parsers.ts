@@ -527,6 +527,11 @@ for (const framework of ["TorchOBB", "TorchPose"]) {
   check(`${framework}: native epoch and mAP`, rows[0]?.epoch === 4 && rows[0]?.mAP === 0.7);
   check(`${framework}: diagnostics survive`, rows[0]?.loss === null && !!rows[0]?.nonFinite?.includes("loss") && !!rows[0]?.nonFinite?.includes("lossCls"));
   check(`${framework}: extra metrics`, rows[0]?.extraMetrics?.["metrics/recall"] === 0.8);
+  const progress = createParserState(framework);
+  const withPrefix = feed(progress, ' 40/40 4.71G 60% 3/5 1.8it/s ' + line);
+  check(`${framework}: tqdm prefix`, withPrefix.length === 1 && withPrefix[0]?.mAP === 0.7);
+  const angle = feed(createParserState(framework), 'AUTOTRAIN_LOCALIZATION {"kind":"eval","epoch":5,"mAP":0.9,"bestMetric":1.2,"bestMetricName":"obb_angle_mean_deg","extraMetrics":{"val/angle_mean_deg":1.2,"selection/angle_mode":1}}\n');
+  check(`${framework}: degree metric distinct from mAP`, angle[0]?.bestMetric === 1.2 && angle[0]?.mAP === .9 && angle[0]?.extraMetrics?.['selection/angle_mode'] === 1);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} CHECK(S) FAILED`}\n`);

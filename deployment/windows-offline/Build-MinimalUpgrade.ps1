@@ -39,6 +39,15 @@ foreach ($Entry in @(".next", "node_modules", "public", "package.json", "server.
     if (-not (Test-Path -LiteralPath $Source)) { throw "Missing runtime entry: $Source" }
     Copy-Item -LiteralPath $Source -Destination (Join-Path $Payload "app\$Entry") -Recurse -Force
 }
+# Python helpers spawned by API routes resolve relative to process.cwd() (the
+# standalone app dir), so ship them under payload\app.
+foreach ($Helper in @("tools\paddledet_annotate.py")) {
+    $Source = Join-Path $AppSource $Helper
+    if (-not (Test-Path -LiteralPath $Source)) { throw "Missing runtime helper: $Helper" }
+    $Target = Join-Path $Payload "app\$Helper"
+    New-Item -ItemType Directory -Force -Path (Split-Path $Target) | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $Target -Force
+}
 $DefaultOutput = Join-Path $Payload "default-configs"
 Push-Location $AppSource
 try {
@@ -57,6 +66,28 @@ foreach ($File in @("Start.ps1", "Stop.ps1", "Test-Installation.ps1", "Start-Aut
 }
 Copy-Item (Join-Path $ScriptRoot "Apply-MinimalUpgrade.ps1") $PackageRoot
 Copy-Item (Join-Path $ScriptRoot "Read-ConfigPath.mjs") $PackageRoot
+# Additive schema step: ship the DDL plus the expected table->column map that
+# Apply-SchemaUpdate.mjs verifies against the installed database. The expected
+# map is generated from the CURRENT schema via a scratch sqlite push.
+$SchemaScratch = Join-Path $env:TEMP "autotrain-schema-expected-$Timestamp.db"
+Push-Location $AppSource
+try {
+    $previousUrl = $env:DATABASE_URL
+    $env:DATABASE_URL = "file:" + $SchemaScratch.Replace("\", "/")
+    try {
+        & npx.cmd prisma db push --skip-generate
+        if ($LASTEXITCODE -ne 0) { throw "prisma db push into the schema scratch database failed." }
+    } finally { $env:DATABASE_URL = $previousUrl }
+    & node.exe (Join-Path $ScriptRoot "Dump-SchemaExpected.mjs") $SchemaScratch $AppSource (Join-Path $PackageRoot "schema-expected.json")
+    if ($LASTEXITCODE -ne 0) { throw "Dumping schema-expected.json failed." }
+} finally {
+    Pop-Location
+    Remove-Item $SchemaScratch -Force -ErrorAction Continue
+    Remove-Item "$SchemaScratch-journal" -Force -ErrorAction SilentlyContinue
+}
+Copy-Item (Join-Path $ScriptRoot "schema-additions.json") $PackageRoot
+Copy-Item (Join-Path $ScriptRoot "Apply-SchemaUpdate.mjs") $PackageRoot
+$SchemaAdditions = Get-Content (Join-Path $ScriptRoot "schema-additions.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 Copy-Item (Join-Path $ScriptRoot "UPGRADE.md") (Join-Path $PackageRoot "README.md")
 foreach ($File in @("Schedule-AutoTrainUpdate.cmd", "Schedule-AutoTrainUpdate.ps1", "Invoke-AutoTrainUpdate.ps1", "Update-Common.ps1", "Start-UpdateServer.ps1", "SCHEDULED-UPDATE.md", "SCHEDULED-UPDATE.zh-CN.md")) {
     Copy-Item (Join-Path $ScriptRoot $File) $PackageRoot
@@ -68,6 +99,8 @@ $Manifest = [ordered]@{
     preserves = @("data", "frameworks", "runtime", "logs")
     buildId = (Get-Content (Join-Path $Standalone ".next\BUILD_ID") -Raw).Trim()
     databaseMigrationRequired = $false
+    schemaUpdate = "additive"
+    schemaAdditions = @($SchemaAdditions | ForEach-Object { $_.table })
     defaultConfigCount = $Inventory.Count
     defaultConfigPolicy = "copy-missing-preserve-existing"
     sourceRevision = $SourceRevision

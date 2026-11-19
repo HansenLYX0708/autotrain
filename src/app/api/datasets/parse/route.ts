@@ -12,6 +12,7 @@ import { buildColorIndex } from '@/lib/seg-colors';
 import { parseListFile } from '@/lib/paddleseg-list';
 import { isSegmentation, isLocalization } from '@/lib/frameworks';
 import { readLocalizationDataset } from '@/lib/localization-dataset';
+import { resolveDatasetRoot } from '@/lib/dataset-paths';
 
 const execAsync = promisify(exec);
 
@@ -152,7 +153,7 @@ export async function POST(request: NextRequest) {
     // Get dataset from database
     const dataset = await db.dataset.findFirst({
       where: { id: datasetId, ...(user.role === 'admin' ? {} : { userId }) },
-      include: { project: { select: { framework: true } } },
+      include: { project: { select: { framework: true } }, user: { select: { username: true } } },
     });
 
     if (!dataset) {
@@ -161,6 +162,10 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+
+    // Relative dataset dirs resolve against the dataset OWNER's folder, not
+    // the caller's, so admins can parse other users' registered datasets.
+    const ownerUsername = dataset.user?.username ?? user.username;
 
     if (isLocalization(dataset.project.framework)) {
       if (!dataset.datasetDir || !path.isAbsolute(dataset.datasetDir)) throw new Error('Invalid localization dataset path');
@@ -178,9 +183,7 @@ export async function POST(request: NextRequest) {
     // PaddleSeg datasets: compute counts from list files and a sampled per-class
     // pixel/image distribution by decoding pseudo-color masks.
     if (isSegmentation((dataset as any).project?.framework)) {
-      const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
-        ? dataset.datasetDir
-        : path.join(userDatabasePath, user.username, dataset.datasetDir || '');
+      const root = resolveDatasetRoot(dataset.datasetDir, userDatabasePath, ownerUsername) || '';
 
       // Robust parser that handles filenames containing spaces (see
       // `@/lib/paddleseg-list`) — a naive whitespace split would truncate
@@ -287,10 +290,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const owner = await db.user.findUnique({ where: { id: dataset.userId || userId }, select: { username: true } });
-    const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
-      ? dataset.datasetDir
-      : path.join(userDatabasePath, owner?.username || user.username, dataset.datasetDir || '');
+    const root = resolveDatasetRoot(dataset.datasetDir, userDatabasePath, ownerUsername) || (dataset.datasetDir || '');
     const validationPaths = resolveCocoValidationPaths(root, dataset);
     // Determine annotation file path
     let annoPath: string | null = null;
@@ -299,7 +299,7 @@ export async function POST(request: NextRequest) {
       // If absolute path provided, use it; otherwise build absolute path
       annoPath = path.isAbsolute(annotationPath) 
         ? annotationPath 
-        : path.join(userDatabasePath, user.username, annotationPath);
+        : path.join(userDatabasePath, ownerUsername, annotationPath);
     } else if (dataset.datasetDir && dataset.trainAnnoPath) {
       // Build absolute path: {userDatabasePath}/{username}/{datasetDir}/{trainAnnoPath}
       annoPath = path.isAbsolute(dataset.trainAnnoPath) ? dataset.trainAnnoPath : path.join(root, dataset.trainAnnoPath);
@@ -382,7 +382,7 @@ export async function POST(request: NextRequest) {
 
     if (yamlConfig !== dataset.yamlConfig && yamlConfig && systemConfig?.userConfigsPath) {
       const slug = dataset.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase();
-      const configFile = path.join(systemConfig.userConfigsPath, owner?.username || user.username, 'datasets', `${slug}.yml`);
+      const configFile = path.join(systemConfig.userConfigsPath, ownerUsername, 'datasets', `${slug}.yml`);
       if (fs.existsSync(configFile)) fs.writeFileSync(configFile, yamlConfig, 'utf8');
     }
 

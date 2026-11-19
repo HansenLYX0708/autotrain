@@ -20,7 +20,7 @@ import {
   runHeader,
   searchFile,
 } from "../src/lib/job-console";
-import { decimateMinMax } from "../src/lib/chart-decimate";
+import { decimateMinMax, chartXAxis } from "../src/lib/chart-decimate";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail?: unknown) {
@@ -180,6 +180,36 @@ async function main() {
     const withNulls = Array.from({ length: 5000 }, (_, i) => ({ v: i % 7 === 0 ? null : i }));
     const out2 = decimateMinMax(withNulls, (r) => r.v, 100);
     check("nulls tolerated", out2.length <= 102 && out2[0] === withNulls[0]);
+  }
+
+  console.log("[5b] chartXAxis");
+  {
+    const seg = Array.from({ length: 5 }, (_, i) => ({ epoch: i + 1, iteration: (i + 1) * 100, totalIter: 160000 }));
+    const segAxis = chartXAxis(seg);
+    check("monotonic iterations -> iter", segAxis.unit === "iter" && segAxis.x(seg[2], 2) === 300);
+
+    // TorchOBB-style: epoch 1..200, iteration resets 1..74 per epoch.
+    const obb = Array.from({ length: 200 * 74 }, (_, i) => ({ epoch: Math.floor(i / 74) + 1, iteration: (i % 74) + 1, totalIter: 74 }));
+    const obbAxis = chartXAxis(obb);
+    check("resetting 1-based -> epoch unit", obbAxis.unit === "epoch");
+    check(
+      "epoch1/iter1 ~= 1/74",
+      Math.abs(obbAxis.x(obb[0], 0) - 1 / 74) < 1e-9,
+      obbAxis.x(obb[0], 0),
+    );
+    check("last row of epoch 200 = 200", Math.abs(obbAxis.x(obb[obb.length - 1], 0) - 200) < 1e-9);
+
+    const paddle = Array.from({ length: 3 * 10 }, (_, i) => ({ epoch: Math.floor(i / 10), iteration: (i % 10) + 1, totalIter: 10 }));
+    const paddleAxis = chartXAxis(paddle);
+    check("0-based epochs stay 0-based", paddleAxis.unit === "epoch" && paddleAxis.x(paddle[0], 0) === 0.1 && Math.abs(paddleAxis.x(paddle[paddle.length - 1], 0) - 3) < 1e-9);
+
+    const noTotal = [
+      { epoch: 1, iteration: 1, totalIter: 0 },
+      { epoch: 1, iteration: 2, totalIter: 0 },
+      { epoch: 2, iteration: 1, totalIter: 0 },
+    ];
+    const noTotalAxis = chartXAxis(noTotal);
+    check("missing totalIter -> point", noTotalAxis.unit === "point" && noTotalAxis.x(noTotal[2], 2) === 2);
   }
 
   fs.rmSync(dir, { recursive: true, force: true });

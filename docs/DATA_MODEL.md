@@ -269,6 +269,23 @@ anomalib 会取 test 划分的一半作验证，并**在其上拟合异常分数
 
 用于 GPU 历史曲线，但**当前没有任何代码定时写入这张表**，Dashboard 读到的通常是空集；实时数值来自 `GET /api/system/gpu`（现场调用 `nvidia-smi`）。
 
+## UploadTask
+
+数据集上传/导入任务（`id` 即 browser 上传会话的 uploadId，`userId` 级联删除）：
+
+| 字段 | 说明 |
+|---|---|
+| `source` | `'browser'`（分片上传）/ `'server'`（服务器目录后台复制） |
+| `datasetName`, `format` | `'COCO'` / `'labelme'` |
+| `sourcePath` | server 模式源目录 |
+| `targetDir` | 服务器端算好的目标目录（`userDatabasePath/<username>/<format>/<name>`），complete/取消都以此为准，不接受客户端传入 |
+| `status` | `pending` \| `uploading` \| `finalizing` \| `completed` \| `failed` \| `cancelled`（`paused` 是 UI 对“uploading 但无活动 manager”的展示态，不落库） |
+| `totalFiles`/`doneFiles`, `totalBytes`/`doneBytes` | 进度；bytes 列为 BigInt，API 序列化成 number |
+| `overwrite` | labelme 覆盖已确认 |
+| `error`, `createdAt`, `updatedAt`, `completedAt` | |
+
+索引：`@@index([userId, createdAt])`。browser 模式的分片落在 `userDatabasePath/<username>/.uploads/<uploadId>/`；server 模式的 runner 在 `src/lib/upload-server-runner.ts`（进程内，重启不存活——再次 list/get 会把孤儿任务标记为 failed）。
+
 ## 定位任务的数据约定
 
 `TorchOBB` / `TorchPose` 复用现有表，无 schema 迁移。`Dataset.format` 分别为 `YOLO_OBB` / `YOLO_POSE`；标签、关键点顺序和来源报告在版本目录中，三段 `yamlConfig` 使用 `localization` 配置块。`TrainingJob.currentEpoch`、`totalEpochs` 和训练配置的 epoch 列都以 epoch 计数；`TrainingLog.mAP` 为 OBB 的旋转 IoU mAP 或 Pose 的 OKS mAP，额外指标继续保存在 `classMetrics` JSON。

@@ -7,6 +7,7 @@ import { getSegColorMap } from '@/lib/seg-colors';
 import { parseListFile } from '@/lib/paddleseg-list';
 import { isAnomaly, isSegmentation, isLocalization } from '@/lib/frameworks';
 import { readLocalizationDataset } from '@/lib/localization-dataset';
+import { resolveDatasetRoot } from '@/lib/dataset-paths';
 
 interface CocoAnnotation {
   id: number;
@@ -122,7 +123,7 @@ export async function GET(request: NextRequest) {
     // Get dataset from database
     const dataset = await db.dataset.findFirst({
       where: { id: datasetId, ...(user.role === 'admin' ? {} : { userId }) },
-      include: { project: { select: { framework: true } } },
+      include: { project: { select: { framework: true } }, user: { select: { username: true } } },
     });
 
     if (!dataset) {
@@ -131,6 +132,11 @@ export async function GET(request: NextRequest) {
         { status: 404 }
       );
     }
+
+    // Relative dataset dirs resolve against the dataset OWNER's folder, not
+    // the caller's — an admin previewing another user's dataset must not be
+    // sent to their own user root.
+    const ownerUsername = dataset.user?.username ?? user.username;
 
     if (isLocalization(dataset.project.framework)) {
       if (!dataset.datasetDir || !path.isAbsolute(dataset.datasetDir)) throw new Error('Invalid localization dataset path');
@@ -146,9 +152,7 @@ export async function GET(request: NextRequest) {
     // preview shows normal images first, then defect ones, so a mislabelled
     // directory is obvious before a job is ever started.
     if (isAnomaly((dataset as any).project?.framework)) {
-      const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
-        ? dataset.datasetDir
-        : path.join(userDatabasePath, user.username, dataset.datasetDir || '');
+      const root = resolveDatasetRoot(dataset.datasetDir, userDatabasePath, ownerUsername) || '';
 
       const imageExts = ['.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff'];
       const listDir = (rel: string | null | undefined): string[] => {
@@ -223,9 +227,7 @@ export async function GET(request: NextRequest) {
 
     // PaddleSeg datasets: list files (train.txt/val.txt) of "image mask" pairs.
     if (isSegmentation((dataset as any).project?.framework)) {
-      const root = dataset.datasetDir && path.isAbsolute(dataset.datasetDir)
-        ? dataset.datasetDir
-        : path.join(userDatabasePath, user.username, dataset.datasetDir || '');
+      const root = resolveDatasetRoot(dataset.datasetDir, userDatabasePath, ownerUsername) || '';
 
       const listRel = dataset.trainAnnoPath || 'train.txt';
       const listPath = path.isAbsolute(listRel) ? listRel : path.join(root, listRel);
@@ -293,7 +295,8 @@ export async function GET(request: NextRequest) {
     // Build absolute annotation file path
     let annoPath: string | null = null;
     if (dataset.datasetDir && dataset.trainAnnoPath) {
-      annoPath = path.join(userDatabasePath, user.username, dataset.datasetDir, dataset.trainAnnoPath);
+      const dir = resolveDatasetRoot(dataset.datasetDir, userDatabasePath, ownerUsername) ?? dataset.datasetDir;
+      annoPath = path.join(dir, dataset.trainAnnoPath);
     }
 
     if (!annoPath || !fs.existsSync(annoPath)) {
@@ -345,7 +348,9 @@ export async function GET(request: NextRequest) {
     const samples: SampleImage[] = [];
     let imageDir: string | null = null;
     if (dataset.datasetDir && dataset.trainImagePath) {
-      imageDir = path.join(userDatabasePath, user.username, dataset.datasetDir, dataset.trainImagePath);
+      imageDir = path.isAbsolute(dataset.datasetDir)
+        ? path.join(dataset.datasetDir, dataset.trainImagePath)
+        : path.join(resolveDatasetRoot(dataset.datasetDir, userDatabasePath, ownerUsername) || '', dataset.trainImagePath);
     }
 
     for (const imageId of imageIds) {

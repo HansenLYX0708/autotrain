@@ -51,6 +51,14 @@ import {
   Cpu,
   Calendar,
 } from 'lucide-react'
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination'
 import { toast } from '@/hooks/use-toast'
 
 interface Project {
@@ -71,7 +79,11 @@ interface Project {
 
 export function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [view, setView] = useState<'recent' | 'all'>('recent')
+  const [page, setPage] = useState(1)
+  const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<Project | null>(null)
@@ -82,16 +94,43 @@ export function ProjectsPage() {
     task: 'detection',
   })
 
+  const PAGE_SIZE = 12
+
+  // Debounce the search input ~300 ms before it hits the server.
   useEffect(() => {
-    fetchProjects()
-  }, [])
+    const timer = setTimeout(() => setSearchQuery(searchInput.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
+  // A new view or query always starts on page 1.
+  useEffect(() => {
+    setPage(1)
+  }, [view, searchQuery])
+
+  useEffect(() => {
+    void fetchProjects()
+  }, [view, page, searchQuery])
 
   const fetchProjects = async () => {
+    setLoading(true)
     try {
-      const response = await fetch('/api/projects')
+      const params = new URLSearchParams()
+      if (searchQuery) params.set('q', searchQuery)
+      if (view === 'recent') {
+        params.set('limit', '5')
+      } else {
+        params.set('page', String(page))
+        params.set('pageSize', String(PAGE_SIZE))
+      }
+      const response = await fetch(`/api/projects?${params}`)
       if (response.ok) {
         const data = await response.json()
-        setProjects(data.data || data)
+        setProjects(data.data || [])
+        setTotal(data.total ?? 0)
+        // If the current page no longer exists (deletes/shrinking results), step back.
+        const pageSize = data.pageSize || PAGE_SIZE
+        const lastPage = Math.max(1, Math.ceil((data.total ?? 0) / pageSize))
+        if (view === 'all' && page > lastPage) setPage(lastPage)
       }
     } catch (error) {
       console.error('Failed to fetch projects:', error)
@@ -136,14 +175,14 @@ export function ProjectsPage() {
 
   const handleDelete = async (project: Project) => {
     const relatedData = [
-      project._count?.datasets ? `${project._count.datasets} 个数据集` : null,
-      project._count?.models ? `${project._count.models} 个模型` : null,
-      project._count?.trainingJobs ? `${project._count.trainingJobs} 个训练任务` : null,
+      project._count?.datasets ? `${project._count.datasets} datasets` : null,
+      project._count?.models ? `${project._count.models} models` : null,
+      project._count?.trainingJobs ? `${project._count.trainingJobs} training jobs` : null,
     ].filter(Boolean)
 
     const warningMessage = relatedData.length > 0
-      ? `此项目包含以下数据:\n${relatedData.map(item => `• ${item}`).join('\n')}\n\n删除此项目将同时永久删除所有相关数据，此操作无法撤销。是否确认删除？`
-      : '确定要删除此项目吗？此操作无法撤销。'
+      ? `This project contains:\n${relatedData.map(item => `• ${item}`).join('\n')}\n\nDeleting it will permanently delete all related data. This cannot be undone. Continue?`
+      : 'Delete this project? This cannot be undone.'
 
     if (!confirm(warningMessage)) {
       return
@@ -173,9 +212,9 @@ export function ProjectsPage() {
     setDialogOpen(true)
   }
 
-  const filteredProjects = projects.filter(project =>
-    project.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const rangeStart = projects.length === 0 ? 0 : (view === 'all' ? (page - 1) * PAGE_SIZE + 1 : 1)
+  const rangeEnd = view === 'all' ? (page - 1) * PAGE_SIZE + projects.length : projects.length
 
   return (
     <div className="space-y-6">
@@ -313,17 +352,36 @@ export function ProjectsPage() {
         </Dialog>
       </div>
 
-      {/* Search */}
-      <div className="flex items-center gap-4">
+      {/* Search + view toggle */}
+      <div className="flex flex-wrap items-center gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search projects..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             className="pl-9"
           />
         </div>
+        <div className="flex items-center gap-1 rounded-md border p-1">
+          {(['recent', 'all'] as const).map((value) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={view === value ? 'default' : 'ghost'}
+              onClick={() => setView(value)}
+            >
+              {value === 'recent' ? 'Recent 5' : 'All projects'}
+            </Button>
+          ))}
+        </div>
+        {!loading && (
+          <p className="text-sm text-muted-foreground ml-auto">
+            {view === 'recent' && !searchQuery
+              ? `Showing ${projects.length} most recent of ${total}`
+              : `Showing ${rangeStart}–${rangeEnd} of ${total}`}
+          </p>
+        )}
       </div>
 
       {/* Projects Grid */}
@@ -341,19 +399,19 @@ export function ProjectsPage() {
             </Card>
           ))}
         </div>
-      ) : filteredProjects.length === 0 ? (
+      ) : projects.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <FolderKanban className="w-12 h-12 text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium">No projects found</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              {searchQuery ? 'Try a different search term' : 'Create your first project to get started'}
+              {searchQuery ? 'Try a different search term' : view === 'recent' ? 'Create your first project to get started' : 'No projects on this page'}
             </p>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredProjects.map((project) => (
+          {projects.map((project) => (
             <Card key={project.id} className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
@@ -416,6 +474,51 @@ export function ProjectsPage() {
             </Card>
           ))}
         </div>
+      )}
+
+      {/* Pagination — only meaningful in "All projects" mode */}
+      {!loading && view === 'all' && total > 0 && pageCount > 1 && (
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                aria-disabled={page <= 1}
+                className={page <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                onClick={(e) => { e.preventDefault(); if (page > 1) setPage(page - 1) }}
+              />
+            </PaginationItem>
+            {Array.from({ length: pageCount }, (_, i) => i + 1)
+              .filter((n) => n === 1 || n === pageCount || Math.abs(n - page) <= 1 || (page <= 3 && n <= 4) || (page >= pageCount - 2 && n >= pageCount - 3))
+              .reduce<(number | 'ellipsis')[]>((acc, n) => {
+                const prev = acc[acc.length - 1]
+                if (typeof prev === 'number' && n - prev > 1) acc.push('ellipsis')
+                acc.push(n)
+                return acc
+              }, [])
+              .map((item, i) => (
+                <PaginationItem key={`${item}-${i}`}>
+                  {item === 'ellipsis' ? (
+                    <PaginationLink className="pointer-events-none">…</PaginationLink>
+                  ) : (
+                    <PaginationLink
+                      href="#"
+                      isActive={item === page}
+                      onClick={(e) => { e.preventDefault(); setPage(item) }}
+                    >
+                      {item}
+                    </PaginationLink>
+                  )}
+                </PaginationItem>
+              ))}
+            <PaginationItem>
+              <PaginationNext
+                aria-disabled={page >= pageCount}
+                className={page >= pageCount ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                onClick={(e) => { e.preventDefault(); if (page < pageCount) setPage(page + 1) }}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
       )}
     </div>
   )

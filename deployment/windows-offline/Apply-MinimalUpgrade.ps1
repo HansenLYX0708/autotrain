@@ -46,6 +46,32 @@ $BackupRoot = Join-Path $InstallRoot "upgrade-backups\$Timestamp"
 New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null
 Copy-Item $TargetApp (Join-Path $BackupRoot "app") -Recurse -Force
 Copy-Item (Join-Path $Defaults "inventory.json") (Join-Path $BackupRoot "default-config-inventory.json")
+# Additive schema step: back up the installed database, apply the packaged
+# DDL, and verify the result before the new app ever touches the DB.
+$Database = Join-Path $InstallRoot "data\autotrain.db"
+if (Test-Path $Database -PathType Leaf) {
+    $DataBackup = Join-Path $BackupRoot "data"
+    New-Item -ItemType Directory -Force -Path $DataBackup | Out-Null
+    $DbFiles = @(Get-Item -LiteralPath $Database)
+    foreach ($Suffix in @("-wal", "-shm", "-journal")) {
+        $Sidecar = "$Database$Suffix"
+        if (Test-Path -LiteralPath $Sidecar -PathType Leaf) { $DbFiles += Get-Item -LiteralPath $Sidecar }
+    }
+    foreach ($File in $DbFiles) { Copy-Item -LiteralPath $File.FullName -Destination $DataBackup }
+    Write-Host "Database backed up to $DataBackup"
+    $Node = Join-Path $InstallRoot "runtime\node\node.exe"
+    if (-not (Test-Path $Node -PathType Leaf)) { throw "Installed Node.js was not found: $Node" }
+    & $Node (Join-Path $PackageRoot "Apply-SchemaUpdate.mjs") $Database $SourceApp $PackageRoot
+    if ($LASTEXITCODE -ne 0) {
+        foreach ($File in $DbFiles) {
+            $Backed = Join-Path $DataBackup $File.Name
+            if (Test-Path -LiteralPath $Backed -PathType Leaf) { Copy-Item -LiteralPath $Backed -Destination $File.FullName -Force }
+        }
+        throw "Schema update failed; the database was restored from $DataBackup."
+    }
+} else {
+    Write-Host "WARNING: installed database not found at $Database; skipping the schema step (fresh installs create it on first start)." -ForegroundColor Yellow
+}
 Copy-Item (Join-Path $SourceApp "*") $TargetApp -Recurse -Force
 foreach ($File in @("Start.ps1", "Stop.ps1", "Test-Installation.ps1", "Start-AutoTrain.cmd", "Stop-AutoTrain.cmd", "configure_db.py")) {
     $Source = Join-Path $Payload $File

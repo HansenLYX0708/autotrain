@@ -29,7 +29,7 @@ Hawkeye+ AutoTrain Platform 的全部文档。项目总览见 [../README.md](../
 | 1 | [../AGENTS.md](../AGENTS.md) | **必读**。踩坑清单、验证流程、代码约定、单位约定、各框架陷阱 |
 | 2 | [ARCHITECTURE.md](ARCHITECTURE.md) | 架构与实现原理：框架抽象层、三段配置合并、命令生成、训练进程生命周期、日志解析、鉴权、路径与配额、已知限制 |
 | 3 | [DATA_MODEL.md](DATA_MODEL.md) | Prisma 数据模型逐字段说明、实体关系、删除语义、单位约定 |
-| 4 | [API_REFERENCE.md](API_REFERENCE.md) | 全部 46 个 REST 路由：方法、鉴权、入参、行为、返回结构 |
+| 4 | [API_REFERENCE.md](API_REFERENCE.md) | 全部 53 个 REST 路由：方法、鉴权、入参、行为、返回结构 |
 
 ### 我要动某个**具体框架**
 

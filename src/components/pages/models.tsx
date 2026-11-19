@@ -76,6 +76,7 @@ import {
   validateModelParams,
   type ModelParams,
 } from '@/lib/model-yaml'
+import { copyText } from '@/lib/browser-safe'
 
 interface Project {
   id: string
@@ -543,8 +544,10 @@ export function ModelsPage() {
 
   const copyYamlToClipboard = () => {
     if (!selectedModel?.yamlConfig) return
-    navigator.clipboard.writeText(selectedModel.yamlConfig)
-    toast({ title: 'YAML copied to clipboard' })
+    copyText(selectedModel.yamlConfig).then((ok) => {
+      if (ok) toast({ title: 'YAML copied to clipboard' })
+      else toast({ title: 'Copy failed', variant: 'destructive' })
+    })
   }
 
   const filteredModels = models.filter((model) => {

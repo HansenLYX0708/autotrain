@@ -1,14 +1,21 @@
 'use client'
 
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useAuth } from '@/contexts/auth-context'
 import { resolveUploadedLabelmeImage, type ImageNameIndex } from '@/lib/labelme-image-match'
 import { toast } from '@/hooks/use-toast'
-import { Download, Save, Undo2, Redo2, Trash2, ZoomIn, ZoomOut, FolderOpen, Crosshair, MousePointer2, Square, RotateCw } from 'lucide-react'
+import { Download, Save, Undo2, Redo2, Trash2, ZoomIn, ZoomOut, FolderOpen, Crosshair, MousePointer2, Square, RotateCw, Archive, ArchiveRestore, Pencil, Plus } from 'lucide-react'
 import {
   type AnnotationImage, type AnnotationObject, type AnnotationProject, type Point, type Split,
   boxCorners, boxFromThreePoints, containsPoint, fromLabelme, imageIssues, insideImage,
@@ -16,6 +23,7 @@ import {
   resizeBox, rotateBox,
 } from '@/lib/localization-annotations'
 import { predictionsSchema, predictionToImage } from '@/lib/localization-predictions'
+import { uuid } from '@/lib/browser-safe'
 
 type History = { present: AnnotationProject; past: AnnotationProject[]; future: AnnotationProject[] }
 type Action = { type: 'load' | 'edit'; project: AnnotationProject } | { type: 'undo' | 'redo' }
@@ -40,11 +48,181 @@ function download(name: string, value: unknown) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error) }
-function report(error: unknown) { toast({ title: '操作未完成', description: errorMessage(error), variant: 'destructive' }) }
+function report(error: unknown) { toast({ title: 'Action failed', description: errorMessage(error), variant: 'destructive' }) }
 const selectClass = 'h-9 w-full rounded-md border bg-background px-2 text-sm'
-const splitNames = { unassigned: '未划分', train: '训练 train', val: '验证 val', test: '测试 test' }
+const splitNames = { unassigned: 'Unassigned', train: 'Train', val: 'Val', test: 'Test' }
 type Tool = 'select' | 'rectangle' | 'obb' | 'point'
 type Asset = { url: string; width: number; height: number }
+
+type AnnotationSetRow = {
+  id: string; name: string; images: number; reviewedImages: number; instances: number; labels: number
+  status: 'active' | 'archived'; activeSince: string; archiveAt?: string
+  archivedAt?: string; archivedReason?: 'auto' | 'manual'; createdAt: string; modified: string
+}
+
+const clampZoom = (value: number) => Math.min(20, Math.max(0.02, value))
+const SETS_PAGE_SIZE = 20
+
+/**
+ * "Annotation sets" management tab: lists saved sets (active / archived / all),
+ * auto-archive countdown, and the rename / archive / export / delete actions.
+ */
+function AnnotationSetsPanel({ refresh, onOpen, onNew }: { refresh: number; onOpen: (id: string) => Promise<void>; onNew: () => void }) {
+  const [status, setStatus] = useState<'active' | 'archived' | 'all'>('active')
+  const [search, setSearch] = useState('')
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [sets, setSets] = useState<AnnotationSetRow[] | null>(null)
+  const [renaming, setRenaming] = useState<AnnotationSetRow | null>(null)
+  const [draft, setDraft] = useState('')
+  const [deleting, setDeleting] = useState<AnnotationSetRow | null>(null)
+  const [working, setWorking] = useState(false)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [search])
+  useEffect(() => { setPage(1) }, [status, query])
+
+  const load = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ status })
+      if (query) params.set('q', query)
+      const response = await fetch(`/api/annotation/projects?${params}`)
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      setSets(result.data)
+    } catch (error) { report(error) }
+  }, [status, query])
+  useEffect(() => { void load() }, [load, refresh])
+
+  async function patch(id: string, body: Record<string, unknown>) {
+    setWorking(true)
+    try {
+      const response = await fetch(`/api/annotation/projects/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      await load()
+    } catch (error) { report(error) } finally { setWorking(false) }
+  }
+  async function remove(id: string) {
+    setWorking(true)
+    try {
+      const response = await fetch(`/api/annotation/projects/${id}`, { method: 'DELETE' })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      toast({ title: 'Annotation set deleted' })
+      setDeleting(null)
+      await load()
+    } catch (error) { report(error) } finally { setWorking(false) }
+  }
+  async function exportSet(id: string, name: string) {
+    try {
+      const response = await fetch(`/api/annotation/projects?id=${encodeURIComponent(id)}`)
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      download(`${name.replace(/[^\w.-]+/g, '_') || 'annotation-project'}.json`, result.data)
+    } catch (error) { report(error) }
+  }
+
+  const total = sets?.length ?? 0
+  const pageCount = Math.max(1, Math.ceil(total / SETS_PAGE_SIZE))
+  const current = Math.min(page, pageCount)
+  const rows = (sets ?? []).slice((current - 1) * SETS_PAGE_SIZE, current * SETS_PAGE_SIZE)
+
+  return <div className="space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 className="text-2xl font-bold">Annotation sets</h1>
+        <p className="text-sm text-muted-foreground">Sets not saved for 7 days are archived automatically. Import for training uses active sets only.</p>
+      </div>
+      <Button onClick={onNew}><Plus className="mr-1 size-4" />New annotation set</Button>
+    </div>
+    <div className="flex flex-wrap items-center gap-3">
+      <div className="flex items-center gap-1 rounded-md border p-1">
+        {(['active', 'archived', 'all'] as const).map(value => (
+          <Button key={value} size="sm" variant={status === value ? 'default' : 'ghost'} onClick={() => setStatus(value)}>
+            {value === 'active' ? 'Active' : value === 'archived' ? 'Archived' : 'All'}
+          </Button>
+        ))}
+      </div>
+      <Input className="max-w-xs" placeholder="Search by name..." value={search} onChange={event => setSearch(event.target.value)} />
+      <p className="ml-auto text-sm text-muted-foreground">{sets ? `${total} set${total === 1 ? '' : 's'}` : 'Loading…'}</p>
+    </div>
+    <div className="rounded border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Images (reviewed)</TableHead>
+            <TableHead>Instances</TableHead>
+            <TableHead>Classes</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Last saved</TableHead>
+            <TableHead>Archiving</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map(set => <TableRow key={set.id}>
+            <TableCell className="max-w-56"><span className="block truncate font-medium" title={set.name}>{set.name}</span><span className="text-xs text-muted-foreground">{set.id.slice(0, 8)}</span></TableCell>
+            <TableCell>{set.reviewedImages}/{set.images}</TableCell>
+            <TableCell>{set.instances}</TableCell>
+            <TableCell>{set.labels}</TableCell>
+            <TableCell><Badge variant={set.status === 'active' ? 'default' : 'secondary'}>{set.status}</Badge></TableCell>
+            <TableCell className="whitespace-nowrap text-xs">{new Date(set.modified).toLocaleString()}</TableCell>
+            <TableCell className="text-xs text-muted-foreground">
+              {set.status === 'active' && set.archiveAt
+                ? `auto-archives in ${Math.max(0, Math.ceil((Date.parse(set.archiveAt) - Date.now()) / 86400e3))} days`
+                : `archived ${set.archivedAt ? new Date(set.archivedAt).toLocaleDateString() : ''} (${set.archivedReason ?? 'manual'})`}
+            </TableCell>
+            <TableCell className="whitespace-nowrap text-right">
+              <div className="flex justify-end gap-1">
+                <Button size="sm" variant="outline" onClick={() => void onOpen(set.id)}><FolderOpen className="mr-1 size-4" />Open</Button>
+                <Button size="sm" variant="outline" aria-label="Rename" onClick={() => { setRenaming(set); setDraft(set.name) }}><Pencil className="size-4" /></Button>
+                {set.status === 'active'
+                  ? <Button size="sm" variant="outline" aria-label="Archive" disabled={working} onClick={() => void patch(set.id, { status: 'archived' })}><Archive className="size-4" /></Button>
+                  : <Button size="sm" variant="outline" aria-label="Activate" disabled={working} onClick={() => void patch(set.id, { status: 'active' })}><ArchiveRestore className="size-4" /></Button>}
+                <Button size="sm" variant="outline" aria-label="Export JSON" onClick={() => void exportSet(set.id, set.name)}><Download className="size-4" /></Button>
+                <Button size="sm" variant="outline" aria-label="Delete" className="text-destructive" onClick={() => setDeleting(set)}><Trash2 className="size-4" /></Button>
+              </div>
+            </TableCell>
+          </TableRow>)}
+          {sets && rows.length === 0 && <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+            {status === 'active' ? 'No active annotation sets. Create one, or check Archived.' : 'No annotation sets match.'}
+          </TableCell></TableRow>}
+        </TableBody>
+      </Table>
+    </div>
+    {pageCount > 1 && <div className="flex items-center justify-center gap-2 text-sm">
+      <Button size="sm" variant="outline" disabled={current <= 1} onClick={() => setPage(current - 1)}>Previous</Button>
+      <span className="text-muted-foreground">Page {current} of {pageCount}</span>
+      <Button size="sm" variant="outline" disabled={current >= pageCount} onClick={() => setPage(current + 1)}>Next</Button>
+    </div>}
+    <Dialog open={renaming !== null} onOpenChange={open => !open && setRenaming(null)}>
+      <DialogContent><DialogHeader><DialogTitle>Rename annotation set</DialogTitle><DialogDescription>The name is stored inside the project file.</DialogDescription></DialogHeader>
+        <div className="space-y-3">
+          <Input value={draft} onChange={event => setDraft(event.target.value)} maxLength={100} />
+          <Button disabled={working || !draft.trim()} onClick={async () => { if (renaming) { await patch(renaming.id, { name: draft.trim() }); setRenaming(null) } }}>Rename</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    <AlertDialog open={deleting !== null} onOpenChange={open => !open && setDeleting(null)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete "{deleting?.name}"?</AlertDialogTitle>
+          <AlertDialogDescription>The annotation project file is removed permanently. Source images on your machine are not deleted.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction disabled={working} onClick={() => deleting && void remove(deleting.id)}>Delete</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </div>
+}
 
 export function AnnotationPage() {
   const { user } = useAuth()
@@ -63,6 +241,10 @@ export function AnnotationPage() {
   const [pending, setPending] = useState<Point[]>([])
   const [hover, setHover] = useState<Point | null>(null)
   const [zoom, setZoom] = useState(1)
+  const zoomRef = useRef(1)
+  const [tab, setTab] = useState<'sets' | 'editor'>('sets')
+  const [setsVersion, setSetsVersion] = useState(0)
+  const zoomAnchor = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<AnnotationObject | null>(null)
   const drag = useRef<{ start: Point; object: AnnotationObject; key?: string; handle?: string } | null>(null)
@@ -76,7 +258,7 @@ export function AnnotationPage() {
   const [validation, setValidation] = useState<string[] | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [predictionOpen, setPredictionOpen] = useState(false)
-  const [models, setModels] = useState<{ id: string; name: string; framework: string }[]>([])
+  const [models, setModels] = useState<{ id: string; name: string; framework: string; checkpoint?: string }[]>([])
   const [predictionJob, setPredictionJob] = useState('')
   const [predictionScope, setPredictionScope] = useState('empty')
   const [confidence, setConfidence] = useState(0.25)
@@ -110,10 +292,62 @@ export function AnnotationPage() {
   }
   function fit(width = image?.width, height = image?.height) {
     if (width && height && viewport.current) {
-      setZoom(Math.min((viewport.current.clientWidth - 24) / width, (viewport.current.clientHeight - 24) / height, 2))
+      commitZoom(Math.min((viewport.current.clientWidth - 24) / width, (viewport.current.clientHeight - 24) / height, 2))
       viewport.current.scrollTo(0, 0)
     }
   }
+  // zoomRef is updated synchronously so bursts of wheel events between renders
+  // compound correctly instead of all reading the same stale render value.
+  function commitZoom(next: number) {
+    zoomRef.current = next
+    setZoom(next)
+  }
+  /**
+   * Zoom keeping the image point under (ox, oy) — viewport coordinates — fixed.
+   * The scroll correction runs in a layout effect once the zoom state commits.
+   * Without an anchor the viewport centre is used.
+   */
+  function zoomBy(factor: number, ox?: number, oy?: number) {
+    const el = viewport.current
+    const current = zoomRef.current
+    const next = clampZoom(current * factor)
+    if (next === current) return
+    if (el) {
+      // Flush a pending anchor immediately: several wheel events between renders
+      // would otherwise anchor the later steps to an uncorrected scroll offset.
+      if (zoomAnchor.current) {
+        el.scrollLeft = zoomAnchor.current.px * current - zoomAnchor.current.ox
+        el.scrollTop = zoomAnchor.current.py * current - zoomAnchor.current.oy
+        zoomAnchor.current = null
+      }
+      const x = ox ?? el.clientWidth / 2, y = oy ?? el.clientHeight / 2
+      zoomAnchor.current = { px: (el.scrollLeft + x) / current, py: (el.scrollTop + y) / current, ox: x, oy: y }
+    }
+    commitZoom(next)
+  }
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current
+    const el = viewport.current
+    if (!anchor || !el) return
+    el.scrollLeft = anchor.px * zoom - anchor.ox
+    el.scrollTop = anchor.py * zoom - anchor.oy
+    zoomAnchor.current = null
+  }, [zoom])
+  // Ctrl/⌘ + wheel zooms anchored at the cursor. Must be a NATIVE non-passive
+  // listener: React's onWheel is passive, so preventDefault there cannot stop
+  // the browser's page zoom.
+  useEffect(() => {
+    const el = viewport.current
+    if (!el) return
+    function wheel(event: WheelEvent) {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      const rect = el!.getBoundingClientRect()
+      zoomBy(Math.exp(-event.deltaY * 0.0015), event.clientX - rect.left, event.clientY - rect.top)
+    }
+    el.addEventListener('wheel', wheel, { passive: false })
+    return () => el.removeEventListener('wheel', wheel)
+  })
   const save = useCallback(async () => {
     if (busy || !project.images.length) return
     setBusy(true)
@@ -123,9 +357,10 @@ export function AnnotationPage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot),
       })
       const result = await response.json()
-      if (!response.ok) throw new Error(result.error || '保存失败')
+      if (!response.ok) throw new Error(result.error || 'Save failed')
       setSaved(project)
-      toast({ title: '项目已保存', description: '标注、模板和划分已保存到服务器；原图仍在你的本地文件夹。' })
+      setSetsVersion(v => v + 1)
+      toast({ title: 'Project saved', description: 'Annotations, templates and splits were saved to the server; source images stay in your local folder.' })
     } catch (error) { report(error) } finally { setBusy(false) }
   }, [busy, project])
 
@@ -137,11 +372,25 @@ export function AnnotationPage() {
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
       if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
-      if (busy || settings || serverProjects || validation || showHelp) return
+      if (busy || settings || serverProjects || validation || showHelp || tab !== 'editor') return
       const modifier = event.ctrlKey || event.metaKey
       if (modifier && event.key.toLowerCase() === 's') { event.preventDefault(); void save(); return }
       if (modifier && event.key.toLowerCase() === 'z') { event.preventDefault(); cancelGesture(); dispatch({ type: event.shiftKey ? 'redo' : 'undo' }); return }
       if (modifier && event.key.toLowerCase() === 'y') { event.preventDefault(); cancelGesture(); dispatch({ type: 'redo' }); return }
+      // Zoom shortcuts. The Ctrl/⌘ variants must preventDefault or the browser
+      // zooms the whole page instead of the canvas.
+      if (modifier && ['=', '+', '-', '0'].includes(event.key)) {
+        event.preventDefault()
+        if (event.key === '0') fit()
+        else zoomBy(event.key === '-' ? 1 / 1.25 : 1.25)
+        return
+      }
+      if (!modifier && !event.altKey) {
+        if (event.key === '=' || event.key === '+') { zoomBy(1.25); return }
+        if (event.key === '-') { zoomBy(1 / 1.25); return }
+        if (event.key === '0') { fit(); return }
+        if (event.key === '1') { zoomBy(1 / zoomRef.current); return }
+      }
       if (event.key === 'Escape') cancelGesture()
       if (event.key === 'Delete') { event.preventDefault(); removeSelected() }
       if (event.key === 'ArrowLeft') { event.preventDefault(); navigate(index - 1) }
@@ -170,9 +419,9 @@ export function AnnotationPage() {
         // Project backups, COCO documents and unrelated JSON are not Labelme files.
         if (!raw || !Array.isArray(raw.shapes)) continue
         const resolved = resolveUploadedLabelmeImage(imageIndex, relative(file), raw.imagePath)
-        if ('error' in resolved) throw new Error(`${relative(file)}：${resolved.error}`)
+        if ('error' in resolved) throw new Error(`${relative(file)}: ${resolved.error}`)
         const key = resolved.path.toLowerCase()
-        if (imports.has(key)) throw new Error(`多个 JSON 对应同一图片：${resolved.path}`)
+        if (imports.has(key)) throw new Error(`Multiple JSON files match the same image: ${resolved.path}`)
         imports.set(key, fromLabelme(raw, resolved.path))
       }
       const records: AnnotationImage[] = []
@@ -183,13 +432,13 @@ export function AnnotationPage() {
       const existing = new Map(project.images.map(i => [i.name.toLowerCase(), i]))
       for (const file of imageFiles) {
         const name = relative(file)
-        if (Object.keys(loaded).some(k => k.toLowerCase() === name.toLowerCase())) throw new Error(`重复文件名：${name}`)
+        if (Object.keys(loaded).some(k => k.toLowerCase() === name.toLowerCase())) throw new Error(`Duplicate file name: ${name}`)
         const url = URL.createObjectURL(file)
         loaded[name] = { url, width: 0, height: 0 }
         const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
           const img = new Image()
           img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
-          img.onerror = () => reject(new Error(`无法解码图片：${name}`))
+          img.onerror = () => reject(new Error(`Could not decode image: ${name}`))
           img.src = url
         })
         loaded[name] = { url, ...dims }
@@ -200,13 +449,13 @@ export function AnnotationPage() {
           imported.keypointNames.forEach(n => names.add(n))
           record.objects.forEach(o => labels.add(o.label))
         }
-        if (record && (record.width !== dims.width || record.height !== dims.height)) throw new Error(`${name}：图片尺寸与标注不一致，禁止错位续标`)
+        if (record && (record.width !== dims.width || record.height !== dims.height)) throw new Error(`${name}: image dimensions differ from the saved annotation; mismatched images cannot be annotated`)
         records.push(record ? { ...record, name } : {
           name, ...dims, objects: [], reviewed: false, split: 'unassigned',
           group: name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '',
         })
       }
-      if (!records.length) throw new Error('没有找到 PNG/JPEG/BMP/WebP 图片；TIFF 请先无缩放转换为 PNG')
+      if (!records.length) throw new Error('No PNG/JPEG/BMP/WebP images found; convert TIFF to PNG without scaling first')
       for (const old of project.images) {
         if (!records.some(v => v.name.toLowerCase() === old.name.toLowerCase())) records.push(old)
       }
@@ -218,16 +467,16 @@ export function AnnotationPage() {
       if (JSON.stringify(next) !== JSON.stringify(project)) edit(next)
       navigate(0)
       fit(records[0].width, records[0].height)
-      toast({ title: '图片已载入', description: `${Object.keys(loaded).length} 张图片；原有标注优先保留。重新打开项目时请关联同一个图片根目录。` })
+      toast({ title: 'Images loaded', description: `${Object.keys(loaded).length} images; existing annotations were kept. Link the same image root when reopening this project.` })
     } catch (error) {
       Object.values(loaded).forEach(a => URL.revokeObjectURL(a.url))
       report(error)
     } finally { setBusy(false) }
   }
 
-  function loadProject(raw: unknown) {
+  function loadProject(raw: unknown): boolean {
     const next = projectSchema.parse(raw)
-    if (dirty && !window.confirm('当前项目有未保存修改。仍要打开另一个项目吗？')) return
+    if (dirty && !window.confirm('The current project has unsaved changes. Open another project anyway?')) return false
     cancelGesture()
     Object.values(assetsRef.current).forEach(a => URL.revokeObjectURL(a.url))
     assetsRef.current = {}
@@ -239,7 +488,20 @@ export function AnnotationPage() {
     setLabel(next.labels[0])
     setKeypointName(next.keypointNames[0] ?? '')
     setServerProjects(null)
-    toast({ title: '标注已恢复', description: '请点击“关联图片文件夹”选择原图根目录。' })
+    toast({ title: 'Annotations restored', description: 'Click "Link image folder" to choose the source image root.' })
+    return true
+  }
+
+  async function openSavedSet(id: string) {
+    try {
+      const response = await fetch(`/api/annotation/projects?id=${encodeURIComponent(id)}`)
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      if (loadProject(result.data)) setTab('editor')
+    } catch (error) { report(error) }
+  }
+  function newAnnotationSet() {
+    if (loadProject(newProject())) setTab('editor')
   }
 
   function coords(event: React.PointerEvent<SVGSVGElement>): Point | null {
@@ -274,7 +536,7 @@ export function AnnotationPage() {
       return
     }
     if (tool === 'point') {
-      if (!selected || !activeKey) { report(new Error('先选择一个实例和关键点名称')); return }
+      if (!selected || !activeKey) { report(new Error('Select an instance and a keypoint name first')); return }
       editObject({ ...selected, keypoints: { ...selected.keypoints, [activeKey]: { ...p, visibility: selected.keypoints[activeKey]?.visibility === 1 ? 1 : 2 } } })
       const next = project.keypointNames.find(k => k !== activeKey && !selected.keypoints[k])
       if (next) setKeypointName(next)
@@ -288,9 +550,9 @@ export function AnnotationPage() {
         cx: (points[0].x + p.x) / 2, cy: (points[0].y + p.y) / 2,
         width: Math.abs(p.x - points[0].x), height: Math.abs(p.y - points[0].y), angle: 0,
       }
-      if (geometry.width < 1 || geometry.height < 1) throw new Error('框的宽和高必须至少为 1 像素')
-      if (!boxCorners(geometry).every(q => insideImage(q, image))) throw new Error('旋转框超出图片，请调整第三个点')
-      const object: AnnotationObject = { ...geometry, id: crypto.randomUUID(), label: activeLabel, kind: tool, keypoints: {} }
+      if (geometry.width < 1 || geometry.height < 1) throw new Error('Box width and height must be at least 1 px')
+      if (!boxCorners(geometry).every(q => insideImage(q, image))) throw new Error('Rotated box extends outside the image; adjust the third point')
+      const object: AnnotationObject = { ...geometry, id: uuid(), label: activeLabel, kind: tool, keypoints: {} }
       editImage({ ...image, reviewed: false, objects: [...image.objects, object] })
       setSelectedId(object.id)
       cancelGesture()
@@ -354,7 +616,7 @@ export function AnnotationPage() {
   function exportProject() {
     try {
       download('localization-project.json', projectSchema.parse(project))
-      toast({ title: '项目已导出', description: '包含所有标注和模板，不包含原图。请与原图一起备份。' })
+      toast({ title: 'Project exported', description: 'Includes all annotations and templates, but no source images. Back it up together with the images.' })
     } catch (error) { report(error) }
   }
   async function openPrediction() {
@@ -371,9 +633,9 @@ export function AnnotationPage() {
   async function predict() {
     if (!predictionJob || busy) return
     const targets = predictionScope === 'current' ? [image].filter(Boolean) : project.images.filter(item => !item.objects.length && !item.reviewed)
-    if (!targets.length) { report(new Error('没有符合条件的图片')); return }
-    if (targets.some(item => !assets[item.name])) { report(new Error('请先关联所有待预测的原图')); return }
-    if (predictionScope === 'current' && image?.objects.length && !window.confirm('本次预测将替换当前图的实例和关键点；可以撤销。是否继续？')) return
+    if (!targets.length) { report(new Error('No images match the selected scope')); return }
+    if (targets.some(item => !assets[item.name])) { report(new Error('Link the source images for every image to predict first')); return }
+    if (predictionScope === 'current' && image?.objects.length && !window.confirm('This prediction replaces the instances and keypoints of the current image (undoable). Continue?')) return
     setBusy(true)
     stopPrediction.current = false
     const changed = new Map<string, AnnotationImage>()
@@ -381,7 +643,7 @@ export function AnnotationPage() {
     try {
       for (let offset = 0; offset < targets.length && !stopPrediction.current; offset += 8) {
         const batch = targets.slice(offset, offset + 8)
-        setPredictionProgress(`正在预测 ${offset + 1}–${offset + batch.length} / ${targets.length}`)
+        setPredictionProgress(`Predicting ${offset + 1}–${offset + batch.length} / ${targets.length}`)
         const data = new FormData()
         data.append('jobId', predictionJob); data.append('confidence', String(confidence))
         data.append('names', JSON.stringify(batch.map(item => item.name)))
@@ -390,13 +652,13 @@ export function AnnotationPage() {
         const raw = await response.json()
         if (!response.ok) throw new Error(raw.error)
         const result = predictionsSchema.parse(raw.data)
-        if (result.task === 'pose' && project.keypointNames.length && JSON.stringify(project.keypointNames) !== JSON.stringify(result.keypointNames)) throw new Error('模型关键点名称或顺序与项目模板不同；请使用匹配的模板。')
+        if (result.task === 'pose' && project.keypointNames.length && JSON.stringify(project.keypointNames) !== JSON.stringify(result.keypointNames)) throw new Error('The model keypoint names or order differ from the project template; use a matching template.')
         nextLabels = [...new Set([...project.labels, ...result.labels])]
         if (result.task === 'pose') nextNames = result.keypointNames
-        if (result.images.length !== batch.length) throw new Error('模型没有返回本批全部图片')
+        if (result.images.length !== batch.length) throw new Error('The model did not return every image in this batch')
         for (const predicted of result.images) {
           const source = batch.find(item => item.name === predicted.source)
-          if (!source) throw new Error('模型返回了未知图片')
+          if (!source) throw new Error('The model returned an unknown image')
           changed.set(source.name, predictionToImage(source, result, predicted))
         }
       }
@@ -406,24 +668,33 @@ export function AnnotationPage() {
         edit(projectSchema.parse({ ...project, labels: nextLabels, keypointNames: nextNames, images: project.images.map(item => changed.get(item.name) || item) }))
         navigate(project.images.findIndex(item => changed.has(item.name)))
         setTool('select')
-        toast({ title: '预测已显示，等待人工审核', description: `${changed.size} 张图片。请调整框和点，并逐图确认；未确认的预测不能导入训练。` })
+        toast({ title: 'Predictions shown, pending review', description: `${changed.size} images. Adjust boxes and keypoints, then review each image; unreviewed predictions cannot be imported for training.` })
       }
       setBusy(false); setPredictionOpen(false); setPredictionProgress('')
     }
   }
-  if (user?.role !== 'admin') return <p className="text-muted-foreground">请使用管理员账号访问标注工具。</p>
+  if (user?.role !== 'admin') return <p className="text-muted-foreground">Sign in with an admin account to use the annotation tool.</p>
   const issues = image ? imageIssues(image, project.keypointNames) : []
 
   return (
+    <Tabs value={tab} onValueChange={value => setTab(value as 'sets' | 'editor')} className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="sets">Annotation sets</TabsTrigger>
+        <TabsTrigger value="editor">Editor</TabsTrigger>
+      </TabsList>
+      <TabsContent value="sets">
+        <AnnotationSetsPanel refresh={setsVersion} onOpen={openSavedSet} onNew={newAnnotationSet} />
+      </TabsContent>
+      <TabsContent value="editor">
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">定位标注 · OBB + 关键点</h1>
-          <p className="text-sm text-muted-foreground">{project.name} · {project.images.length} 张 · {dirty ? '有未保存修改' : '已保存 / 未修改'}</p>
-          {image?.prediction && <p className={`text-sm ${image.reviewed ? 'text-green-600' : 'text-amber-600'}`}>{image.reviewed ? '模型辅助标注 · 已人工确认' : '模型预测 · 待人工审核，尚不能用于训练'}</p>}
+          <h1 className="text-2xl font-bold">Localization annotation · OBB + keypoints</h1>
+          <p className="text-sm text-muted-foreground">{project.name} · {project.images.length} images · {dirty ? 'Unsaved changes' : 'Saved'}</p>
+          {image?.prediction && <p className={`text-sm ${image.reviewed ? 'text-green-600' : 'text-amber-600'}`}>{image.reviewed ? 'Model-assisted annotation · human-reviewed' : 'Model prediction · pending review, not usable for training yet'}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => setShowHelp(true)}>标注与训练指南</Button>
+          <Button variant="outline" onClick={() => setShowHelp(true)}>Annotation & training guide</Button>
           <Button variant="outline" disabled={busy} onClick={async () => {
             try {
               const response = await fetch('/api/annotation/projects')
@@ -431,21 +702,21 @@ export function AnnotationPage() {
               if (!response.ok) throw new Error(result.error)
               setServerProjects(result.data)
             } catch (error) { report(error) }
-          }}><FolderOpen className="mr-1 size-4" />打开已保存项目</Button>
-          <Button disabled={busy || !image} onClick={save}><Save className="mr-1 size-4" />{busy ? '处理中…' : '保存项目 Ctrl+S'}</Button>
-          <Button variant="outline" disabled={!image} onClick={exportProject}><Download className="mr-1 size-4" />导出项目</Button>
+          }}><FolderOpen className="mr-1 size-4" />Open saved project</Button>
+          <Button disabled={busy || !image} onClick={save}><Save className="mr-1 size-4" />{busy ? 'Working…' : 'Save project Ctrl+S'}</Button>
+          <Button variant="outline" disabled={!image} onClick={exportProject}><Download className="mr-1 size-4" />Export project</Button>
         </div>
       </div>
       <div className="grid gap-4 xl:grid-cols-[230px_minmax(0,1fr)_290px]" inert={busy}>
         <div className="space-y-3">
-          <Card><CardHeader className="pb-2"><CardTitle className="text-sm">项目与图片</CardTitle></CardHeader><CardContent className="space-y-3">
-            <Input aria-label="项目名称" value={project.name} onChange={e => edit({ ...project, name: e.target.value })} />
+          <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Project & images</CardTitle></CardHeader><CardContent className="space-y-3">
+            <Input aria-label="Project name" value={project.name} onChange={e => edit({ ...project, name: e.target.value })} />
             <label className="block cursor-pointer rounded border border-dashed p-3 text-center text-sm">
-              关联图片文件夹
+              Link image folder
               <input type="file" className="hidden" multiple {...{ webkitdirectory: '', directory: '' }}
                 disabled={busy} onChange={e => { void loadFolder(Array.from(e.target.files ?? [])); e.target.value = '' }} />
             </label>
-            <label className="block cursor-pointer text-sm underline">导入项目 JSON
+            <label className="block cursor-pointer text-sm underline">Import project JSON
               <input type="file" accept=".json" className="hidden" disabled={busy} onChange={async e => {
                 const file = e.target.files?.[0]
                 e.target.value = ''
@@ -453,42 +724,42 @@ export function AnnotationPage() {
                 try { loadProject(JSON.parse((await file.text()).replace(/^\uFEFF/, ''))) } catch (error) { report(error) }
               }} />
             </label>
-            <Button className="w-full" variant="outline" disabled={busy || !project.images.length} onClick={openPrediction}>模型预测预标注</Button>
-            <Button className="w-full" variant="outline" onClick={() => loadProject(newProject())}>新建项目</Button>
-            <Button className="w-full" variant="outline" onClick={() => { setLabelsDraft(project.labels.join('\n')); setPointsDraft(project.keypointNames.join('\n')); setSettings(true) }}>类别与关键点模板</Button>
-            <p className="text-xs text-muted-foreground">原图保留在本地。续标时先打开项目，再关联原图根目录。支持同目录同名 Labelme JSON。</p>
+            <Button className="w-full" variant="outline" disabled={busy || !project.images.length} onClick={openPrediction}>Model pre-labeling</Button>
+            <Button className="w-full" variant="outline" onClick={() => loadProject(newProject())}>New project</Button>
+            <Button className="w-full" variant="outline" onClick={() => { setLabelsDraft(project.labels.join('\n')); setPointsDraft(project.keypointNames.join('\n')); setSettings(true) }}>Classes & keypoint template</Button>
+            <p className="text-xs text-muted-foreground">Source images stay local. To resume, open the project first, then link the image root. Labelme JSON files sharing the image name in the same directory are supported.</p>
           </CardContent></Card>
-          <div className="max-h-[420px] space-y-1 overflow-auto rounded border p-1" aria-label="图片列表">
+          <div className="max-h-[420px] space-y-1 overflow-auto rounded border p-1" aria-label="Image list">
             {project.images.map((item, i) => <button key={item.name} className={`block w-full rounded p-2 text-left text-xs ${i === index ? 'bg-accent' : 'hover:bg-muted'}`} onClick={() => navigate(i)}>
               <span className="break-all">{item.reviewed ? '✓ ' : '○ '}{item.name}</span>
-              <span className="block text-muted-foreground">{item.objects.length} 个实例 · {splitNames[item.split]}{!assets[item.name] && ' · 缺少原图'}</span>
+              <span className="block text-muted-foreground">{item.objects.length} instances · {splitNames[item.split]}{!assets[item.name] && ' · image missing'}</span>
             </button>)}
           </div>
         </div>
         <div className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-center gap-2 rounded border p-2">
             {([
-              ['select', '选择/拖动', MousePointer2], ['rectangle', '水平框(2点)', Square],
-              ['obb', '旋转框(3点)', RotateCw], ['point', '关键点', Crosshair],
+              ['select', 'Select / drag', MousePointer2], ['rectangle', 'Axis-aligned box (2 points)', Square],
+              ['obb', 'Rotated box (3 points)', RotateCw], ['point', 'Keypoint', Crosshair],
             ] as const).map(([value, text, Icon]) => <Button key={value} size="sm" variant={tool === value ? 'default' : 'outline'} onClick={() => { cancelGesture(); setTool(value) }}>
               <Icon className="mr-1 size-4" />{text}
             </Button>)}
-            <Button size="icon" variant="outline" aria-label="撤销" disabled={!history.past.length} onClick={() => { cancelGesture(); dispatch({ type: 'undo' }) }}><Undo2 className="size-4" /></Button>
-            <Button size="icon" variant="outline" aria-label="重做" disabled={!history.future.length} onClick={() => { cancelGesture(); dispatch({ type: 'redo' }) }}><Redo2 className="size-4" /></Button>
-            <Button size="icon" variant="outline" aria-label="放大" onClick={() => setZoom(v => Math.min(20, v * 1.25))}><ZoomIn className="size-4" /></Button>
-            <Button size="icon" variant="outline" aria-label="缩小" onClick={() => setZoom(v => Math.max(0.02, v / 1.25))}><ZoomOut className="size-4" /></Button>
-            <Button variant="outline" size="sm" onClick={() => fit()}>适应 {Math.round(zoom * 100)}%</Button>
+            <Button size="icon" variant="outline" aria-label="Undo" disabled={!history.past.length} onClick={() => { cancelGesture(); dispatch({ type: 'undo' }) }}><Undo2 className="size-4" /></Button>
+            <Button size="icon" variant="outline" aria-label="Redo" disabled={!history.future.length} onClick={() => { cancelGesture(); dispatch({ type: 'redo' }) }}><Redo2 className="size-4" /></Button>
+            <Button size="icon" variant="outline" aria-label="Zoom in" onClick={() => zoomBy(1.25)}><ZoomIn className="size-4" /></Button>
+            <Button size="icon" variant="outline" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.25)}><ZoomOut className="size-4" /></Button>
+            <Button variant="outline" size="sm" onClick={() => fit()}>Fit {Math.round(zoom * 100)}%</Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            {tool === 'obb' ? `依次点击第一条边的两端，再点击对边位置（${pending.length}/3）；Esc 取消。` :
-              tool === 'rectangle' ? '依次点击对角两点；Esc 取消。' :
-                tool === 'point' ? `在选中实例上放置 ${activeKey || '关键点'}；可重复点击修正。` : '拖动框移动；拖动方形手柄缩放，旋转手柄调角度（Shift 吸附 15°）；拖动关键点修正位置。'}
-            {' '}Alt + 拖动或鼠标中键平移；滚动条浏览放大后的图片。
+            {tool === 'obb' ? `Click both ends of the first edge, then click the opposite side (${pending.length}/3); Esc cancels.` :
+              tool === 'rectangle' ? 'Click two opposite corners; Esc cancels.' :
+                tool === 'point' ? `Place ${activeKey || 'keypoint'} on the selected instance; click again to adjust.` : 'Drag the box to move; drag square handles to resize and the rotation handle to rotate (Shift snaps 15°); drag keypoints to reposition.'}
+            {' '}Alt + drag or middle-button to pan; +/− zoom, 0 fit, 1 100%, Ctrl+wheel zooms at the cursor; use the scrollbars when zoomed in.
           </p>
           <div ref={viewport} className="relative h-[600px] overflow-auto rounded border bg-slate-950">
             {image && asset ? <svg ref={svg} width={image.width * zoom} height={image.height * zoom} viewBox={`0 0 ${image.width} ${image.height}`}
               className="block touch-none select-none" style={{ maxWidth: 'none', cursor: tool === 'select' ? 'default' : 'crosshair' }}
-              aria-label="标注画布" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
+              aria-label="Annotation canvas" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
               onPointerCancel={cancelGesture} onContextMenu={e => e.preventDefault()}>
               <image href={asset.url} width={image.width} height={image.height} />
               {image.objects.map((object, i) => {
@@ -504,13 +775,13 @@ export function AnnotationPage() {
                       const angle = shown.angle * Math.PI / 180
                       const x = shown.cx + sx * shown.width / 2 * Math.cos(angle) - sy * shown.height / 2 * Math.sin(angle)
                       const y = shown.cy + sx * shown.width / 2 * Math.sin(angle) + sy * shown.height / 2 * Math.cos(angle)
-                      return <rect key={`${sx},${sy}`} data-handle={`${sx},${sy}`} aria-label={`缩放手柄 ${sx},${sy}`} x={x - 5 / zoom} y={y - 5 / zoom} width={10 / zoom} height={10 / zoom} fill="#fff" stroke={color} strokeWidth={1.5 / zoom} style={{ cursor: 'nwse-resize' }} />
+                      return <rect key={`${sx},${sy}`} data-handle={`${sx},${sy}`} aria-label={`Resize handle ${sx},${sy}`} x={x - 5 / zoom} y={y - 5 / zoom} width={10 / zoom} height={10 / zoom} fill="#fff" stroke={color} strokeWidth={1.5 / zoom} style={{ cursor: 'nwse-resize' }} />
                     })}
                     {(() => {
                       const angle = shown.angle * Math.PI / 180
                       const x = Math.max(9 / zoom, Math.min(image.width - 9 / zoom, shown.cx + (shown.height / 2 + 30 / zoom) * Math.sin(angle)))
                       const y = Math.max(9 / zoom, Math.min(image.height - 9 / zoom, shown.cy - (shown.height / 2 + 30 / zoom) * Math.cos(angle)))
-                      return <><line x1={(corners[0].x + corners[1].x) / 2} y1={(corners[0].y + corners[1].y) / 2} x2={x} y2={y} stroke={color} strokeWidth={1 / zoom} pointerEvents="none" /><circle data-handle="rotate" aria-label="旋转手柄" cx={x} cy={y} r={6 / zoom} fill="#facc15" stroke="#000" strokeWidth={1 / zoom} style={{ cursor: 'grab' }} /></>
+                      return <><line x1={(corners[0].x + corners[1].x) / 2} y1={(corners[0].y + corners[1].y) / 2} x2={x} y2={y} stroke={color} strokeWidth={1 / zoom} pointerEvents="none" /><circle data-handle="rotate" aria-label="Rotation handle" cx={x} cy={y} r={6 / zoom} fill="#facc15" stroke="#000" strokeWidth={1 / zoom} style={{ cursor: 'grab' }} /></>
                     })()}
                   </>}
                   {Object.entries(shown.keypoints).filter(([, p]) => p.visibility > 0).map(([name, p]) => <g key={name}>
@@ -520,108 +791,108 @@ export function AnnotationPage() {
                 </g>
               })}
               {pending.length > 0 && <polyline points={draftCorners().map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#38bdf8" strokeWidth={2 / zoom} strokeDasharray={`${5 / zoom} ${4 / zoom}`} pointerEvents="none" />}
-            </svg> : <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-300">{image ? '标注已载入，请关联原图文件夹。' : '选择图片文件夹开始。建议按采集批次建立子目录。'}</div>}
+            </svg> : <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-300">{image ? 'Annotations loaded; link the image folder.' : 'Choose an image folder to start. Subdirectories per capture batch are recommended.'}</div>}
           </div>
           <div className="flex items-center justify-between gap-2">
-            <Button variant="outline" disabled={index <= 0} onClick={() => navigate(index - 1)}>上一张 ←</Button>
-            <span className="truncate text-xs">{image ? `${index + 1}/${project.images.length} · ${image.name} · ${image.width}×${image.height}` : '未载入'}</span>
-            <Button variant="outline" disabled={index >= project.images.length - 1} onClick={() => navigate(index + 1)}>下一张 →</Button>
+            <Button variant="outline" disabled={index <= 0} onClick={() => navigate(index - 1)}>Prev ←</Button>
+            <span className="truncate text-xs">{image ? `${index + 1}/${project.images.length} · ${image.name} · ${image.width}×${image.height}` : 'Not loaded'}</span>
+            <Button variant="outline" disabled={index >= project.images.length - 1} onClick={() => navigate(index + 1)}>Next →</Button>
           </div>
           {image && <Card><CardContent className="space-y-3 pt-4">
             <div className="grid gap-3 sm:grid-cols-3">
-              <label className="space-y-1 text-xs">采集批次（同工件连续照片用同一批次）
-                <Input value={image.group} onChange={e => editImage({ ...image, group: e.target.value })} placeholder="例如 lot_01_camera_A" />
+              <label className="space-y-1 text-xs">Capture batch (consecutive shots of the same workpiece share a batch)
+                <Input value={image.group} onChange={e => editImage({ ...image, group: e.target.value })} placeholder="e.g. lot_01_camera_A" />
               </label>
-              <label className="space-y-1 text-xs">数据划分
+              <label className="space-y-1 text-xs">Split
                 <select className={selectClass} value={image.split} onChange={e => editImage({ ...image, split: e.target.value as Split })}>
                   {Object.entries(splitNames).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
                 </select>
               </label>
               <Button className="self-end" variant="outline" disabled={!image.group} onClick={() => {
                 edit({ ...project, images: project.images.map(v => v.group === image.group ? { ...v, split: image.split } : v) })
-              }}>将划分应用到同批次</Button>
+              }}>Apply split to the same batch</Button>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Button variant={image.reviewed ? 'secondary' : 'default'} disabled={!asset} onClick={() => editImage({ ...image, reviewed: !image.reviewed })}>
-                {image.reviewed ? '✓ 已确认（点击撤回）' : image.objects.length ? '确认本图标注完成' : '确认本图没有目标'}
+                {image.reviewed ? '✓ Reviewed (click to unmark)' : image.objects.length ? 'Mark image reviewed' : 'Mark image reviewed (no targets)'}
               </Button>
-              <Button variant="outline" onClick={() => setValidation(projectIssues(project, false))}>检查 OBB 数据</Button>
-              <Button variant="outline" onClick={() => setValidation(projectIssues(project, true))}>检查 Pose 数据</Button>
+              <Button variant="outline" onClick={() => setValidation(projectIssues(project, false))}>Check OBB data</Button>
+              <Button variant="outline" onClick={() => setValidation(projectIssues(project, true))}>Check Pose data</Button>
             </div>
-            {issues.length > 0 && <p className="text-xs text-amber-600">{issues.slice(0, 3).join('；')}{issues.length > 3 ? `；另有 ${issues.length - 3} 项` : ''}</p>}
+            {issues.length > 0 && <p className="text-xs text-amber-600">{issues.slice(0, 3).join('; ')}{issues.length > 3 ? `; ${issues.length - 3} more` : ''}</p>}
           </CardContent></Card>}
         </div>
         <div className="space-y-3">
-          <Card><CardHeader className="pb-2"><CardTitle className="text-sm">实例</CardTitle></CardHeader><CardContent className="space-y-3">
-            <label className="text-xs">新框类别
+          <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Instances</CardTitle></CardHeader><CardContent className="space-y-3">
+            <label className="text-xs">New box class
               <select className={selectClass} value={activeLabel} onChange={e => setLabel(e.target.value)}>{project.labels.map(v => <option key={v}>{v}</option>)}</select>
             </label>
             <div className="max-h-40 space-y-1 overflow-auto">
               {image?.objects.map((o, i) => <button key={o.id} className={`block w-full rounded p-2 text-left text-xs ${selectedId === o.id ? 'bg-accent' : 'hover:bg-muted'}`} onClick={() => { cancelGesture(); setSelectedId(o.id); setTool('select') }}>
-                #{i + 1} {o.label} · {o.kind === 'obb' ? '旋转框' : '水平框'} · {Object.keys(o.keypoints).length}/{project.keypointNames.length} 点
+                #{i + 1} {o.label} · {o.kind === 'obb' ? 'rotated box' : 'box'} · {Object.keys(o.keypoints).length}/{project.keypointNames.length} pts
               </button>)}
             </div>
             {selected && <>
-              <select aria-label="选中实例类别" className={selectClass} value={selected.label} onChange={e => editObject({ ...selected, label: e.target.value })}>{project.labels.map(v => <option key={v}>{v}</option>)}</select>
+              <select aria-label="Selected instance class" className={selectClass} value={selected.label} onChange={e => editObject({ ...selected, label: e.target.value })}>{project.labels.map(v => <option key={v}>{v}</option>)}</select>
               <div className="grid grid-cols-2 gap-2">
-                {([['cx', '中心 X'], ['cy', '中心 Y'], ['width', '宽'], ['height', '高'], ['angle', '顺时针角度 °']] as const).map(([field, text]) => <label key={`${selected.id}-${field}-${selected[field]}`} className="text-xs">{text}
+                {([['cx', 'Center X'], ['cy', 'Center Y'], ['width', 'Width'], ['height', 'Height'], ['angle', 'Clockwise angle °']] as const).map(([field, text]) => <label key={`${selected.id}-${field}-${selected[field]}`} className="text-xs">{text}
                   <Input type="number" step="0.1" defaultValue={Number(selected[field].toFixed(3))} onBlur={e => {
                     const value = Number(e.target.value)
-                    if (!e.target.value || !Number.isFinite(value) || ((field === 'width' || field === 'height') && value < 1) || (field === 'angle' && Math.abs(value) > 180)) { e.target.value = String(selected[field]); report(new Error('请输入有效数值；宽高 ≥ 1，角度在 -180 到 180 之间')); return }
+                    if (!e.target.value || !Number.isFinite(value) || ((field === 'width' || field === 'height') && value < 1) || (field === 'angle' && Math.abs(value) > 180)) { e.target.value = String(selected[field]); report(new Error('Enter a valid number; width/height ≥ 1, angle between -180 and 180')); return }
                     if (value !== selected[field]) editObject({ ...selected, [field]: value, kind: field === 'angle' ? 'obb' : selected.kind })
                   }} />
                 </label>)}
               </div>
-              <p className="text-xs text-muted-foreground">缩放/旋转手柄只调整框，特征点保留原图位置；整体移动会同时移动框和点。每次调整可撤销。</p>
-              <Button variant="destructive" size="sm" onClick={removeSelected}><Trash2 className="mr-1 size-4" />删除实例和关联点</Button>
+              <p className="text-xs text-muted-foreground">Resize/rotation handles change the box only; keypoints keep their image positions. Moving the box moves its keypoints too. Every adjustment is undoable.</p>
+              <Button variant="destructive" size="sm" onClick={removeSelected}><Trash2 className="mr-1 size-4" />Delete instance & keypoints</Button>
             </>}
           </CardContent></Card>
-          <Card><CardHeader className="pb-2"><CardTitle className="text-sm">关键点 · 绑定选中实例</CardTitle></CardHeader><CardContent className="space-y-3">
-            <p className="text-xs text-muted-foreground">先选名称，再点击图像放点。0 = 无法确定；1 = 遮挡但位置可确定；2 = 可见。空白表示尚未处理。</p>
-            {!selected && <p className="rounded bg-muted p-3 text-sm">请先在图中或实例列表中选择一个工件。</p>}
+          <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Keypoints · bound to selected instance</CardTitle></CardHeader><CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">Pick a name, then click the image to place it. 0 = cannot determine; 1 = occluded but position known; 2 = visible. Blank means not yet handled.</p>
+            {!selected && <p className="rounded bg-muted p-3 text-sm">Select a workpiece on the canvas or in the instance list first.</p>}
             {selected && project.keypointNames.map(name => {
               const point = selected?.keypoints[name]
               return <div key={name} className="space-y-1 rounded border p-2">
-                <button className={`text-sm ${tool === 'point' && activeKey === name ? 'font-bold text-primary' : ''}`} disabled={!selected} onClick={() => { cancelGesture(); setKeypointName(name); setTool('point') }}>{name} {tool === 'point' && activeKey === name ? '← 放置中' : ''}</button>
-                <select aria-label={`${name} 可见性`} className={selectClass} value={point?.visibility ?? ''} disabled={!selected} onChange={e => {
+                <button className={`text-sm ${tool === 'point' && activeKey === name ? 'font-bold text-primary' : ''}`} disabled={!selected} onClick={() => { cancelGesture(); setKeypointName(name); setTool('point') }}>{name} {tool === 'point' && activeKey === name ? '← placing' : ''}</button>
+                <select aria-label={`${name} visibility`} className={selectClass} value={point?.visibility ?? ''} disabled={!selected} onChange={e => {
                   if (!selected) return
                   const points = { ...selected.keypoints }
                   if (e.target.value === '') delete points[name]
                   else if (e.target.value === '0') points[name] = { x: 0, y: 0, visibility: 0 }
-                  else if (!point || point.visibility === 0) { setKeypointName(name); setTool('point'); report(new Error('请先在图像上放置该点，再设置可见性')); return }
+                  else if (!point || point.visibility === 0) { setKeypointName(name); setTool('point'); report(new Error('Place the keypoint on the image before setting its visibility')); return }
                   else points[name] = { ...point, visibility: Number(e.target.value) as 1 | 2 }
                   editObject({ ...selected, keypoints: points })
                 }}>
-                  <option value="">待标注</option><option value="2">2 · 可见</option><option value="1">1 · 遮挡，位置确定</option><option value="0">0 · 无法确定 / 不适用</option>
+                  <option value="">Pending</option><option value="2">2 · Visible</option><option value="1">1 · Occluded, position known</option><option value="0">0 · Cannot determine / N/A</option>
                 </select>
                 {point && point.visibility > 0 && <p className="text-xs text-muted-foreground">({point.x.toFixed(2)}, {point.y.toFixed(2)}) px</p>}
               </div>
             })}
-            <Button className="w-full" variant="outline" disabled={!image} onClick={() => image && download(image.name.split('/').pop()!.replace(/\.[^.]+$/, '.json'), toLabelme(image, project.keypointNames))}>导出当前图 Labelme</Button>
+            <Button className="w-full" variant="outline" disabled={!image} onClick={() => image && download(image.name.split('/').pop()!.replace(/\.[^.]+$/, '.json'), toLabelme(image, project.keypointNames))}>Export current image as Labelme</Button>
           </CardContent></Card>
         </div>
       </div>
-      <Dialog open={predictionOpen} onOpenChange={open => { if (!busy) setPredictionOpen(open) }}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>模型预测预标注</DialogTitle><DialogDescription>结果直接显示在画布上，保持“待审核”；逐图确认后才可作为真实标签导入训练。</DialogDescription></DialogHeader>
+      <Dialog open={predictionOpen} onOpenChange={open => { if (!busy) setPredictionOpen(open) }}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Model pre-labeling</DialogTitle><DialogDescription>Results appear on the canvas as "pending review"; each image must be reviewed before it can be imported as ground truth for training.</DialogDescription></DialogHeader>
         <fieldset disabled={busy} className="space-y-3">
-          <label className="block text-sm">已训练模型<select aria-label="预标注模型" className={selectClass} value={predictionJob} onChange={event => setPredictionJob(event.target.value)}><option value="">选择模型</option>{models.map(model => <option key={model.id} value={model.id}>{model.name} · {model.framework}</option>)}</select></label>
-          {!models.length && <p className="text-sm text-muted-foreground">尚无可用的 OBB/Pose 最佳检查点。请先在 Jobs 完成训练。</p>}
-          <label className="block text-sm">范围<select aria-label="预测范围" className={selectClass} value={predictionScope} onChange={event => setPredictionScope(event.target.value)}><option value="empty">未标注且未确认的图片（保留人工标签）</option><option value="current">当前图（替换当前实例，可撤销）</option></select></label>
-          <label className="block text-sm">目标置信度阈值<Input aria-label="预测置信度" type="number" min={0.01} max={0.99} step={0.05} value={confidence} onChange={event => setConfidence(Number(event.target.value))} /></label>
-          <p className="text-xs text-muted-foreground">Pose 点置信度低于 0.5 时保留为待标注；它不代表“不可见”。原图仅上传到临时预测目录，任务结束后清理。</p>
-          <Button disabled={!predictionJob || !Number.isFinite(confidence) || confidence < 0.01 || confidence > 0.99} onClick={predict}>开始预测</Button>
+          <label className="block text-sm">Trained model<select aria-label="Pre-labeling model" className={selectClass} value={predictionJob} onChange={event => setPredictionJob(event.target.value)}><option value="">Select model</option>{models.map(model => <option key={model.id} value={model.id}>{model.name} · {model.framework}{model.checkpoint ? ` · ${model.checkpoint}` : ''}</option>)}</select></label>
+          {!models.length && <p className="text-sm text-muted-foreground">No PaddleDetection/OBB/Pose checkpoints available yet. Finish a training job in Jobs first.</p>}
+          <label className="block text-sm">Scope<select aria-label="Prediction scope" className={selectClass} value={predictionScope} onChange={event => setPredictionScope(event.target.value)}><option value="empty">Unannotated, unreviewed images (keep human labels)</option><option value="current">Current image (replace instances, undoable)</option></select></label>
+          <label className="block text-sm">Confidence threshold<Input aria-label="Prediction confidence" type="number" min={0.01} max={0.99} step={0.05} value={confidence} onChange={event => setConfidence(Number(event.target.value))} /></label>
+          <p className="text-xs text-muted-foreground">Detection models produce axis-aligned boxes; pose keypoints below 0.5 confidence stay pending — that does not mean "invisible". Images are uploaded to a temporary prediction directory and cleaned up afterwards.</p>
+          <Button disabled={!predictionJob || !Number.isFinite(confidence) || confidence < 0.01 || confidence > 0.99} onClick={predict}>Start prediction</Button>
         </fieldset>
-        {busy && <div className="space-y-2"><p>{predictionProgress}</p><Button variant="outline" onClick={() => { stopPrediction.current = true; setPredictionProgress('当前批次完成后停止，保留已完成结果') }}>停止后续图片</Button></div>}
+        {busy && <div className="space-y-2"><p>{predictionProgress}</p><Button variant="outline" onClick={() => { stopPrediction.current = true; setPredictionProgress('Stopping after the current batch; completed results are kept') }}>Stop remaining images</Button></div>}
       </DialogContent></Dialog>
-      <Dialog open={settings} onOpenChange={setSettings}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>类别与关键点模板</DialogTitle><DialogDescription>每行一个名称，顺序就是训练类别 / 关键点顺序。模板应用于项目内所有类别；结构不同的工件建议分项目标注。</DialogDescription></DialogHeader>
+      <Dialog open={settings} onOpenChange={setSettings}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>Classes & keypoint template</DialogTitle><DialogDescription>One name per line; the order defines the training class / keypoint order. The template applies to every class in the project; annotate workpieces with different structures in separate projects.</DialogDescription></DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-sm">类别<textarea className="mt-1 h-48 w-full rounded border bg-background p-2" value={labelsDraft} onChange={e => setLabelsDraft(e.target.value)} /></label>
-          <label className="text-sm">关键点<textarea className="mt-1 h-48 w-full rounded border bg-background p-2" value={pointsDraft} onChange={e => setPointsDraft(e.target.value)} /></label>
+          <label className="text-sm">Classes<textarea className="mt-1 h-48 w-full rounded border bg-background p-2" value={labelsDraft} onChange={e => setLabelsDraft(e.target.value)} /></label>
+          <label className="text-sm">Keypoints<textarea className="mt-1 h-48 w-full rounded border bg-background p-2" value={pointsDraft} onChange={e => setPointsDraft(e.target.value)} /></label>
         </div>
-        <p className="text-xs text-muted-foreground">datum_a/b/c 是占位名，请在开始标注前替换为明确的孔位、缺口等名称。命名按工件自身结构，不随图像上下左右改变。已使用的名称不能直接删除或改名；修改模板后所有图片需重新确认。</p>
-        <Button onClick={changeTemplate}>应用模板</Button>
+        <p className="text-xs text-muted-foreground">datum_a/b/c are placeholders — replace them with meaningful names (e.g. hole, notch) before annotating. Name by workpiece structure, not by image orientation. Names already in use cannot be deleted or renamed directly; after changing the template all images must be re-reviewed.</p>
+        <Button onClick={changeTemplate}>Apply template</Button>
       </DialogContent></Dialog>
-      <Dialog open={serverProjects !== null} onOpenChange={open => !open && setServerProjects(null)}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>打开我的标注项目</DialogTitle><DialogDescription>恢复标注后，重新关联原图文件夹即可续标。</DialogDescription></DialogHeader>
-        <div className="max-h-96 space-y-2 overflow-auto">{serverProjects?.length === 0 && <p className="text-sm">还没有保存的项目。</p>}
+      <Dialog open={serverProjects !== null} onOpenChange={open => !open && setServerProjects(null)}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Open my annotation project</DialogTitle><DialogDescription>After restoring, link the image folder again to resume annotating.</DialogDescription></DialogHeader>
+        <div className="max-h-96 space-y-2 overflow-auto">{serverProjects?.length === 0 && <p className="text-sm">No saved projects yet.</p>}
           {serverProjects?.map(p => <Button key={p.id} variant="outline" className="h-auto w-full justify-start whitespace-normal text-left" onClick={async () => {
             try {
               const response = await fetch(`/api/annotation/projects?id=${encodeURIComponent(p.id)}`)
@@ -629,24 +900,27 @@ export function AnnotationPage() {
               if (!response.ok) throw new Error(result.error)
               loadProject(result.data)
             } catch (error) { report(error) }
-          }}>{p.name} · {p.images} 张 · {new Date(p.modified).toLocaleString()}</Button>)}
+          }}>{p.name} · {p.images} images · {new Date(p.modified).toLocaleString()}</Button>)}
         </div>
       </DialogContent></Dialog>
-      <Dialog open={validation !== null} onOpenChange={open => !open && setValidation(null)}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>训练数据检查</DialogTitle><DialogDescription>草稿可以保存；准备训练数据时，以下问题必须解决。</DialogDescription></DialogHeader>
-        <div className="max-h-96 overflow-auto text-sm">{validation?.length === 0 ? <p>检查通过。导出项目后，使用数据准备命令生成训练目录。</p> : <ul className="list-disc space-y-1 pl-5">{validation?.slice(0, 150).map((issue, i) => <li key={i}>{issue}</li>)}</ul>}
-          {(validation?.length ?? 0) > 150 && <p>共 {validation?.length} 项，显示前 150 项。</p>}
+      <Dialog open={validation !== null} onOpenChange={open => !open && setValidation(null)}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>Training data check</DialogTitle><DialogDescription>Drafts can be saved; these issues must be resolved before preparing training data.</DialogDescription></DialogHeader>
+        <div className="max-h-96 overflow-auto text-sm">{validation?.length === 0 ? <p>All checks passed. Export the project, then run the data preparation command to generate the training directory.</p> : <ul className="list-disc space-y-1 pl-5">{validation?.slice(0, 150).map((issue, i) => <li key={i}>{issue}</li>)}</ul>}
+          {(validation?.length ?? 0) > 150 && <p>{validation?.length} issues total; showing the first 150.</p>}
         </div>
       </DialogContent></Dialog>
-      <Dialog open={showHelp} onOpenChange={setShowHelp}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>从标注到训练</DialogTitle><DialogDescription>旋转框定位工件；语义关键点定位孔位、缺口与姿态。</DialogDescription></DialogHeader>
+      <Dialog open={showHelp} onOpenChange={setShowHelp}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>From annotation to training</DialogTitle><DialogDescription>Rotated boxes localize workpieces; semantic keypoints locate holes, notches and pose.</DialogDescription></DialogHeader>
         <ol className="list-decimal space-y-3 pl-5 text-sm">
-          <li>先定义关键点名称和判定标准，再按采集批次载入图片；对称工件需要可区分头尾的特征点。</li>
-          <li>每个实例绘制一个框，逐点处理可见性。透视下仍标真实图像位置；OBB 不是透视四边形。</li>
-          <li>同批次保持同一划分，分别准备 train、val、test。确认每张图片，包含没有目标的负样本。</li>
-          <li>保存并导出项目，保留原图。在仓库目录执行下面的命令；具体训练、验证、推理步骤见 docs/LOCALIZATION_WORKFLOW.md。</li>
+          <li>Define keypoint names and criteria first, then load images by capture batch; symmetric workpieces need keypoints that distinguish head from tail.</li>
+          <li>Draw one box per instance and set each keypoint's visibility. Mark true image positions under perspective; an OBB is not a perspective quadrilateral.</li>
+          <li>Keep one split per batch and prepare train, val and test separately. Review every image, including negatives with no targets.</li>
+          <li>Save and export the project and keep the source images. Run the command below in the repo directory; see docs/LOCALIZATION_WORKFLOW.md for training, validation and inference steps.</li>
         </ol>
         <pre className="overflow-auto rounded bg-muted p-3 text-xs">python tools/localization/prepare.py --project localization-project.json --images D:/images --output D:/localization-data --task both</pre>
-        <p className="text-sm text-muted-foreground">在 Datasets 点击“导入定位标注”，创建数据集和三段配置；在 Jobs 启动 TorchOBB / TorchPose 训练。训练完成后可回本页做模型预标注。标注项目不包含原图，浏览器关闭前请保存。</p>
+        <p className="text-sm text-muted-foreground">In Datasets click "Import localization annotations" to create the dataset and configs; start TorchOBB / TorchPose training in Jobs. Return here afterwards for model pre-labeling. Projects do not include source images — save before closing the browser.</p>
+        <p className="text-sm">Shortcuts: Ctrl+S save · Ctrl+Z / Ctrl+Y undo/redo · ←/→ previous/next image · Delete removes the selected instance · +/− zoom · 0 fit · 1 100% · Ctrl+wheel zooms at the cursor · Alt+drag or middle-button pans.</p>
       </DialogContent></Dialog>
     </div>
+      </TabsContent>
+    </Tabs>
   )
 }

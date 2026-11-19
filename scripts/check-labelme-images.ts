@@ -127,7 +127,7 @@ async function main() {
   assert.ok(!containsPoint(sample.objects[0], { x: 0, y: 0 }));
   const nonRectangle = structuredClone(exported);
   nonRectangle.shapes[0].points[2][0] += 5;
-  assert.throws(() => fromLabelme(nonRectangle, sample.name), /非矩形/);
+  assert.throws(() => fromLabelme(nonRectangle, sample.name), /non-rectangular/);
   const orphan = structuredClone(exported);
   orphan.shapes.find(s => s.shape_type === "point")!.group_id = 999;
   assert.throws(() => fromLabelme(orphan, sample.name), /group_id/);
@@ -135,9 +135,9 @@ async function main() {
   assert.equal(localizationConversionError({ shapes: [{ shape_type: "rectangle" }] }), null);
   const outOfBounds = structuredClone(sample);
   outOfBounds.objects[0].cx = -100;
-  assert.ok(imageIssues(outOfBounds, keys).some(s => s.includes("超出")));
+  assert.ok(imageIssues(outOfBounds, keys).some(s => s.includes("outside")));
   const blank = { ...sample, objects: [], reviewed: false };
-  assert.ok(imageIssues(blank, keys).some(s => s.includes("确认")));
+  assert.ok(imageIssues(blank, keys).some(s => s.includes("reviewed")));
   const project = {
     format: "autotrain-localization", version: 1, id: "6cc338da-dfeb-44c8-a345-1043910a392f",
     name: "fixture", labels: ["slider"], keypointNames: keys, images: [sample],
@@ -165,7 +165,7 @@ async function main() {
   const pending = predictionToImage(sample, predictions, predictions.images[0]);
   assert.equal(pending.reviewed, false, "predictions must never inherit an existing human confirmation");
   assert.equal(pending.objects[0].prediction?.jobId, "trained-job");
-  assert.throws(() => predictionToImage(sample, predictions, { ...predictions.images[0], width: sample.width + 1 }), /尺寸/);
+  assert.throws(() => predictionToImage(sample, predictions, { ...predictions.images[0], width: sample.width + 1 }), /dimensions/);
   check("mouse geometry preserves anchors/keypoints and predictions always require review", true);
   const uploadIndex = {
     byName: new Map([["a.png", ["batch1/a.png", "batch2/a.png"]], ["b.png", ["batch1/b.png"]]]),

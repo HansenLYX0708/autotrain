@@ -15,6 +15,7 @@ import { mergeYamlConfigs, setPaddleClasOutputDir, setTopLevelSaveDir } from "@/
 import { repairCocoAnnotationAreas } from "@/lib/coco-annotations";
 import { applyDatasetClasses } from "@/lib/dataset-classes";
 import { isInside } from "@/lib/safe-path";
+import { resolveDatasetRoot } from "@/lib/dataset-paths";
 import {
   asConfigFramework,
   countsIterations,
@@ -322,10 +323,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (dataset.format === "COCO" && dataset.datasetDir && userDatabasePath) {
-      const userDataRoot = path.join(userDatabasePath, currentUser.username);
-      const datasetRoot = path.isAbsolute(dataset.datasetDir)
-        ? dataset.datasetDir
-        : path.join(userDataRoot, dataset.datasetDir);
+      // Relative dataset dirs live under the dataset OWNER's folder, which
+      // differs from the caller's when an admin runs a job on another user's
+      // dataset.
+      const owner = dataset.userId
+        ? await db.user.findUnique({ where: { id: dataset.userId }, select: { username: true } })
+        : null;
+      const userDataRoot = path.join(userDatabasePath, owner?.username ?? currentUser.username);
+      const datasetRoot = resolveDatasetRoot(dataset.datasetDir, userDatabasePath, owner?.username ?? currentUser.username) ?? dataset.datasetDir;
       if (isInside(userDataRoot, datasetRoot)) {
         try {
           for (const annotationPath of [dataset.trainAnnoPath, dataset.evalAnnoPath]) {
@@ -363,8 +368,8 @@ export async function POST(request: NextRequest) {
       if (usedStorage + requiredSize > maxQuota) {
         return NextResponse.json(
           {
-            error: "存储空间不足",
-            message: `您已使用 ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB，配额为 ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB。训练任务需要至少 5 GB 空间来存储模型和日志。请联系管理员扩容或删除不需要的数据。`,
+            error: "Insufficient storage",
+            message: `You have used ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB of your ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB quota. Training jobs need at least 5 GB for models and logs. Contact an administrator to expand the quota or delete unused data.`,
             usedStorage,
             maxStorageQuota: maxQuota,
             requiredSpace: requiredSize

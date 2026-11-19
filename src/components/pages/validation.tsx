@@ -58,6 +58,7 @@ import {
   FileDown,
 } from 'lucide-react'
 import { DeployedModelsPanel, type DeployedModel } from '@/components/deployed-models-panel'
+import { ServerPathPicker } from '@/components/server-path-picker'
 
 // Types
 interface TrainingJob {
@@ -179,6 +180,11 @@ interface EvalMetrics {
     matched: number; targets: number; falsePositives: number; missedTargets: number;
     centerErrorPx?: { count: number; mean: number | null; p95: number | null };
     angleErrorDegMod180?: { count: number; mean: number | null; p95: number | null };
+    angleDiagnostics?: {
+      evaluated: number; nearSquareTargetsExcluded: number; nearSquarePredictionsIncluded: number;
+      within1Deg: number; within3Deg: number; within5Deg: number;
+      worstMatches: Array<{ source: string; targetIndex: number; angleErrorDeg: number; confidence: number; targetAspectRatio: number; predictedAspectRatio: number; predictionNearSquare: boolean }>;
+    };
     keypointErrorPx?: Record<string, { count: number; mean: number | null; p95: number | null; targets?: number; missed?: number }>;
   }
   imageAuroc?: number | null
@@ -278,6 +284,20 @@ function MetricsDisplay({ result, compact = false }: { result: EvalMetrics; comp
         <p>Matched {errors.matched}/{errors.targets}; missed {errors.missedTargets}; false positives {errors.falsePositives} (confidence 0.25, matching IoU 0.5).</p>
         {errors.centerErrorPx && <p>Center error: mean {display(errors.centerErrorPx.mean)} px · P95 {display(errors.centerErrorPx.p95)} px</p>}
         {errors.angleErrorDegMod180 && <p>Long-edge angle error (mod 180°): mean {display(errors.angleErrorDegMod180.mean)}° · P95 {display(errors.angleErrorDegMod180.p95)}°</p>}
+        {errors.angleDiagnostics && <div className="space-y-2">
+          <p>Angle ≤1°: {errors.angleDiagnostics.within1Deg}/{errors.angleDiagnostics.evaluated} · ≤3°: {errors.angleDiagnostics.within3Deg}/{errors.angleDiagnostics.evaluated} · ≤5°: {errors.angleDiagnostics.within5Deg}/{errors.angleDiagnostics.evaluated}</p>
+          <p className="text-muted-foreground">{errors.angleDiagnostics.nearSquareTargetsExcluded} near-square targets excluded from angle statistics; {errors.angleDiagnostics.nearSquarePredictionsIncluded} near-square predictions remain included. Detection confidence does not measure angle accuracy.</p>
+          <details><summary className="cursor-pointer">Largest angle errors</summary>
+            <div className="overflow-x-auto"><table className="w-full text-xs mt-2">
+              <thead><tr><th className="text-left">Image / instance</th><th>Error</th><th>GT / predicted aspect</th><th>Confidence</th></tr></thead>
+              <tbody>{errors.angleDiagnostics.worstMatches.map(row => <tr key={`${row.source}:${row.targetIndex}`}>
+                <td>{row.source} / #{row.targetIndex + 1}</td><td className="text-center">{display(row.angleErrorDeg)}°</td>
+                <td className="text-center">{display(row.targetAspectRatio)} / {display(row.predictedAspectRatio)}{row.predictionNearSquare ? ' (near square)' : ''}</td>
+                <td className="text-center">{display(row.confidence, true)}</td>
+              </tr>)}</tbody>
+            </table></div>
+          </details>
+        </div>}
         {Object.entries(errors.keypointErrorPx || {}).map(([name, values]) => <p key={name}>{name}: mean {display(values.mean)} px · P95 {display(values.p95)} px · {values.count}/{values.targets ?? '—'} points · missed {values.missed ?? '—'}</p>)}
         <p className="text-muted-foreground">Pixel errors cover matched instances only. Missed targets remain listed above.</p>
       </div>}
@@ -1494,9 +1514,7 @@ export function ValidationPage() {
                       value={inferInputPath}
                       onChange={(e) => setInferInputPath(e.target.value)}
                     />
-                    <Button variant="outline" size="icon" type="button">
-                      <FolderOpen className="w-4 h-4" />
-                    </Button>
+                    <ServerPathPicker mode="file-or-dir" value={inferInputPath} onSelect={setInferInputPath} title="Select image or folder for inference" />
                   </div>
                   {inferInputPath && (
                     <div className="mt-2 flex items-center gap-2">
@@ -1520,9 +1538,7 @@ export function ValidationPage() {
                       value={inferOutputPath}
                       onChange={(e) => setInferOutputPath(e.target.value)}
                     />
-                    <Button variant="outline" size="icon" type="button">
-                      <FolderOpen className="w-4 h-4" />
-                    </Button>
+                    <ServerPathPicker mode="dir" value={inferOutputPath} onSelect={setInferOutputPath} title="Select inference output directory" />
                   </div>
                 </div>
 

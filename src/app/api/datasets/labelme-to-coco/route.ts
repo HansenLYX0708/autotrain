@@ -209,8 +209,8 @@ export async function POST(request: NextRequest) {
       if (usedStorage + requiredSize > maxQuota) {
         return NextResponse.json(
           {
-            error: "存储空间不足",
-            message: `您已使用 ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB，配额为 ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB。本次转换需要 ${(requiredSize / 1024 / 1024).toFixed(2)} MB 空间来存储COCO格式数据。请联系管理员扩容或删除不需要的数据。`,
+            error: "Insufficient storage",
+            message: `You have used ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB of your ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB quota. This conversion needs ${(requiredSize / 1024 / 1024).toFixed(2)} MB for the COCO data. Contact an administrator to expand the quota or delete unused data.`,
             usedStorage,
             maxStorageQuota: maxQuota,
             requiredSpace: requiredSize

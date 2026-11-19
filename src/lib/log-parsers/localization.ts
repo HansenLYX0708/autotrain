@@ -5,9 +5,11 @@ const PREFIX = 'AUTOTRAIN_LOCALIZATION '
 
 /** The adapter emits one JSON record per line; arbitrary stdout remains console-only. */
 export function parseLocalizationLine(line: string): ParsedTrainLog[] {
-  if (!line.startsWith(PREFIX)) return []
+  // tqdm can leave a progress-bar prefix on the same stdout line.
+  const start = line.indexOf(PREFIX)
+  if (start < 0) return []
   let data: Record<string, unknown>
-  try { data = JSON.parse(line.slice(PREFIX.length)) } catch { return [] }
+  try { data = JSON.parse(line.slice(start + PREFIX.length)) } catch { return [] }
   if (!data || !['train', 'eval'].includes(String(data.kind))) return []
   const collector = new NonFiniteCollector()
   const numeric = (key: string): number | null => typeof data[key] === 'number' ? collector.add(parseNumericToken(String(data[key])), key) : null

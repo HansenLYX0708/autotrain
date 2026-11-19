@@ -2,194 +2,116 @@ import { NextRequest, NextResponse } from "next/server";
 import { mkdir, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
-import { sessions } from "../../../auth/route";
+import { requireAuth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { randomUUID } from "crypto";
+import { fileTempDirName, serializeTask, uploadTempDir, validateUploadRequest } from "@/lib/upload-tasks";
 
-// Helper to get folder size recursively
-function getFolderSize(folderPath: string): number {
-  let totalSize = 0;
-  
-  if (!existsSync(folderPath)) {
-    return 0;
-  }
-  
-  const fs = require("fs");
-  const path = require("path");
-  const stats = fs.statSync(folderPath);
-  
-  if (stats.isFile()) {
-    return stats.size;
-  }
-  
-  const files = fs.readdirSync(folderPath);
-  for (const file of files) {
-    const filePath = path.join(folderPath, file);
-    const fileStats = fs.statSync(filePath);
-    
-    if (fileStats.isDirectory()) {
-      totalSize += getFolderSize(filePath);
-    } else {
-      totalSize += fileStats.size;
-    }
-  }
-  
-  return totalSize;
-}
+const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
 
 // POST /api/datasets/upload/init - Initialize chunked upload
 export async function POST(request: NextRequest) {
   try {
-    const token = request.cookies.get("auth-token")?.value;
-    if (!token || !sessions.has(token)) {
-      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-    }
-
-    const session = sessions.get(token)!;
-    const userId = session.userId;
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+    const { userId } = auth;
 
     const user = await db.user.findUnique({
       where: { id: userId },
       select: { id: true, username: true, maxStorageQuota: true },
     });
-
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
     const systemConfig = await db.systemConfig.findFirst();
     const userDatabasePath = (systemConfig as any)?.userDatabasePath;
-
     if (!userDatabasePath) {
-      return NextResponse.json(
-        { error: "User database path not configured" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "User database path not configured" }, { status: 500 });
     }
 
     const body = await request.json();
-    const { datasetName, format, totalFiles, totalSize, files, confirmedOverwrite } = body;
+    const { datasetName, format, totalFiles, totalSize, files, confirmedOverwrite, resumeUploadId } = body;
 
-    // Check storage quota
-    const userFolderPath = join(userDatabasePath, user.username);
-    const usedStorage = getFolderSize(userFolderPath);
-    const maxQuota = Number(user.maxStorageQuota);
-    const requiredSize = totalSize || 0;
-
-    if (usedStorage + requiredSize > maxQuota) {
-      return NextResponse.json(
-        { 
-          error: "存储空间不足", 
-          message: `您已使用 ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB，配额为 ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB。本次上传需要 ${(requiredSize / 1024 / 1024).toFixed(2)} MB 空间。请联系管理员扩容或删除不需要的数据。`,
-          usedStorage,
-          maxStorageQuota: maxQuota,
-          requiredSpace: requiredSize
-        },
-        { status: 403 }
-      );
-    }
-
-    if (!datasetName || !format) {
-      return NextResponse.json(
-        { error: "Dataset name and format are required" },
-        { status: 400 }
-      );
-    }
-
-    // Validate format
-    if (format !== "COCO" && format !== "labelme") {
-      return NextResponse.json(
-        { error: "Invalid format. Must be COCO or labelme" },
-        { status: 400 }
-      );
-    }
-
-    // Validate dataset name
-    if (!/^[a-zA-Z0-9_-]+$/.test(datasetName)) {
-      return NextResponse.json(
-        { error: "Dataset name can only contain letters, numbers, underscores and hyphens" },
-        { status: 400 }
-      );
-    }
-
-    // Generate upload session ID
-    const uploadId = randomUUID();
-    
-    // Target directory
-    const targetDir = join(userDatabasePath, user.username, format, datasetName);
-    
-    // Temp directory for chunks
-    const tempDir = join(userDatabasePath, user.username, ".uploads", uploadId);
-
-    // Check if dataset already exists
-    if (existsSync(targetDir)) {
-      // Labelme format allows overwrite with confirmation, COCO does not
-      if (format === "labelme") {
-        // If user has confirmed overwrite, proceed with normal flow
-        if (confirmedOverwrite) {
-          // Continue to normal upload flow
-        } else {
-          return NextResponse.json({
-            success: true,
-            requiresConfirmation: true,
-            message: `Dataset "${datasetName}" already exists. Uploading will overwrite existing files and may add new samples.`,
-            uploadId,
-            targetDir,
-            tempDir,
-            files: [],
-            overallProgress: 0,
-            chunkSize: 10 * 1024 * 1024, // 10MB
-          });
-        }
-      } else {
-        // COCO format: reject duplicate names
-        return NextResponse.json(
-          { error: `Dataset "${datasetName}" already exists` },
-          { status: 400 }
-        );
+    // Resume path: an existing own task tells the client which chunks are
+    // already on disk. The task's name/format/targetDir come from the DB —
+    // the client cannot retarget an old session.
+    if (resumeUploadId) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resumeUploadId)) {
+        return NextResponse.json({ error: "Invalid upload ID" }, { status: 400 });
       }
+      const task = await db.uploadTask.findFirst({ where: { id: resumeUploadId, userId, source: "browser" } });
+      if (!task) return NextResponse.json({ error: "Upload task not found" }, { status: 404 });
+      if (task.status === "completed" || task.status === "cancelled") {
+        return NextResponse.json({ error: `Task is ${task.status} and cannot be resumed` }, { status: 400 });
+      }
+      const tempDir = uploadTempDir(userDatabasePath, user.username, task.id);
+      const uploadedChunks = await readUploadedChunks(tempDir);
+      const filesInfo = (Array.isArray(files) ? files : []).map((f: any) => {
+        // Chunk dirs are stored under the encoded name (`/` → `___`).
+        const fileChunks = uploadedChunks[fileTempDirName(f.relativePath)] || [];
+        const totalChunks = Math.max(1, Math.ceil(f.size / CHUNK_SIZE));
+        return {
+          relativePath: f.relativePath,
+          size: f.size,
+          totalChunks,
+          uploadedChunks: fileChunks,
+          progress: Math.round((fileChunks.length / totalChunks) * 100),
+        };
+      });
+      await db.uploadTask.update({ where: { id: task.id }, data: { status: "uploading", error: null } });
+      return NextResponse.json({
+        success: true,
+        uploadId: task.id,
+        datasetName: task.datasetName,
+        format: task.format,
+        targetDir: task.targetDir,
+        tempDir,
+        files: filesInfo,
+        overallProgress: 0,
+        chunkSize: CHUNK_SIZE,
+        resume: true,
+      });
     }
 
-    // Create temp directory
+    // Same name/format/quota/overwrite rules as the server-import path.
+    const validation = await validateUploadRequest(user, { userDatabasePath }, {
+      datasetName, format, totalSize, confirmedOverwrite,
+    });
+    if (!validation.ok) {
+      const { status, ...payload } = validation.response;
+      return NextResponse.json(payload, { status });
+    }
+    const { targetDir, overwrite } = validation;
+
+    // Generate upload session ID (= UploadTask.id)
+    const uploadId = randomUUID();
+    const tempDir = uploadTempDir(userDatabasePath, user.username, uploadId);
     await mkdir(tempDir, { recursive: true });
 
-    // Check for existing uploaded chunks (in case of resume)
-    let uploadedChunks: Record<string, number[]> = {};
-    try {
-      if (existsSync(tempDir)) {
-        const entries = await readdir(tempDir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isDirectory()) {
-            const fileTempDir = join(tempDir, entry.name);
-            const chunks = await readdir(fileTempDir);
-            uploadedChunks[entry.name] = chunks
-              .filter(c => c.endsWith(".chunk"))
-              .map(c => parseInt(c.replace(".chunk", "")));
-          }
-        }
-      }
-    } catch {
-      // Ignore errors
-    }
-
-    // Calculate progress for each file
-    const filesInfo = files.map((f: any) => {
-      const fileChunks = uploadedChunks[f.relativePath] || [];
-      const totalChunks = Math.ceil(f.size / (10 * 1024 * 1024)); // 10MB chunks
+    const filesInfo = (Array.isArray(files) ? files : []).map((f: any) => {
+      const totalChunks = Math.max(1, Math.ceil(f.size / CHUNK_SIZE));
       return {
         relativePath: f.relativePath,
         size: f.size,
         totalChunks,
-        uploadedChunks: fileChunks, // 返回已上传的分片索引数组
-        progress: Math.round((fileChunks.length / totalChunks) * 100),
+        uploadedChunks: [] as number[],
+        progress: 0,
       };
     });
 
-    const totalUploadedChunks = Object.values(uploadedChunks).flat().length;
-    const totalExpectedChunks = filesInfo.reduce((acc: number, f: any) => acc + f.totalChunks, 0);
-    const overallProgress = totalExpectedChunks > 0 
-      ? Math.round((totalUploadedChunks / totalExpectedChunks) * 100) 
-      : 0;
+    const task = await db.uploadTask.create({
+      data: {
+        id: uploadId,
+        userId,
+        source: "browser",
+        datasetName,
+        format,
+        targetDir,
+        status: "uploading",
+        totalFiles: filesInfo.length,
+        totalBytes: totalSize || 0,
+        overwrite,
+      },
+    });
 
     return NextResponse.json({
       success: true,
@@ -197,10 +119,10 @@ export async function POST(request: NextRequest) {
       targetDir,
       tempDir,
       files: filesInfo,
-      overallProgress,
-      chunkSize: 10 * 1024 * 1024, // 10MB
+      overallProgress: 0,
+      chunkSize: CHUNK_SIZE,
+      task: serializeTask(task),
     });
-
   } catch (error) {
     console.error("Error initializing upload:", error);
     return NextResponse.json(
@@ -208,4 +130,25 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+async function readUploadedChunks(tempDir: string): Promise<Record<string, number[]>> {
+  const uploadedChunks: Record<string, number[]> = {};
+  try {
+    if (existsSync(tempDir)) {
+      const entries = await readdir(tempDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const chunks = await readdir(join(tempDir, entry.name));
+          uploadedChunks[entry.name] = chunks
+            .filter(c => c.endsWith(".chunk"))
+            .map(c => parseInt(c.replace(".chunk", ""), 10))
+            .filter(n => !isNaN(n));
+        }
+      }
+    }
+  } catch {
+    // Ignore errors — resume just starts from nothing.
+  }
+  return uploadedChunks;
 }

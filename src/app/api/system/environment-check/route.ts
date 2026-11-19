@@ -21,6 +21,8 @@ interface FrameworkSupport {
   torchvision: boolean;
   /** `import anomalib` succeeded; required by TorchAnomaly. */
   anomalib: boolean;
+  /** `import ultralytics` succeeded; required by TorchOBB and TorchPose. */
+  ultralytics: boolean;
 }
 
 interface GpuEnvironmentCheck {
@@ -61,7 +63,21 @@ const MODULE_PROBES: Array<[keyof FrameworkSupport, string]> = [
   ['torch', 'torch'],
   ['torchvision', 'torchvision'],
   ['anomalib', 'anomalib'],
+  ['ultralytics', 'ultralytics'],
 ];
+
+/**
+ * Every `pythonModule` declared in FRAMEWORK_META must be probeable. Any module
+ * not covered by a named FrameworkSupport probe is added here under the module
+ * name itself, so a new framework can never silently degrade to `hasModule:
+ * false` again (that is how TorchOBB/TorchPose showed red although training
+ * worked: `ultralytics` simply was not probed).
+ */
+const EXTRA_PROBES: Array<[string, string]> = [...new Set(
+  Object.values(FRAMEWORK_META).map(meta => meta.pythonModule),
+)].filter(mod => !MODULE_PROBES.some(([, m]) => m === mod)).map(mod => [mod, mod]);
+
+const ALL_PROBES: Array<[string, string]> = [...MODULE_PROBES, ...EXTRA_PROBES];
 
 const NO_MODULES: FrameworkSupport = {
   paddleDetection: false,
@@ -70,7 +86,15 @@ const NO_MODULES: FrameworkSupport = {
   torch: false,
   torchvision: false,
   anomalib: false,
+  ultralytics: false,
 };
+
+type ModuleProbeResult = FrameworkSupport & Record<string, boolean>;
+
+/** The FrameworkSupport key (or raw module name) that reports `module`. */
+function probeKeyFor(module: string): string {
+  return MODULE_PROBES.find(([, m]) => m === module)?.[0] ?? module;
+}
 
 /**
  * Probe a Python env for which framework packages are installed. One
@@ -80,8 +104,8 @@ const NO_MODULES: FrameworkSupport = {
  *
  * We intentionally do NOT install anything — the UI merely reports the state.
  */
-async function checkFrameworkModules(pythonPath: string): Promise<FrameworkSupport> {
-  const pairs = MODULE_PROBES.map(([key, mod]) => `('${key}','${mod}')`).join(',');
+async function checkFrameworkModules(pythonPath: string): Promise<ModuleProbeResult> {
+  const pairs = ALL_PROBES.map(([key, mod]) => `('${key}','${mod}')`).join(',');
   const script =
     'import json,importlib.util;' +
     'r={};' +
@@ -90,8 +114,8 @@ async function checkFrameworkModules(pythonPath: string): Promise<FrameworkSuppo
   try {
     const { stdout } = await execAsync(`"${pythonPath}" -c "${script}"`, { timeout: 20000 });
     const parsed = JSON.parse(stdout.trim().split(/\r?\n/).pop() || '{}');
-    const out = { ...NO_MODULES };
-    for (const [key] of MODULE_PROBES) out[key] = !!parsed[key];
+    const out: ModuleProbeResult = { ...NO_MODULES };
+    for (const [key] of ALL_PROBES) out[key] = !!parsed[key];
     return out;
   } catch {
     return { ...NO_MODULES };
@@ -258,11 +282,7 @@ export async function GET(_request: NextRequest) {
       const check = await checkPythonVersion(pythonPath);
       const modules = check.exists ? await checkFrameworkModules(pythonPath) : undefined;
       const moduleKey = meta?.pythonModule;
-      const hasModule = !!(
-        modules &&
-        moduleKey &&
-        MODULE_PROBES.some(([probeKey, mod]) => mod === moduleKey && modules[probeKey])
-      );
+      const hasModule = !!(modules && moduleKey && modules[probeKeyFor(moduleKey)]);
       frameworkEnvironments.push({
         key,
         framework: frameworkName,

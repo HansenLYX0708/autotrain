@@ -11,7 +11,7 @@ re-explain the system. For that, see `docs/`:
 | [docs/README.md](docs/README.md) | Documentation index, per audience |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Framework abstraction, three-config merge, command generation, job lifecycle, log parsing, auth, paths/quota, known limits |
 | [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Prisma schema field by field, relations, delete semantics, unit conventions |
-| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | All 46 REST routes: method, auth, params, behaviour |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | All 53 REST routes: method, auth, params, behaviour |
 | [docs/FEATURES.md](docs/FEATURES.md) | What each UI module does, and a troubleshooting table |
 
 When you change behaviour, update the matching doc in the same change.
@@ -304,6 +304,7 @@ Things that bite:
   `GeneralizedRCNNTransform`, so `NormalizeImage`/`Permute`/`PadGT` are accepted
   and ignored, and `TRAINING_FIELD_SUPPORT.TorchDet` omits those form fields
   rather than showing controls that do nothing.
+- **Inscribed rotation (OBB) is ours, not Ultralytics'.** `localization.train.inscribed_rotate_degrees/_prob` activates `torchtrain/torchtrain/inscribed_rotation.py`: rotate about the centre + crop the largest inscribed same-aspect rectangle + rescale (one warpAffine, no padding). Ultralytics `degrees/translate/scale/shear/perspective/mosaic` must be 0 when it's on — RandomPerspective clips corner points to the canvas and refits cut boxes with `cv2.minAreaRect`, corrupting their angle (measured: ~3% of labels >0.3°, up to 11°). Cut boxes keep the exact transformed angle and are shortened along their own axes. **`YOLODataset.close_mosaic` rebuilds transforms** (`self.transforms = self.build_transforms(hyp)`) at `epochs - close_mosaic`, even with `mosaic: 0` — injected transforms are silently dropped unless they survive rebuilds; `install_inscribed_rotation` monkey-patches `build_transforms` at class level (picklable, works under spawn workers) and re-injects from `dataset._autotrain_inscribed`. Offline equivalent: `python tools/localization.py rotate-augment` + `POST /api/datasets/rotate-augment`.
 - **Detection metrics have no pycocotools hard dependency.**
   `torchtrain/det/metrics.py` ships a NumPy COCOeval re-implementation that was
   verified to agree with pycocotools to 0.0 on all 12 stats; pycocotools is used
@@ -330,6 +331,20 @@ Things that bite:
   Ultralytics imports it late when saving results, after GPU training has begun.
 - Prediction drafts must set `reviewed=false`; editing accepted labels also
   clears confirmation. Missing Pose points must not be synthesized as invisible.
+- OBB angle-loss hooks must be attached **after** EMA creation and only to the
+  training criterion, or checkpoints can accidentally depend on custom Python
+  classes/hooks. `selection_metric: angle` saves its winner in `best_model/`;
+  Ultralytics' own `weights/best.pt` still follows mAP and is a different choice.
+- On the fixed-camera slider data, rotation augmentation (`degrees`) was the
+  dominant OBB angle error; flips + `degrees: 0` gave ~0.35° vs ~0.85°. The
+  Data tab exposes degrees/fliplr/flipud (Pose: degrees only — flips need
+  `flip_idx`). Human GT here is only ~0.4° accurate vs fitted image edges, so
+  sub-0.3° claims against these labels are not measurable.
+- Status JSON writes (`write_json`) retry `PermissionError` on Windows: a
+  reader holding `metrics.json` open killed a run mid-training once.
+- Angle checkpoint selection disables mAP early stopping (`patience: 0`) and
+  enforces recall / false-positive limits. Its `TrainingJob.bestMetric` is in
+  degrees, not a 0–1 AP fraction. Monitoring uses the emitted selection mode.
 
 ### PaddleDetection specifics
 
@@ -376,6 +391,39 @@ stem, and JSONs can carry a UTF-8 BOM (`parseLabelmeJson`). Matching order:
 imagePath basename (subfolder-aware, `..`-safe, disambiguated by the
 imagePath's trailing folder) → JSON-stem fallback → specific error. Change
 the rules there, once.
+
+### Relative `datasetDir` belongs to the dataset OWNER
+
+Registered datasets may store a relative `datasetDir` (e.g. `COCO/tiny`),
+which means `{userDatabasePath}/{ownerUsername}/{datasetDir}`. Resolve it
+with `resolveDatasetRoot` from `src/lib/dataset-paths.ts`, and resolve the
+username from `dataset.userId` — never the caller's — or an admin opening
+another user's dataset lands in their own user folder. Folder-listing routes
+(`/api/datasets/available`, fs browse) stay caller-scoped by design.
+
+### PaddleDetection pre-labeling: never parse the job YAML, relative outputDir
+
+`/api/annotation/predict` also serves PaddleDetection jobs (axis-aligned
+`task:'detect'` boxes via `tools/paddledet_annotate.py` run with the Paddle
+python, cwd = the PD repo, shipped in the upgrade payload under `app\tools\`).
+Two traps: PD configs carry custom YAML tags (`!COCODataSet`) that
+`YAML.parse()` drops — the route copies the stored config file or writes
+`job.yamlConfig` **raw**, never parse/stringify; and legacy PD jobs store
+`outputDir` relative to the **PD repo root** (`getWorkDir`) — which usually
+doesn't exist anymore, because their weights actually live at
+`{userDatabasePath}/{project.user.username}/jobs/{job.name}` (tried as a
+fallback by `jobOutputDirs`). Checkpoints are flat `.pdparams` — use
+`paddleDetectionWeights` from `src/lib/paddledet-weights.ts`.
+
+### Deployed over plain http: no secure-context-only APIs
+
+The platform is served at `http://<LAN-IP>:3000`, which is **not** a secure
+context — `crypto.randomUUID` and `navigator.clipboard` are `undefined` there
+(the Annotation page once crashed on mount because `newProject()` ran
+`crypto.randomUUID()` inside a `useReducer` initializer). Browser code must go
+through `src/lib/browser-safe.ts`: `uuid()` (getRandomValues/Math.random
+fallbacks) and `copyText()` (execCommand fallback). Server-side
+`import { randomUUID } from 'crypto'` is unaffected.
 
 ## Conventions
 
@@ -438,6 +486,11 @@ render *wider* than intended, so fixing those makes them smaller.)
   passwords are unsalted SHA-256; `changePassword` does not invalidate sessions.
 - `runningProcesses` is an in-memory map, so a server restart orphans running
   training processes — they keep running but can no longer be stopped.
+- Server-folder upload runners (`src/lib/upload-server-runner.ts`, keyed on
+  `globalThis.__uploadRunners`) are likewise in-memory: a server restart
+  abandons the copy; the next `/api/upload-tasks` list/get marks the orphaned
+  task `failed` ("Interrupted by server restart") and removes the partial
+  targetDir.
 - `mini-services/training-service` is a **mock** (synthetic logs on a timer) and
   imports Prisma from a hardcoded `/home/z/my-project/...` path. Real training
   runs in `src/app/api/training-jobs/[id]/route.ts`.

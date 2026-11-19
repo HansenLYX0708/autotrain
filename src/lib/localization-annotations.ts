@@ -1,5 +1,6 @@
 /** Browser/server shared annotation contract. Coordinates are original-image pixels. */
 import { z } from 'zod'
+import { uuid } from './browser-safe'
 
 const finite = z.number().finite()
 const name = z.string().trim().min(1).max(100)
@@ -27,7 +28,7 @@ export const imageSchema = z.object({
   reviewed: z.boolean(),
   split: z.enum(['unassigned', 'train', 'val', 'test']),
   group: z.string().trim().max(200),
-  prediction: z.object({ jobId: z.string().min(1), createdAt: z.string(), task: z.enum(['obb', 'pose']) }).optional(),
+  prediction: z.object({ jobId: z.string().min(1), createdAt: z.string(), task: z.enum(['obb', 'pose', 'detect']) }).optional(),
 })
 export const projectSchema = z.object({
   format: z.literal('autotrain-localization'),
@@ -64,7 +65,7 @@ export type Split = AnnotationImage['split']
 
 export function newProject(): AnnotationProject {
   return {
-    format: 'autotrain-localization', version: 1, id: crypto.randomUUID(),
+    format: 'autotrain-localization', version: 1, id: uuid(),
     name: 'localization', labels: ['slider_abs', 'tapring'],
     keypointNames: ['datum_a', 'datum_b', 'datum_c'],
     images: [],
@@ -84,10 +85,10 @@ export function boxCorners(box: Pick<AnnotationObject, 'cx' | 'cy' | 'width' | '
 export function boxFromThreePoints(a: Point, b: Point, p: Point) {
   const dx = b.x - a.x, dy = b.y - a.y
   const width = Math.hypot(dx, dy)
-  if (width < 1) throw new Error('第一条边太短，请重新绘制')
+  if (width < 1) throw new Error('First edge is too short; draw it again')
   const nx = -dy / width, ny = dx / width
   const signedHeight = (p.x - a.x) * nx + (p.y - a.y) * ny
-  if (Math.abs(signedHeight) < 1) throw new Error('矩形高度必须至少为 1 像素')
+  if (Math.abs(signedHeight) < 1) throw new Error('Rectangle height must be at least 1 px')
   return {
     cx: (a.x + b.x) / 2 + nx * signedHeight / 2,
     cy: (a.y + b.y) / 2 + ny * signedHeight / 2,
@@ -122,26 +123,43 @@ export function rotateBox(box: AnnotationObject, start: Point, p: Point, snap = 
   return { ...box, kind: 'obb', angle }
 }
 
+/**
+ * Axis-aligned bounding box of a box's corners, clipped to the image bounds.
+ * Used by the COCO detection export: rotated boxes become their enclosing
+ * upright rectangle. Returns null when nothing is left after clipping.
+ */
+export function aabbFromObject(
+  object: Pick<AnnotationObject, 'cx' | 'cy' | 'width' | 'height' | 'angle'>,
+  image: Pick<AnnotationImage, 'width' | 'height'>,
+): { x: number; y: number; width: number; height: number } | null {
+  const corners = boxCorners(object)
+  const xs = corners.map(p => Math.max(0, Math.min(image.width, p.x)))
+  const ys = corners.map(p => Math.max(0, Math.min(image.height, p.y)))
+  const x = Math.min(...xs), y = Math.min(...ys)
+  const width = Math.max(...xs) - x, height = Math.max(...ys) - y
+  return width >= 1 && height >= 1 ? { x, y, width, height } : null
+}
+
 export function insideImage(p: Point, image: Pick<AnnotationImage, 'width' | 'height'>): boolean {
   return p.x >= -1e-6 && p.y >= -1e-6 && p.x <= image.width + 1e-6 && p.y <= image.height + 1e-6
 }
 
 export function imageIssues(image: AnnotationImage, keypointNames: string[], pose = true): string[] {
   const issues: string[] = []
-  if (!image.reviewed) issues.push('尚未确认完成（空图也需要确认）')
-  if (image.split === 'unassigned') issues.push('尚未分配 train / val / test')
-  if (!image.group) issues.push('尚未填写采集批次')
+  if (!image.reviewed) issues.push('Not marked reviewed (empty images need review too)')
+  if (image.split === 'unassigned') issues.push('No train / val / test split assigned')
+  if (!image.group) issues.push('Capture batch is not set')
   image.objects.forEach((object, index) => {
-    const prefix = `实例 ${index + 1} (${object.label})`
-    if (object.width < 1 || object.height < 1) issues.push(`${prefix}：框小于 1 像素`)
-    if (!boxCorners(object).every(p => insideImage(p, image))) issues.push(`${prefix}：框超出图片`)
-    if (pose && !keypointNames.some(n => (object.keypoints[n]?.visibility ?? 0) > 0)) issues.push(`${prefix}：没有可监督的关键点`)
+    const prefix = `Instance ${index + 1} (${object.label})`
+    if (object.width < 1 || object.height < 1) issues.push(`${prefix}: box smaller than 1 px`)
+    if (!boxCorners(object).every(p => insideImage(p, image))) issues.push(`${prefix}: box extends outside the image`)
+    if (pose && !keypointNames.some(n => (object.keypoints[n]?.visibility ?? 0) > 0)) issues.push(`${prefix}: no supervisable keypoint`)
     for (const key of keypointNames) {
       const point = object.keypoints[key]
       if (!point) {
-        if (pose) issues.push(`${prefix}：关键点 ${key} 尚未处理`)
+        if (pose) issues.push(`${prefix}: keypoint ${key} not handled yet`)
       } else if (point.visibility > 0 && !insideImage(point, image)) {
-        issues.push(`${prefix}：关键点 ${key} 超出图片`)
+        issues.push(`${prefix}: keypoint ${key} outside the image`)
       }
     }
   })
@@ -149,20 +167,20 @@ export function imageIssues(image: AnnotationImage, keypointNames: string[], pos
 }
 
 export function projectIssues(project: AnnotationProject, pose = true): string[] {
-  const issues = project.images.flatMap(image => imageIssues(image, project.keypointNames, pose).map(issue => `${image.name}：${issue}`))
-  if (!project.images.length) issues.push('尚未载入图片')
-  if (pose && !project.keypointNames.length) issues.push('关键点模板为空')
+  const issues = project.images.flatMap(image => imageIssues(image, project.keypointNames, pose).map(issue => `${image.name}: ${issue}`))
+  if (!project.images.length) issues.push('No images loaded')
+  if (pose && !project.keypointNames.length) issues.push('Keypoint template is empty')
   for (const split of ['train', 'val'] as const) {
-    if (!project.images.some(image => image.split === split)) issues.push(`缺少 ${split} 图片`)
+    if (!project.images.some(image => image.split === split)) issues.push(`Missing ${split} images`)
     for (const label of project.labels) {
-      if (!project.images.some(image => image.split === split && image.objects.some(o => o.label === label))) issues.push(`${split} 缺少类别 ${label} 的实例`)
+      if (!project.images.some(image => image.split === split && image.objects.some(o => o.label === label))) issues.push(`${split} has no instance of class ${label}`)
     }
   }
   const groups = new Map<string, Split>()
   for (const image of project.images) {
     if (!image.group || image.split === 'unassigned') continue
     const split = groups.get(image.group)
-    if (split && split !== image.split) issues.push(`采集批次 ${image.group} 跨越 ${split} / ${image.split}，存在数据泄漏`)
+    if (split && split !== image.split) issues.push(`Capture batch ${image.group} spans ${split} / ${image.split} — data leakage`)
     groups.set(image.group, image.split)
   }
   return issues
@@ -242,16 +260,16 @@ export function fromLabelme(raw: unknown, imageName: string): { image: Annotatio
       const expected = boxCorners(geometry)
       const tolerance = Math.max(0.01, Math.max(geometry.width, geometry.height) * 1e-5)
       if (points.some(p => !expected.some(q => Math.hypot(q.x - p.x, q.y - p.y) < tolerance))) {
-        throw new Error(`${shape.label} 是非矩形四边形；请保留原始标注，另行标注 OBB，不能直接当作旋转矩形`)
+        throw new Error(`${shape.label} is a non-rectangular quadrilateral; keep the original annotation and draw the OBB manually — it cannot be treated as a rotated rectangle`)
       }
       kind = 'obb'
     } else {
-      throw new Error(`不支持 ${shape.shape_type} / ${points.length} 点形状：${shape.label}`)
+      throw new Error(`Unsupported ${shape.shape_type} / ${points.length}-point shape: ${shape.label}`)
     }
     const object = objectSchema.parse({ id: `instance-${index + 1}`, label: shape.label, kind, ...geometry, keypoints: {} })
     if (shape.group_id != null) {
       const key = String(shape.group_id)
-      if (groups.has(key)) throw new Error(`group_id ${key} 对应多个框`)
+      if (groups.has(key)) throw new Error(`group_id ${key} matches multiple boxes`)
       groups.set(key, object)
     }
     objects.push(object)
@@ -260,10 +278,10 @@ export function fromLabelme(raw: unknown, imageName: string): { image: Annotatio
   for (const shape of data.shapes) {
     if (shape.shape_type !== 'point') continue
     const object = shape.group_id == null ? undefined : groups.get(String(shape.group_id))
-    if (!object || shape.points.length !== 1) throw new Error(`关键点 ${shape.label} 必须通过 group_id 对应一个框`)
-    if (object.keypoints[shape.label]) throw new Error(`实例内重复关键点：${shape.label}`)
+    if (!object || shape.points.length !== 1) throw new Error(`Keypoint ${shape.label} must map to one box via group_id`)
+    if (object.keypoints[shape.label]) throw new Error(`Duplicate keypoint in instance: ${shape.label}`)
     const visibility = shape.flags?.visibility ?? 2
-    if (visibility !== 0 && visibility !== 1 && visibility !== 2) throw new Error(`关键点 ${shape.label} 的 visibility 无效`)
+    if (visibility !== 0 && visibility !== 1 && visibility !== 2) throw new Error(`Invalid visibility for keypoint ${shape.label}`)
     object.keypoints[shape.label] = { x: shape.points[0][0], y: shape.points[0][1], visibility }
     if (!keypointNames.includes(shape.label)) keypointNames.push(shape.label)
   }

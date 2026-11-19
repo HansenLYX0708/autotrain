@@ -1,172 +1,173 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir, readdir, readFile, unlink, rmdir, rm } from "fs/promises";
 import { existsSync } from "fs";
-import { join, dirname } from "path";
-import { sessions } from "../../../auth/route";
+import { copyFile, mkdir, readdir, rename, rm } from "fs/promises";
+import { createReadStream, createWriteStream } from "fs";
+import { dirname, join } from "path";
+import { pipeline } from "stream/promises";
+import { requireAuth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { isInside } from "@/lib/safe-path";
+import { fileTempDirName, safeRelativePath, uploadTempDir } from "@/lib/upload-tasks";
 
-// POST /api/datasets/upload/complete - Complete upload and merge chunks
+const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// POST /api/datasets/upload/complete - Assemble all chunks into the final dataset
 export async function POST(request: NextRequest) {
+  let taskId: string | null = null;
   try {
-    const token = request.cookies.get("auth-token")?.value;
-    if (!token || !sessions.has(token)) {
-      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-    }
-
-    const session = sessions.get(token)!;
-    const userId = session.userId;
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+    const { userId } = auth;
 
     const user = await db.user.findUnique({
       where: { id: userId },
       select: { id: true, username: true },
     });
-
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
     const systemConfig = await db.systemConfig.findFirst();
     const userDatabasePath = (systemConfig as any)?.userDatabasePath;
-
     if (!userDatabasePath) {
-      return NextResponse.json(
-        { error: "User database path not configured" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "User database path not configured" }, { status: 500 });
     }
 
     const body = await request.json();
-    const { uploadId, targetDir, files, format, datasetName, overwrite } = body;
-
-    if (!uploadId || !targetDir || !files) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
+    const { uploadId } = body;
+    if (!uploadId || !UPLOAD_ID_RE.test(uploadId)) {
+      return NextResponse.json({ error: "Invalid upload ID" }, { status: 400 });
     }
 
-    // Security: validate targetDir is within user's directory
-    const allowedBase = join(userDatabasePath, user.username);
-    if (!targetDir.startsWith(allowedBase)) {
-      return NextResponse.json({ error: "Invalid target directory" }, { status: 403 });
+    const task = await db.uploadTask.findFirst({ where: { id: uploadId, userId, source: "browser" } });
+    if (!task) return NextResponse.json({ error: "Upload task not found" }, { status: 404 });
+    if (task.status === "completed") {
+      return NextResponse.json({ success: true, alreadyCompleted: true });
+    }
+    if (task.status === "cancelled") {
+      return NextResponse.json({ error: "Task was cancelled" }, { status: 409 });
+    }
+    taskId = task.id;
+
+    // targetDir comes from the DB record, never from the client body.
+    const targetDir = task.targetDir;
+    const tempDir = uploadTempDir(userDatabasePath, user.username, uploadId);
+    const userRoot = join(userDatabasePath, user.username);
+    if (!isInside(userRoot, targetDir)) {
+      return NextResponse.json({ error: "Invalid target directory" }, { status: 400 });
+    }
+    if (!existsSync(tempDir)) {
+      return NextResponse.json({ error: "Upload temp directory not found" }, { status: 400 });
     }
 
-    // For labelme format with overwrite flag, clean up existing files first
-    if (overwrite && format === "labelme" && existsSync(targetDir)) {
+    await db.uploadTask.update({ where: { id: task.id }, data: { status: "finalizing" } });
+
+    // For labelme format with overwrite, clean up existing files first
+    if (task.overwrite && task.format === "labelme" && existsSync(targetDir)) {
       try {
-        const existingFiles = await readdir(targetDir);
-        for (const file of existingFiles) {
+        for (const file of await readdir(targetDir)) {
           await rm(join(targetDir, file), { recursive: true, force: true });
         }
       } catch (err) {
         console.error("Error cleaning up existing directory:", err);
       }
     }
-
-    // Create target directory
     await mkdir(targetDir, { recursive: true });
 
-    const tempDir = join(userDatabasePath, user.username, ".uploads", uploadId);
+    const files: { relativePath: string; totalChunks: number; size: number }[] = Array.isArray(body.files)
+      ? body.files
+      : [];
     const errors: string[] = [];
     const savedFiles: string[] = [];
 
-    // Merge chunks for each file
     for (const fileInfo of files) {
-      const { relativePath, totalChunks } = fileInfo;
-      const fileTempDir = join(tempDir, relativePath.replace(/[/\\]/g, "___"));
-      
+      const relativePath = safeRelativePath(fileInfo.relativePath);
+      if (!relativePath) {
+        errors.push(`Unsafe path in upload: ${JSON.stringify(fileInfo.relativePath)}`);
+        continue;
+      }
+      const targetPath = join(targetDir, relativePath);
+      if (!isInside(targetDir, targetPath)) {
+        errors.push(`Path escapes target directory: ${relativePath}`);
+        continue;
+      }
+      const fileTempDir = join(tempDir, fileTempDirName(relativePath));
+      const totalChunks = Math.max(1, Number(fileInfo.totalChunks) || 1);
+
+      // Check all chunks are on disk before starting.
+      const missing: number[] = [];
+      for (let i = 0; i < totalChunks; i++) {
+        if (!existsSync(join(fileTempDir, `${i}.chunk`))) missing.push(i);
+      }
+      if (missing.length > 0) {
+        errors.push(`Missing chunks for ${relativePath}: ${missing.join(", ")}`);
+        continue;
+      }
+
       try {
-        // Read all chunks and merge
-        const chunkBuffers: Buffer[] = [];
-        let missingChunks: number[] = [];
-
-        for (let i = 0; i < totalChunks; i++) {
-          const chunkPath = join(fileTempDir, `${i}.chunk`);
-          if (existsSync(chunkPath)) {
-            const chunkData = await readFile(chunkPath);
-            chunkBuffers.push(chunkData);
-          } else {
-            missingChunks.push(i);
+        await mkdir(dirname(targetPath), { recursive: true });
+        if (totalChunks === 1) {
+          // Single-chunk files are renamed into place (copy fallback for the
+          // EXDEV case where temp and target sit on different volumes).
+          const chunkPath = join(fileTempDir, "0.chunk");
+          try {
+            await rename(chunkPath, targetPath);
+          } catch {
+            await copyFile(chunkPath, targetPath);
           }
-        }
-
-        if (missingChunks.length > 0) {
-          errors.push(`Missing chunks for ${relativePath}: ${missingChunks.join(", ")}`);
-          continue;
-        }
-
-        // Write merged file
-        const filePath = join(targetDir, relativePath);
-        const fileDir = dirname(filePath);
-        
-        if (!existsSync(fileDir)) {
-          await mkdir(fileDir, { recursive: true });
-        }
-
-        const mergedBuffer = Buffer.concat(chunkBuffers);
-        await writeFile(filePath, mergedBuffer);
-        savedFiles.push(relativePath);
-
-        // Clean up chunks for this file
-        try {
-          for (let i = 0; i < totalChunks; i++) {
-            const chunkPath = join(fileTempDir, `${i}.chunk`);
-            if (existsSync(chunkPath)) {
-              await unlink(chunkPath);
+        } else {
+          // Stream chunks — never Buffer.concat the whole file into memory.
+          const output = createWriteStream(targetPath);
+          try {
+            for (let i = 0; i < totalChunks; i++) {
+              await pipeline(createReadStream(join(fileTempDir, `${i}.chunk`)), output, { end: false });
             }
+          } finally {
+            output.end();
+            await new Promise<void>((resolve) => output.once("close", resolve));
           }
-          await rmdir(fileTempDir);
-        } catch {
-          // Ignore cleanup errors
         }
-
+        savedFiles.push(relativePath);
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        errors.push(`Failed to merge ${relativePath}: ${errorMsg}`);
+        errors.push(`Failed to assemble ${relativePath}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
-    // Clean up temp directory
-    try {
-      if (existsSync(tempDir)) {
-        await rmdir(tempDir);
-      }
-    } catch {
-      // Ignore
+    // If every file failed, do not leave a partial/emptied dataset behind.
+    if (savedFiles.length === 0 && files.length > 0) {
+      await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+    }
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+
+    if (savedFiles.length === 0 && files.length > 0) {
+      const message = `All files failed to assemble: ${errors[0] || "unknown error"}`;
+      await db.uploadTask.update({ where: { id: task.id }, data: { status: "failed", error: message } });
+      return NextResponse.json({ error: message, errors }, { status: 500 });
     }
 
-    // If all files failed, clean up target directory
-    if (savedFiles.length === 0 && errors.length > 0) {
-      try {
-        const { rmSync } = await import("fs");
-        rmSync(targetDir, { recursive: true, force: true });
-      } catch {
-        // Ignore
-      }
-
-      return NextResponse.json(
-        {
-          error: "All files failed to upload",
-          details: errors,
-        },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: `Uploaded ${savedFiles.length} files`,
+    await db.uploadTask.update({
+      where: { id: task.id },
       data: {
-        datasetName: datasetName,
-        format: format,
-        savedPath: targetDir,
-        files: savedFiles,
-        errors: errors.length > 0 ? errors : undefined,
+        status: "completed",
+        completedAt: new Date(),
+        doneFiles: savedFiles.length,
+        error: errors.length > 0 ? `${errors.length} file(s) skipped: ${errors[0]}` : null,
       },
     });
 
+    return NextResponse.json({
+      success: true,
+      uploadId: task.id,
+      savedFiles: savedFiles.length,
+      skippedFiles: errors.length,
+      errors: errors.slice(0, 20),
+    });
   } catch (error) {
     console.error("Error completing upload:", error);
+    if (taskId) {
+      await db.uploadTask.update({
+        where: { id: taskId },
+        data: { status: "failed", error: error instanceof Error ? error.message : "Unknown error" },
+      }).catch(() => {});
+    }
     return NextResponse.json(
       { error: "Failed to complete upload", message: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }

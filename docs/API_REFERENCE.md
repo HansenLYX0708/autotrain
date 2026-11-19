@@ -1,6 +1,6 @@
 # REST 接口参考
 
-共 46 个路由文件，全部位于 `src/app/api/**/route.ts`，均运行在 Node runtime（会访问文件系统与子进程）。
+共 53 个路由文件，全部位于 `src/app/api/**/route.ts`，均运行在 Node runtime（会访问文件系统与子进程）。
 
 ## 通用约定
 
@@ -88,6 +88,12 @@
 
 **登录**。项目列表，含各关联实体计数。
 
+- 无参数时行为不变：按 `createdAt` 倒序返回全部项目（供各页面下拉框使用），响应 `{success,data}`。
+- 带任一参数 `limit` / `page` / `pageSize` / `q` 时改用分页响应 `{success,data,total,page,pageSize}`，按 `updatedAt` 倒序：
+  - `limit`：返回最近 N 条（1–100）。
+  - `page`（1 起）+ `pageSize`（1–100，默认 12）：分页返回。
+  - `q`：名称/描述大小写不敏感包含匹配；两种模式均可用。
+
 ### `POST /api/projects`
 
 **登录**。创建项目。`task` 由 `resolveTask(framework, task)` 归一化。
@@ -110,7 +116,10 @@
 
 ### `GET /api/datasets?projectId=<id>`
 
-**登录**。数据集列表（含项目信息）。
+**登录**。数据集列表（含项目信息）。每行带 `user: { id, username }` 与计算字段
+`resolvedDatasetDir`：相对 `datasetDir`（如 `COCO/tiny`）按
+`{userDatabasePath}/{ownerUsername}/{datasetDir}` 解析为绝对路径；绝对路径原样返回。
+`GET /api/datasets/[id]` 同样返回这两个字段。
 
 ### `POST /api/datasets`
 
@@ -141,19 +150,40 @@ AnomalyFolder 的名称会被 slug 化（anomalib 用 datamodule `name` 拼结�
 
 ### `POST /api/datasets/upload/init`
 
-**登录**。分片上传初始化。body：`datasetName`, `format`, `totalFiles`, `totalSize`, `files`, `confirmedOverwrite`。**此处做存储配额检查**，不足返回 403。
+**登录**。分片上传初始化，同时创建 `UploadTask` 行（`source='browser'`）。body：`datasetName`, `format`, `totalFiles`, `totalSize`, `files`, `confirmedOverwrite`。**此处做存储配额检查**，不足返回 403；同名 labelme 且未确认时返回 `requiresConfirmation`。传 `resumeUploadId` + `files` 可恢复既有任务，返回各文件已上传的分片下标。
 
 ### `POST /api/datasets/upload/chunk`
 
-**登录**。multipart：`uploadId`, `relativePath`, `chunkIndex`, `totalChunks`, `chunk`（Blob）。
+**登录** + 校验 `uploadId` 属于本人且任务仍在 `uploading`。两种形态：
+
+- 批量：`uploadId`, `manifest`（JSON `[{relativePath, chunkIndex, totalChunks}]`），以及 `file0..fileN`（Blob，与 manifest 同序），一次请求最多 200 个分片，只做一次进度写库。
+- 兼容旧形态：`uploadId`, `relativePath`, `chunkIndex`, `totalChunks`, `chunk`。
+
+`relativePath` 经 `safeRelativePath` 校验（拒绝绝对路径、盘符、`..`、反斜杠逃逸、NUL）。
 
 ### `POST /api/datasets/upload/complete`
 
-**登录**。body：`uploadId`, `targetDir`, `files`, `format`, `datasetName`, `overwrite`。合并分片；`targetDir` 越界返回 403。
+**登录**。body：`uploadId`, `files`。目标目录一律取自 `UploadTask.targetDir`（不接受客户端传入）；单分片文件直接 rename，多分片文件流式拼接（不再整文件 Buffer.concat）。状态置 `finalizing` → `completed`/`failed`；labelme overwrite 会先清空既有目录。
+
+### `GET /api/upload-tasks`
+
+**登录**。本人的上传任务，新→旧，最多 100 条。读取时会把仍停在 `pending`/`uploading`/`finalizing` 且没有活动 runner 的 server 任务标记为 `failed`（“Interrupted by server restart”）。
+
+### `GET /api/upload-tasks/[id]` / `DELETE /api/upload-tasks/[id]`
+
+**登录** + 本人任务。DELETE 仅允许非活动状态（先 cancel），只删记录不删数据目录。
+
+### `POST /api/upload-tasks/[id]/cancel`
+
+**登录** + 本人任务。server 任务置取消标志（runner 自行清理半成品目录）；browser 任务标记 `cancelled` 使后续 chunk 被拒，并删除 `.uploads/<id>` 临时目录。已完成任务的 `targetDir` 不会被删除。
+
+### `POST /api/upload-tasks/server-import`
+
+**登录**（与 `/api/fs/browse` 同一访问策略）。body：`sourcePath`, `datasetName`, `format`, `confirmedOverwrite`。校验 sourcePath 是存在目录、配额按源目录大小计算，规则与 upload/init 相同；立即返回任务并异步在进程内复制（4 并发、每秒最多一次进度写库）。
 
 ### `POST /api/datasets/parse`
 
-**登录**。body：`datasetId`, `annotationPath`, `imageDir`。解析标注并**写回**数据集统计（`numClasses` / `numAnnotations` / `numTrainImages` / `numEvalImages` / `classStats`）。
+**登录**。body：`datasetId`, `annotationPath`, `imageDir`。解析标注并**写回**数据集统计（`numClasses` / `numAnnotations` / `numTrainImages` / `numEvalImages` / `classStats`）。相对路径一律按**数据集所有者**（`dataset.userId`）的用户目录解析——管理员解析他人数据集时不会落到自己的目录。
 
 ### `GET /api/datasets/parse?path=<file>&datasetDir=<dir>`
 
@@ -161,7 +191,7 @@ AnomalyFolder 的名称会被 slug 化（anomalib 用 datamodule `name` 拼结�
 
 ### `GET /api/datasets/samples?datasetId=<id>&categoryId=<id>&limit=20`
 
-**登录**。按类别抽样返回样本图片与标注，供数据集预览使用。COCO 读标注 JSON，PaddleSeg 读列表文件。
+**登录**。按类别抽样返回样本图片与标注，供数据集预览使用。COCO 读标注 JSON，PaddleSeg 读列表文件。相对 `datasetDir` 同样按数据集所有者的用户目录解析（`resolveDatasetRoot`）。
 
 ### `GET /api/datasets/image?path=<abs>&colorize=1&classes=<n>`
 
@@ -486,11 +516,27 @@ body：`projectId`（必填）, `name`（必填）, `type`（`eval` \| `infer`�
 **管理员**。新的完整标注项目接口，只访问当前管理员自己的文件。
 
 - `POST`：body 为 `autotrain-localization` v1 项目（`id` UUID、`name`、`labels`、`keypointNames`、`images`）。验证结构、重复实例/图片、类别与点位引用；允许未完成草稿。返回 `{success:true,data:{id}}`。无效数据返回 400，大于 20 MB 返回 413。
-- 保存路径：`annotations/{userId}/projects/{id}.json`，先写临时文件再原子替换。项目含旋转框、实例关键点、可见性、采集批次、划分和确认状态，不含原图，不修改数据库。
-- `GET`：返回 `{success:true,data:[{id,name,images,modified}]}`。
-- `GET ?id=<UUID>`：返回完整项目；非法 ID 返回 400，不存在/非本人项目返回 404。
+- 保存路径：`annotations/{userId}/projects/{id}.json`，先写临时文件再原子替换。项目含旋转框、实例关键点、可见性、采集批次、划分和确认状态，不含原图，不修改数据库。每次保存同时把集合标记为 active 并重置自动归档计时（保存已归档集合会重新激活它）。
+- 生命周期元数据存于同目录的 `<id>.meta.json` 边车文件（`src/lib/annotation-store.ts`）：`{status, activeSince, archivedAt?, archivedReason?: 'auto'|'manual', createdAt}`。无边车文件视为 active，`activeSince`/`createdAt` 取项目文件 mtime/birthtime——因此早于 7 天的历史集合在首次列举时自动归档（有意行为）。懒归档在 list/get 时应用并持久化。`ARCHIVE_AFTER_DAYS = 7`，自**最后一次保存**起算。
+- `GET ?status=active|archived|all&q=`（默认 `active`，数据集导入对话框和编辑器「打开已保存项目」只见 active）：返回 `{success:true,data:[{id,name,images,reviewedImages,instances,labels,status,activeSince,archiveAt,archivedAt,archivedReason,createdAt,modified}]}`，`archiveAt` 仅 active 时返回（activeSince+7d）。
+- `GET ?id=<UUID>`：返回完整项目，归档集合也可读取；非法 ID 返回 400，不存在/非本人项目返回 404。
+
+### `PATCH | DELETE /api/annotation/projects/[id]`
+
+**管理员**，同样只限当前管理员自己的存储目录。
+
+- `PATCH`：`{name?, status?: 'active'|'archived'}`，至少一项。改名原子重写项目 JSON 并重新校验；激活把 `activeSince` 重置为现在，归档记 `archivedAt`/`archivedReason: 'manual'`。
+- `DELETE`：删除项目 JSON 和 meta 边车；不触碰源图片。
 
 Labelme→COCO、Labelme→PaddleSeg、合并 Labelme 到 COCO 三个旧转换接口遇到 `point` 或 `flags.autotrain_obb=true` 时返回 400，提示使用定位数据准备工具，避免悄悄丢失关键点/方向监督。
+
+### `GET /api/fs/browse`
+
+**登录**。服务器文件系统的只读目录列举（不返回文件内容），供 Validation 推理输入/输出等路径选择器浏览服务器路径。
+
+- `?path=<abs>`：列出该目录；缺省或为空时列出文件系统根（Windows 为存在的盘符，其它为 `/`）。
+- `?images=1`：除目录外同时列出图片文件（`.jpg/.jpeg/.png/.bmp/.gif/.tif/.tiff/.webp`，不区分大小写）；否则只返回目录。
+- 返回 `{success,data:{path,parent,entries:[{name,path,type}],truncated}}`；`path`/`parent` 在根列表时为 `null`，目录优先、按名称数字序排序，最多 2000 项（`truncated` 标记）。路径不存在或不是目录返回 400。
 
 ### `GET /api`
 
@@ -515,23 +561,33 @@ Labelme→COCO、Labelme→PaddleSeg、合并 Labelme 到 COCO 三个旧转换�
 
 管理员专用，只读取当前用户保存的标注项目。JSON 参数：
 
-- `annotationProjectId`：已保存标注项目 UUID；`imagesRoot`：服务器原图绝对目录。
-- `name`：数据版本名称；`task`：`obb` / `pose`。
-- `splitMode`：`existing` 保留人工划分；`filename-index` 按 `-编号.扩展名` 分组。
+- `annotationProjectId`：已保存标注项目 UUID，必须是 active 集合（已归档集合报「Annotation set is archived; reactivate it on the Annotation page first」）；`imagesRoot`：服务器原图绝对目录。
+- `name`：数据版本名称；`task`：`obb` / `pose` / `detect`。
+- `detect`：纯 TypeScript 导出标准 COCO 检测数据集到 `userDatabasePath/<username>/COCO/<slug>`（`data/{train,val,test}` 保留子目录结构 + `data/annotations/instance_{train,val,test}.json`），不需要 torchPath 或 Python 环境（仅要求 `userDatabasePath`/`userConfigsPath`）。轴对齐矩形原样导出，旋转框转为其角点的轴对齐包围盒（计入 `report.rotatedConverted` 并在对话框提示），关键点忽略；类别按 `project.labels` 顺序编号 1..N。`detectFramework`：`TorchDet`（默认）/ `PaddleDetection`，决定项目框架与 `createConfigs=all` 时生成的模型/训练配置。要求至少 1 张 train 和 1 张 val 图片。
+- `splitMode`：`existing` 保留人工划分；`filename-index` 按 `-编号.扩展名` 分组；`random` 按 `valRatio`/`testRatio`/`seed` 对已确认图片随机划分（相同 `group` 不拆分，空 `group` 视为单张独立）。`report.splits.<split>.excludedUnreviewed` 为 `existing` 模式下标在该划分但未确认而被排除的图片数。
 - `seed`（默认 42）、`valRatio` / `testRatio`（默认各 0.2）。
 - `preview`（默认 true）：仅检查并返回报告；正式提交传 false 及预览返回的 `sourceRevision`，源标注变化时拒绝旧提交。
+- `createConfigs`（默认 `all`）：`all` 创建数据集 + 模型 + 训练参数三段配置；`dataset` 只创建项目与数据集配置，`model`/`trainingConfig` 返回 `null`，需在 Models / Training Configurations 手动补齐后再建任务。
 
-返回 `{success,data}`。预览包含 `report`（保留/排除图片、类别、实例、分组、错误和 SHA256 版本）；正式提交还返回 `project`、`dataset`、`model`、`trainingConfig`。无实例图片排除；未审核实例、Pose 漏点、数据泄漏和错误几何会阻止导入。成功后可直接创建系统训练任务。
+返回 `{success,data}`。预览包含 `report`（保留/排除图片、类别、实例、分组、错误和 SHA256 版本）；正式提交还返回 `project`、`dataset`，以及 `model`、`trainingConfig`（`createConfigs=dataset` 时为 `null`）。只导入已确认（`reviewed`）且有实例的图片；无实例图片计入 `emptyImages`，有实例但未确认的图片计入 `unreviewedImages`，两者合并为 `excludedImages`。Pose 漏点、数据泄漏和错误几何会阻止导入。成功后可直接创建系统训练任务。
+
+### `POST /api/datasets/merge`
+
+**登录**。合并 ≥2 个同格式、同框架的数据集为**新**数据集（源不修改）。body：`action`（`preview` / `merge`）、`datasetIds`（≥2，顺序即类别顺序）、`name`、`projectId`（默认第一个源的项目，须同框架）、`allowClassMismatch?`。用户只能合并自己的数据集（admin 不限，但所有源须属同一用户）。规则：文件名加 `源名__` 前缀；各源保留自己的 train/val/test 划分；COCO/OBB 类别按名合并（不同需 `allowClassMismatch`），PaddleSeg `class_names.txt`、Pose `keypointNames` 必须一致；跨源相同内容文件（SHA256）阻止合并；OBB/Pose 走 Python `prepare` 生成，目标目录先写临时目录再原子改名，写 `merge-report.json`。`maxDuration: 600`。
+
+### `POST /api/datasets/rotate-augment`
+
+**登录**，owner 或 admin。对受管 YOLOOBB 数据集做离线内切旋转增广（核心在 `torchtrain/torchtrain/inscribed_rotation.py`）。body：`action`（`preview` / `create`）、`datasetId`、`name`、`degrees`（0<d≤45）、`copies`（1–20）、`seed`。仅训练集增广（`<stem>__rot<序号>_±角.jpg`，继承源 group/split；Windows 混合架构 CPU 上增广进程固定在能效核运行，见 LOCALIZATION_WORKFLOW），val/test 原样复制；写 `augment-report.json`（kept/shrunk/dropped），创建同项目的新 Dataset 行。
 
 ### `GET /api/annotation/predict`
 
-管理员专用，列出存在最佳检查点的已完成/停止的 TorchOBB、TorchPose 训练任务。管理员可选用其权限范围内的模型。返回 `{success,data:[{id,name,framework,projectName,bestMetric}]}`。
+管理员专用，列出存在可用检查点的已完成/停止的 TorchOBB、TorchPose、PaddleDetection 训练任务。PaddleDetection 检查点按 `best_model.pdparams` → `model_final.pdparams` → 最大编号 `N.pdparams` 选择；`outputDir` 为相对路径时按 PaddleDetection 仓库目录解析（旧任务），其后还会尝试 `{userDatabasePath}/{project.user.username}/jobs/{job.name}`（旧记录 `output/<project>/<job>` 指向的目录常已不存在，权重实际保存在这里）。管理员可选用其权限范围内的模型。返回 `{success,data:[{id,name,framework,projectName,checkpoint,bestMetric}]}`。
 
 ### `POST /api/annotation/predict`
 
 管理员专用。`multipart/form-data` 字段：`jobId`、`confidence`（0.01–0.99，默认 0.25）、`names`（原项目相对图片名称的 JSON 数组）和重复 `images` 文件字段。每批 1–16 张、总计≤128 MB，支持 JPEG/PNG/BMP/WebP。
 
-使用任务保存的配置和最佳权重，通过配置的 Python/CUDA 环境实际推理；临时上传文件与可视化输出随后清理。返回任务、类别/点位 schema 和原图像素坐标的实例结果。接口不改写人工标注；浏览器将结果设为 `reviewed:false`，人工确认并通过项目保存接口持久化后，才可被训练导入。
+使用任务保存的配置和最佳权重，通过配置的 Python/CUDA 环境实际推理；临时上传文件与可视化输出随后清理。PaddleDetection 任务改走仓库内 `tools/paddledet_annotate.py`（`--ppdet_root` 注入 PD 仓库路径，cwd=PD 仓库），任务 `task:'detect'`，返回轴对齐 `bbox_xyxy_px`；配置文件优先复用 `configPath`（绝对 → `userConfigsPath` 相对 → PD 仓库相对），找不到时把 `job.yamlConfig` **原文**写入临时文件（不做 YAML parse，避免丢失 `!COCODataSet` 等自定义标签）。返回任务、类别/点位 schema 和原图像素坐标的实例结果。接口不改写人工标注；浏览器将结果设为 `reviewed:false`，人工确认并通过项目保存接口持久化后，才可被训练导入。
 
 ### 定位模型导出约定
 

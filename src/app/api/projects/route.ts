@@ -14,6 +14,42 @@ export async function GET(request: NextRequest) {
     const { userId, role } = auth;
     const whereClause = buildUserFilter(userId, role, 'userId');
 
+    // Paginated/filtered listing for the Projects page. When none of these
+    // params is present the response shape stays { success, data } exactly as
+    // before — other pages fetch this route for project dropdowns.
+    const params = request.nextUrl.searchParams;
+    const query = params.get('q')?.trim() || '';
+    const limitParam = params.get('limit');
+    const pageParam = params.get('page');
+    const pageSizeParam = params.get('pageSize');
+    if (query || limitParam !== null || pageParam !== null || pageSizeParam !== null) {
+      const where = query
+        ? { AND: [whereClause, { OR: [
+            { name: { contains: query } },
+            { description: { contains: query } },
+          ] }] }
+        : whereClause;
+      const include = { _count: { select: { datasets: true, models: true, trainingJobs: true } } };
+      const orderBy = { updatedAt: 'desc' as const };
+      let take: number | undefined;
+      let skip: number | undefined;
+      let page = 1;
+      let pageSize = 0;
+      if (limitParam !== null) {
+        take = Math.max(1, Math.min(100, parseInt(limitParam, 10) || 5));
+      } else {
+        pageSize = Math.max(1, Math.min(100, parseInt(pageSizeParam ?? '', 10) || 12));
+        page = Math.max(1, parseInt(pageParam ?? '', 10) || 1);
+        take = pageSize;
+        skip = (page - 1) * pageSize;
+      }
+      const [projects, total] = await db.$transaction([
+        db.project.findMany({ where, orderBy, take, skip, include }),
+        db.project.count({ where }),
+      ]);
+      return NextResponse.json({ success: true, data: projects, total, page, pageSize });
+    }
+
     const projects = await db.project.findMany({
       where: whereClause,
       orderBy: {

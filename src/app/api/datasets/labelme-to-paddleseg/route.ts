@@ -333,8 +333,8 @@ export async function POST(request: NextRequest) {
     if (Number.isFinite(maxQuota) && maxQuota > 0 && usedStorage + requiredSize > maxQuota) {
       return NextResponse.json(
         {
-          error: '存储空间不足',
-          message: `您已使用 ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB，配额为 ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB。本次转换预计需要 ${(requiredSize / 1024 / 1024).toFixed(2)} MB 空间。`,
+          error: 'Insufficient storage',
+          message: `You have used ${(usedStorage / 1024 / 1024 / 1024).toFixed(2)} GB of your ${(maxQuota / 1024 / 1024 / 1024).toFixed(2)} GB quota. This conversion needs about ${(requiredSize / 1024 / 1024).toFixed(2)} MB.`,
           usedStorage,
           maxStorageQuota: maxQuota,
           requiredSpace: requiredSize,

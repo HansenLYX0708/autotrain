@@ -184,8 +184,8 @@ python -m unittest discover -s tools/localization -v
 ## 10. 系统训练和模型辅助标注
 
 1. Settings 配置 `torchPath`，并分别给 `TorchOBB`、`TorchPose` 设置可用 CUDA 的 Python 解释器。安装 `tools/localization/requirements.txt`；ONNX 导出另需 `onnx`，部署检查可用 `onnxruntime`。Python 3.8 环境本次验证使用 torch 2.4.1+cu118、Ultralytics 8.3.232、polars 1.8.2、onnx 1.16.2。
-2. 保存标注项目，在 **Datasets → 导入定位标注** 选择项目、服务器图片根目录和任务。未标注图片被排除；有实例但未审核的图片会阻止导入。Pose 要求每个实例逐点处理，不能把漏标点转换成不可见点。
-3. 预览类别、实例数、排除清单和分组划分，再提交创建数据集及三段配置。导入保存源文件 SHA256、标注快照、随机种子和划分报告。已有明确划分可以保留；自动划分可用采集组或文件名末尾编号。
+2. 保存标注项目，在 **Datasets → 导入定位标注** 选择项目、服务器图片根目录和任务。只导入已确认且有实例的图片：未标注图片、有标签但未确认的图片（包括未审核的模型预标注）都会排除，并在报告中分别列出。Pose 要求每个实例逐点处理，不能把漏标点转换成不可见点。
+3. 预览类别、实例数、排除清单和分组划分，再提交创建数据集；「创建的配置」可选仅数据集配置或数据集 + 模型 + 训练参数三段配置（选前者时之后需在 Models / Training Configurations 手动创建配置）。导入保存源文件 SHA256、标注快照、随机种子和划分报告。已有明确划分可以保留（标为某划分但未确认的图片同样排除，预览中按划分列出排除数）；自动划分可用文件名末尾编号分组，或按比例和随机种子随机划分。随机划分只作用于已确认图片，忽略标注页的 train/val/test；填写了相同采集批次的图片保持在同一集合，未填批次的逐张独立划分（相似连拍可能跨集合，评估偏乐观）。
 4. 在 Models / Configurations 调整预训练权重、输入尺寸、batch、epochs 和学习率，再在 **Jobs** 创建并开始任务。当前适配器支持单张 CUDA GPU。真实 runner 写入训练日志和指标，最佳权重为 `best_model/model.pt`，最终权重为 `model_final/model.pt`。
 5. 在 **Validation** 选择检查点执行评估或推理；评估配置 `localization.evaluation.split` 可选 `val` / `test`。结果包含 mAP、漏检/误检、匹配实例的像素误差和模 180° 方向误差。像素误差使用置信度 0.25、同类 IoU≥0.5 的一对一匹配；漏检不计入误差均值，必须同时看匹配数。Pose 使用 OKS 和命名点误差。
 6. 检查点导出生成 ONNX 或 TorchScript 包，包含模型、`schema.json` 和 `export.json`。导出的原始网络输出仍需按对应任务做缩放还原和 NMS；不能直接把输出张量当作设备坐标。
@@ -227,3 +227,150 @@ python -m unittest discover -s tools/localization -v
 后续从网页导出时可选择 ONNX / TorchScript，导出按检查点分目录保存，避免不同 epoch 的导出相互覆盖。OBB 和 Pose 导出均通过真实图片的 ONNX Runtime/PyTorch 张量对比；这验证导出一致性，不代表定位精度。Pose 仅用 4 个真实完整实例裁剪图做了隔离 GPU 适配器测试，未把不完整的全图 Pose 标注用于正式训练。48 张原图及原始标注 JSON 的 SHA256 均保持不变。
 
 最终验收包括两种格式的实际导出及 ZIP 下载、Pose 点位数量校验与 GPU 选择、浏览器格式切换及命令预览。生产构建和修改文件 ESLint 通过；全仓类型检查仍有 5 项已知错误（缺 socket.io/socket.io-client、mini-service stderr、dashboard Date|null），本次修改无新增错误。正式 ONNX 的固定输入为 `1×3×1280×1280`，原始输出为 `1×6×33600`；实际图片推理的最大张量绝对差为 0.013672（PyTorch 对 ONNX Runtime），通过约定的数值容差。原始输出需按模型包说明解码、执行旋转 NMS 并映射回原图。
+
+### 直接优化模型输出的角度
+
+角度计算沿用匹配旋转框的长边方向、模 180°；GT 长短边比小于 1.1 时不统计方向。**预测框接近正方形时仍保留其角度误差**。评估新增 `geometry.angleDiagnostics` 和预测文件中的 `angleMatches`，包含原始文件名、实例序号、GT/预测长宽比及误差。网页可查看最大误差样本、≤1°/3°/5°的数量，检测置信度不等于角度可信度。
+
+实测发现原模型会将部分矩形预测为接近正方形，例如 `Cal_RT-9.jpg` 第 5 个实例：GT 长宽比约 1.47，预测约 1.00，置信度 0.90，长边偏差 46.9°。ProbIoU 在正方形处缺少方向梯度；等价的宽高/角度表达及旋转坐标下的距离监督也需要保持一致。
+
+`localization.train.angle_weight` 非零时，适配器在训练阶段启用：
+
+1. 将 GT 的等价 `(w,h,θ)` 表达对齐到当前预测的坐标轴，几何四角不变。
+2. 在旋转框局部坐标系中计算 DFL 的左、上、右、下目标距离，使其与 `dist2rbox` 解码互逆。
+3. 添加矩形轴角约束 `1 - |cos(2Δθ)|`，乘以 `angle_weight` 和原有 box gain。
+
+支持范围为 0～1；0 保留原训练损失。该实现通过 Ultralytics 8.3.232 验证，依赖已固定在 `tools/localization/requirements.txt`。训练 hook 在 EMA 创建后仅挂到训练 criterion；保存的 EMA 不包含自定义 hook/class，因此 `.pt` 仍可由标准 Ultralytics 加载，ONNX 仍输出模型自身的框与角度。推理没有角度归零、图像边缘拟合或其他角度修正步骤。
+
+### 按验证集角度选择检查点
+
+Training Config 的 Data 页提供 `OBB Angle Constraint`、`Nominal Batch Size` 和 `Best Checkpoint Selection`。选择 `Lowest mean angle error` 时：
+
+- 每个 epoch 用独立加载的当前 EMA 检查点预测完整验证集；不对正在训练的模型执行 fuse/predict。
+- 固定 confidence=0.25、同类多边形 IoU≥0.5，只有满足最低匹配召回率和最多误检数的 epoch 才参与角度排序。
+- `best_model/model.pt` 保存符合约束且平均角度误差最小的模型。`best_model/selection.json`、`val-predictions.json` 保存其依据，`angle-selection.json` 保存全部 epoch 的选择过程。
+- 此模式需要 `patience: 0`，避免 mAP 早停先于角度优化结束；表单自动生成这个值。若没有任何 epoch 满足检测约束，任务明确失败，不自动放宽标准。
+- Monitoring 显示角度 mean/P95 曲线，`TrainingJob.bestMetric` 此时表示平均角度误差（度），`bestIter` 表示所选 epoch；mAP 仍单独记录。
+
+同一 Data 页还提供几何增强控件：`Rotation Augmentation (±deg)` 对应 `degrees`，`Horizontal/Vertical Flip Probability` 对应 `fliplr`/`flipud`。固定相机下滑块数据实测表明：开启水平+垂直翻转、关闭旋转增强可将平均角度误差约减半。Pose 任务只有旋转控件——翻转需要 `flip_idx` 关键点映射，`fliplr`/`flipud` 只能通过自定义 YAML 设置。
+
+**内切旋转增广（Inscribed Rotation）**：平台自带的旋转增强（`torchtrain/torchtrain/inscribed_rotation.py`），绕中心旋转后取内切矩形再缩放回原尺寸——无灰边、无填充，单次 warpAffine 完成。被裁剪的框**保持精确旋转角度**，沿自身轴截短到可见部分（Ultralytics RandomPerspective 会裁剪角点并用 minAreaRect 重拟合，角度会错）。训练配置键：`localization.train.inscribed_rotate_degrees`（0–45，0 关闭）、`inscribed_rotate_prob`（默认 0.5），仅 OBB；启用时 `degrees/translate/scale/shear/perspective/mosaic` 必须为 0。注意 `close_mosaic` 会重建 transforms，注入通过 `install_inscribed_rotation` 在类级补丁 `build_transforms` 存活。离线版本：`POST /api/datasets/rotate-augment`（或 `python tools/localization.py rotate-augment`）生成新的增广数据集，仅作用于训练集，val/test 原样复制。
+
+**离线增广只在能效核（E-core）上运行**：本机 i9-14900K 的性能核在执行该增广的大量纯 Python 几何搜索时会破坏解释器内存，进程以 `0xC0000005` 或随机的 `TypeError`/`SystemError` 退出；限制在 E-core 后同样数据可正常完成。（不导入 OpenCV、关闭 GC、换 Python 3.11 都仍崩溃；系统日志中 Defender 等系统进程也有同类崩溃，判断为 CPU 硬件不稳定。）因此 API 启动增广时设置 `AUTOTRAIN_CPU_AFFINITY=efficiency`，`torchtrain/torchtrain/cpu_affinity.py` 按 `GetSystemCpuSetInformation` 的 EfficiencyClass 选出 E-core 并设置进程亲和性；非 Windows 或非混合架构 CPU 上为空操作。命令行手动运行时同样设置该环境变量。这是绕开硬件问题的权宜之计，CPU 更换后可移除。在线训练未做此限制。
+
+同类数据集还可用 **合并数据集**（`POST /api/datasets/merge`）合并。
+
+例如，65 个验证目标下，最低召回率 0.9 要求至少匹配 59 个目标：
+
+```yaml
+use_gpu: true
+localization:
+  train:
+    epochs: 200
+    batch: 4
+    nbs: 4
+    imgsz: 1440
+    optimizer: AdamW
+    lr0: 0.0005
+    lrf: 0.01
+    warmup_epochs: 3
+    warmup_bias_lr: 0.001
+    angle_weight: 0.5
+    selection_metric: angle
+    selection_min_recall: 0.9
+    selection_max_false_positives: 2
+    patience: 0
+    degrees: 10
+    translate: 0.01
+    scale: 0.05
+    hsv_h: 0
+    hsv_s: 0
+    hsv_v: 0.1
+    mosaic: 0
+    mixup: 0
+    perspective: 0
+    fliplr: 0
+    flipud: 0
+    seed: 42
+    deterministic: true
+    workers: 0
+    amp: false
+    save_period: 20
+    log_interval: 1
+```
+
+这份参数针对当前固定相机、小角度变化的数据，降低强旋转和裁切增强。`nbs` 等于 batch 时不进行梯度累积，使小数据集每个 batch 都有优化更新。大角度或其他场景需另行验证覆盖范围。自定义 YAML 中的高级训练选项会随表单编辑保留，不再被默认的旋转/亮度等设置覆盖。
+
+原始预训练权重可继续使用 `D:/_work/projects/autoTraining/weights/localization/yolo11n-obb.pt`，在同一数据集配置上创建新的模型、训练参数和任务。测试集只在验证集确定检查点后评估；曾用于排查问题的测试集结果属于回归对照，生产精度仍需新的采集批次验收。
+
+### 直接角度优化：正式重训实测（2026-11-06）
+
+业务任务 `slider-gen5-angle-retrain-1793947516444`，ID `cmw4m175m0009uicsdkgix6ux`。所有者正常登录后，通过系统接口创建并启动 RTX 4090 任务；从原始 YOLO11n-OBB 预训练权重开始，采用上面的 1440 / batch 4 / nbs 4 / lr 0.0005 / angle_weight 0.5 / 旋转±10°配置，实际完成 **200 epochs**。运行约 6 分 33 秒，数据库记录 1000 条训练日志、200 条评估日志。
+
+验证集角度选择器选中 **epoch 92**：满足至少匹配 59/65 个目标、误检不超过 2 个的约束。测试集在选择完成后评估，所有角度均来自模型原始预测。
+
+| 指标 | 原模型 val | 重训 val | 原模型 test | 重训 test |
+|---|---:|---:|---:|---:|
+| mAP50 | 95.24% | 94.61% | 97.08% | 97.50% |
+| mAP50–95 | 87.17% | 92.77% | 88.37% | 95.67% |
+| 匹配 / 漏检 / 误检 | 59 / 6 / 2 | 59 / 6 / 1 | 39 / 3 / 3 | 40 / 2 / 0 |
+| 中心误差 mean / P95（px） | 12.18 / 26.20 | 6.60 / 14.12 | 11.84 / 26.16 | 4.62 / 9.08 |
+| 角度误差 mean / P95（°） | 8.05 / 25.93 | 0.82 / 1.97 | 3.64 / 9.61 | 0.90 / 1.94 |
+
+验证集角度对照使用完全相同的 55 个目标。测试集原有 38 个可评估方向的匹配目标全部保留，它们的配对平均误差由 3.64°降至 0.92°；新模型额外匹配了一个目标，39 个角度样本总体均值为 0.90°。其中 25/39≤1°、38/39≤3°，最大误差约 3.11°。统计阈值仍为 confidence=0.25、同类多边形 IoU≥0.5，没有删除近正方形预测来降低误差。
+
+业务任务目录：
+
+`H:/Autotrain_user_database/Hansen Liu/jobs/slider-gen5-angle-retrain-1793947516444/`
+
+- `best_model/model.pt`：按角度选中的 epoch 92，可在 Annotation 直接选择上述新任务使用。
+- `best_model/selection.json`、`best_model/val-predictions.json`：选中检查点的验证依据与原始预测。
+- `angle-selection.json`：200 个 epoch 的角度、检测约束和选择记录。
+- `validation/eval-52cdfe61fc14/`、`validation/eval-15614da78878/`：val / test 评估结果。
+- `validation/raw-angle-comparison.jpg`：四个相同目标的重训前后对照，绿色为 GT，左侧红色为原模型，右侧蓝色为重训原始预测。
+- `export_model/best_model/obb_onnx/`：ONNX、schema、导出说明。
+- `angle-verification.json`：权重 SHA256、配对统计、导出一致性及旋转补测结果。
+
+标准 Ultralytics 可独立加载新 `.pt`；ONNX Runtime / PyTorch 实图张量对比通过，最大绝对差 0.005921。**新 ONNX 固定输入为 `1×3×1440×1440`，输出为 `1×6×42525`**，外部部署须采用对应的预处理尺寸。系统标注预测接口已用新任务实测成功。36 张准备集图片的 SHA256 与导入 manifest 一致。
+
+另取两张验证图，分别作±7°整图旋转并补边，检查网络是否随目标旋转输出角度：4 张派生图共 24 个目标，匹配 18、漏检 6、误检 6，匹配角度 mean 1.54° / P95 2.74°。该变换也改变了补边和边界上下文，结果不能当作独立测试集；检测计数下降说明旋转/边界场景仍需补充真实数据验收，不能据原场景 0.90°均值承诺跨场景精度。
+
+新参数表单、YAML 保存、角度检查点显示和角度曲线通过浏览器验收；几何/梯度/选择约束测试、配置链路和日志解析检查通过。构建、修改文件 ESLint 通过；全仓类型检查仍是前述 5 项已有错误。
+
+### 角度优化第二轮：增广对照与 v2 模型（RTX 3090）
+
+**对照方法。** 在隔离实例上使用与业务数据集逐字节一致的副本，在 RTX 3090 上进行 12 组真实训练。每组都从原始 YOLO11n-OBB 预训练权重开始，训练 200 epoch，并按验证集角度选择检查点（约束同上）。表中只使用验证集；测试集只用于最终模型的一次验收。脚本和逐项结果位于 `D:/_work/projects/autoTraining/angle-experiments/`（`sweep.ts`、`sweep.json`、`analyze.py`、`analysis.json`）。
+
+| 配置（相对第一轮正式配置的变化） | val 平均 / P95（°） | 101–200 epoch 中位 |
+|---|---:|---:|
+| 无变化（4090 / 3090 各一次） | 0.82 / 1.97，0.94 / 2.42 | 0.77，0.81 |
+| imgsz 1024 | 0.90 / 2.25 | 0.75 |
+| 翻转 fliplr=flipud=0.5 | 0.68 / 1.78 | 0.84 |
+| 翻转 + angle_weight 1.0（种子 42 / 7） | 0.55 / 1.48，0.58 / 1.39 | 0.72，0.71 |
+| 翻转 + angle_weight 1.0 + imgsz 1024 | 0.68 / 1.73 | 0.85 |
+| **翻转 + degrees 0**（种子 42 / 7） | **0.36 / 0.74，0.38 / 0.87** | 0.47，0.41 |
+| **翻转 + degrees 0 + angle_weight 1.0**（种子 42 / 7） | **0.34 / 0.78，0.37 / 0.87** | 0.43，0.46 |
+| 翻转 + degrees 0 + imgsz 1024 / 1920 | 0.37 / 0.80，0.39 / 0.88 | 0.49，0.40 |
+
+结论：
+
+- 当前固定相机数据中，**±10° 旋转增广是主要误差来源**。关闭旋转、开启精确翻转后，两种随机种子都稳定降低到约 0.35°。机制尚未单独证实；可能与旋转重采样及边界框裁剪后重新拟合矩形有关。
+- 输入尺寸不是瓶颈。1024 和 1920 的最佳值接近，但后期检测稳定性较差：1024 的后期误检中位数为 6，1920 的后期匹配中位数降到 51/65。原生 1440 最稳定。
+- 101–200 epoch 中位数能反映单个最佳 epoch 的选择偏差。不同配置相差 0.1° 以内时，可视为运行波动。
+- 水平翻转测试时融合（`flip_tta.py`）效果不稳定，没有采用。
+
+**标签精度上限。** 208 个人工框中，61 个角度正好是 0°/90°（误差小于 0.01°），说明部分框可能没有微调方向。`edge_reference.py` 不依赖人工标注：它在框的长边附近按亚像素梯度拟合图像直边，只保留拟合残差小于 0.6 px 的边。在相同目标上，人工 GT 与图像直边的平均差约为 0.38°（val）和 0.40°（test）。图像直边本身也有测量噪声，因此对现有 GT 评估低于约 0.3°，主要受标签精度限制。若要继续降低，应先按直边修正标注并人工复核，再重新训练。
+
+**v2 业务模型。** 业务任务 `slider-gen5-angle-v2-1793974963191`（ID `cmw52dh7d01vhuicsurf6qsb5`）由数据所有者会话通过系统启动，使用 RTX 3090。配置为第一轮正式参数加 `fliplr: 0.5, flipud: 0.5, degrees: 0, angle_weight: 1.0`，与对照组 R7 相同，结果逐位复现：选中 epoch 61。
+
+| 指标 | v1 val | v2 val | v1 test | v2 test |
+|---|---:|---:|---:|---:|
+| mAP50–95 | 92.77% | 93.69% | 95.67% | 96.30% |
+| 匹配 / 漏检 / 误检 | 59 / 6 / 1 | 59 / 6 / 1 | 40 / 2 / 0 | 40 / 2 / 2 |
+| 中心误差 mean / P95（px） | 6.60 / 14.12 | 4.83 / 8.47 | 4.62 / 9.08 | 3.57 / 7.58 |
+| 角度 vs 人工 GT mean / P95（°） | 0.82 / 1.97 | **0.34 / 0.78** | 0.90 / 1.94 | **0.42 / 1.03** |
+| 角度 vs 图像直边 mean（°） | 1.04 | **0.28** | 0.88 | **0.30** |
+
+v2 测试集多出的 2 个误检，都是图像下边缘高约 25 px 的被裁切工件条带，置信度为 0.35/0.50。验证集唯一误检也是上边缘条带。部署时可以补标这类局部工件，或按最小短边过滤。产物位于 `H:/Autotrain_user_database/Hansen Liu/jobs/slider-gen5-angle-v2-1793974963191/`：`best_model/model.pt`、`angle-selection.json`、`export_model/best_model/obb_onnx/`，以及 `angle-verification.json`（含 SHA256 和直边对比）。ONNX 输入为 `1×3×1440×1440`，与 PyTorch 的最大绝对差为 0.0023。
+
+Training Config 的 Data 页可以直接设置 `degrees` / `fliplr` / `flipud`。如果生产图像确实存在旋转，应保留相应的旋转增广，并用真实旋转数据验收；不能直接沿用本数据集的 0°设置。

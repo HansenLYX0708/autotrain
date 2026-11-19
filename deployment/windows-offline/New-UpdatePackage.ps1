@@ -106,7 +106,7 @@ if (-not $SkipChecks) {
     }
     Write-Host "    tsc: $($errorLines.Count) error(s) within baseline."
 
-    foreach ($Script in @("check-log-parsers.ts", "check-dataset-config-chain.ts", "check-console-log.ts", "check-labelme-images.ts")) {
+    foreach ($Script in @("check-log-parsers.ts", "check-dataset-config-chain.ts", "check-console-log.ts", "check-labelme-images.ts", "check-localization-detect.ts")) {
         $ScriptPath = Join-Path $RepoRoot "scripts\$Script"
         if (-not (Test-Path $ScriptPath -PathType Leaf)) { continue }
         Write-Host "`n==> npx tsx scripts/$Script"
@@ -189,6 +189,35 @@ try {
                 Invoke-Native { & npx.cmd prisma db push --skip-generate } "prisma db push (smoke db)"
             } finally { Pop-Location }
 
+            # Simulate an OLD installed database (pre-UploadTask) and prove the
+            # packaged schema step is additive and idempotent. Note the .mjs
+            # helpers resolve @prisma/client from the app dir argument; the repo
+            # root is used here, the packaged payload app during apply.
+            $OldDb = Join-Path $CheckRoot "old.db"
+            Copy-Item (Join-Path $CheckRoot "smoke.db") $OldDb
+            Invoke-Native { & node.exe (Join-Path $ScriptRoot "Apply-SchemaUpdate.mjs") $OldDb $RepoRoot $PackageRoot } "Apply-SchemaUpdate on a fresh db (already present)"
+            'DROP TABLE "UploadTask";' | & node.exe (Join-Path $ScriptRoot "Exec-Sql.mjs") $OldDb $RepoRoot | Write-Host
+            if ($LASTEXITCODE -ne 0) { Fail "Could not drop UploadTask on old.db (exit $LASTEXITCODE)." }
+            Invoke-Native { & node.exe (Join-Path $ScriptRoot "Apply-SchemaUpdate.mjs") $OldDb $RepoRoot $PackageRoot } "Apply-SchemaUpdate on old db (first run)"
+            Invoke-Native { & node.exe (Join-Path $ScriptRoot "Apply-SchemaUpdate.mjs") $OldDb $RepoRoot $PackageRoot } "Apply-SchemaUpdate on old db (second run, idempotent)"
+            Write-Host "    schema update: created UploadTask on old.db and is idempotent"
+
+            # A deliberately corrupted copy (missing column elsewhere) must fail.
+            $BrokenDb = Join-Path $CheckRoot "broken.db"
+            Copy-Item (Join-Path $CheckRoot "smoke.db") $BrokenDb
+            'ALTER TABLE "User" DROP COLUMN "status";' | & node.exe (Join-Path $ScriptRoot "Exec-Sql.mjs") $BrokenDb $RepoRoot | Write-Host
+            if ($LASTEXITCODE -ne 0) { Fail "Could not corrupt broken.db (exit $LASTEXITCODE)." }
+            $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+            try {
+                & node.exe (Join-Path $ScriptRoot "Apply-SchemaUpdate.mjs") $BrokenDb $RepoRoot $PackageRoot 2>&1 | Write-Host
+                $brokenExit = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $prev }
+            if ($brokenExit -eq 0) { Fail "Apply-SchemaUpdate succeeded on a database missing a User column; expected failure." }
+            Write-Host "    schema verification rejects a missing column (exit $brokenExit)"
+
+            # Point the packaged server at the migrated "old" database.
+            $env:DATABASE_URL = "file:" + $OldDb.Replace("\", "/")
+
             $port = 3020
             while ($port -lt 3100) {
                 try {
@@ -235,6 +264,14 @@ try {
             }
             if ($apiStatus -ne 401) { Fail "GET /api/datasets returned $apiStatus, expected 401" }
             Write-Host "    GET /api/datasets -> 401 (unauthenticated, API routes load)"
+            $tasksStatus = 0
+            try {
+                (Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/upload-tasks" -UseBasicParsing -TimeoutSec 10).StatusCode | Out-Null
+            } catch {
+                $tasksStatus = [int]$_.Exception.Response.StatusCode
+            }
+            if ($tasksStatus -ne 401) { Fail "GET /api/upload-tasks returned $tasksStatus, expected 401" }
+            Write-Host "    GET /api/upload-tasks -> 401 (UploadTask table present, route loads)"
             Write-Host "    smoke test passed on port $port"
         } finally {
             if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction Continue }

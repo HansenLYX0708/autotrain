@@ -62,6 +62,7 @@
 
 - 新建项目：名称、描述、**框架**（六选一）、任务类型。任务类型由框架推导——检测框架额外允许 `instance_segmentation`，其余框架只有唯一合法值。
 - 列表展示每个项目下的数据集 / 模型 / 配置 / 任务数量。
+- 列表两种视图：**Recent 5**（默认，按更新时间取 5 条）和 **All projects**（分页，每页 12 条）。搜索框按名称/描述在服务端过滤（约 300 ms 防抖），两种视图通用；切换视图或修改搜索回到第 1 页。
 - 归档：把 `status` 置为 `archived`，Dashboard 不再统计。
 - **删除是级联的**：会连带删除该项目下所有数据集、模型、训练配置、训练任务与验证任务（已发布模型只解除关联）。
 
@@ -81,9 +82,11 @@
 
 ### 3.2 上传
 
-- **分片上传**（`upload/init` → `upload/chunk` × N → `upload/complete`）绕开大文件请求体限制。开始前做**配额检查**，不足直接拒绝。
+- **分片上传**（`upload/init` → `upload/chunk` → `upload/complete`）绕开大文件请求体限制。开始前做**配额检查**，不足直接拒绝。小文件打包成批量请求（≤64 文件或 16MB）、大文件 10MB 分片、4 并发、3 次重试，由全局 upload manager 驱动——切换页面不会中断上传。
+- **From server folder**：让服务器在后台任务中把服务器本地目录复制进数据集存储（`UploadTask source='server'`），关掉浏览器也不受影响。
 - 数据集名称只允许字母、数字、下划线、连字符。
 - 同名已存在时弹 **Confirm Overwrite** 确认框。
+- **Upload Tasks**（侧边栏，活动数徽标）：合并展示进行中（速度/ETA）与历史任务，支持取消、断点续传（重新选文件夹）、删除记录；完成后提示去 Datasets 页 **Import Dataset**。
 - **Manage Uploaded**：列出磁盘上真实存在的数据集目录（包括没有数据库记录的遗留目录），可直接删除。
 
 ### 3.3 格式转换
@@ -91,6 +94,8 @@
 - **Convert Labelme**：
   - → **COCO**：多边形/矩形标注转 COCO JSON。图片匹配走 `src/lib/labelme-images.ts` 共享规则：先按 `imagePath` 文件名在 `imgs/`（含子目录、大小写不敏感）查找，重名时用 `imagePath` 的尾部目录消歧；找不到再按 **JSON 文件名**回退（`5A3B.json` ↔ `5A3B.jpg`，图片被改名成与 JSON 同名时常用这条）；带 BOM 的 JSON 也能解析。训练或验证分区为空会报错；已有输出目录不会被覆盖。
   - → **PaddleSeg**：产出官方 `labelme2seg` / Pascal VOC 风格布局。掩码是 **8-bit 索引色 PNG**——调色板索引即 class id，所以 PaddleSeg/PIL 读到的是可直接训练的二维标签图，而任何图片查看器都能看到亮色伪彩（纯灰度 0..N-1 在肉眼看来和全黑没区别）。类别顺序完全确定：0 恒为 `_background_`，1..N 按文件名排序扫描时首次出现的顺序。多边形按 even-odd 扫描线填充，**后面的形状覆盖前面的**（形状顺序即 z-order）。
+- **合并数据集**：把 ≥2 个同格式、同框架的数据集合并为**新**数据集（源不修改，各源保留自己的 train/val/test 划分，文件名加 `源名__` 前缀）。支持 COCO、PaddleSeg、YOLOOBB、YOLOPose、AnomalyFolder；格式为空的旧行按项目框架推断。COCO/OBB 类别按名合并（不一致需勾选确认），PaddleSeg `class_names.txt` 与 Pose `keypointNames` 必须一致；跨源相同内容的文件会被拒绝。预览给出每源每划分计数、类别差异与重复清单。
+- **生成旋转增广数据集**：对 YOLOOBB 数据集做离线内切旋转增广（仅训练集，`<stem>__rot<序号>_±角` 命名并继承组/划分），生成新数据集并在 `augment-report.json` 记录 kept/shrunk/dropped。注意：在此类数据集上再开在线内切旋转等于旋转两次。
 - **Merge Labelme**：把一批新的 labelme 标注合并进既有 COCO 数据集，可指定 `trainRatio` / `valRatio`。合并前有 **Verify** 步骤，先给出影响预览再决定是否执行：
   - 训练集 / 验证集图片数的「合并前 → 合并后」及增量
   - 源数据里有效样本数（相对 JSON 总数）、按比例被跳过的数量
@@ -107,6 +112,7 @@
 - 导入和重新解析都支持绝对数据集目录。配置了验证标注但文件读取失败时返回错误，不再静默保存只有 train 的统计。旧记录可点击 **Parse Dataset Statistics** 重新计算。
 - LabelMe → COCO 的导入/重新解析会在验证路径缺失时识别标准 `data/annotations/instance_val.json`（也支持 `annotations/instance_val.json`），同时恢复 val 图片路径。旧记录重新解析后会同步修复数据集 YAML。界面区分「没有验证统计」与「没有验证数据」，可直接点击 **Parse train / val statistics**；显式选择的错误标注路径不会被自动替换。
 - Labelme categories 与 COCO categories 的对照（转换前后核对类别有没有丢）
+- 右侧面板顶部有 **Location** 块：Owner（自己时标 `(you)`）、完整解析路径 `resolvedDatasetDir`（等宽字体 + 复制按钮）以及存储的 train/val 标注相对路径。数据集卡片在他人数据集上显示所有者徽标。相对 `datasetDir` 始终按**数据集所有者**的用户目录解析，管理员打开他人数据集不会错用自己的目录。
 
 ### 3.5 样本预览
 
@@ -217,7 +223,8 @@
 - **PatchCore / PaDiM 的 loss 恒为 0**（它们不做梯度下降，是内存库方法）。**平坦的 loss 曲线不代表训练卡住。**
 - 异常检测的指标来自 anomalib 在验证划分上的自适应阈值，而该划分正是拟合阈值用的，因此**训练期指标偏乐观**。要无偏结论请单独跑一次 Validation。
 - 评估点比训练点稀疏很多（按 `save_interval` / `snapshotEpoch` 触发），指标折线天然是阶梯状。
-- Monitoring 载入任务的**完整**日志历史（`fields=compact` 翻完所有页，之后用 `afterTimestamp`/`afterId` 游标增量追加），验证行直接从其中筛出；图表超过 4000 点会按 min/max 抽稀（峰值保留），图下标注「Showing N of M points」。
+- Monitoring 载入任务的**完整**日志历史（`fields=compact` 翻完所有页，之后用 `afterTimestamp`/`afterId` 游标增量追加），验证行直接从其中筛出；图表超过 4000 点会按 min/max 抽稀（峰值保留），卡片标题出现「Sampled」徽标并在图下注明「Sampled: showing N of M points … Full data in the console output below」。
+- Loss / LR 图的 X 轴是数值轴并标注覆盖范围（描述行形如「Epoch 1 → 200 · 14,800 points」或「Iter 310 → 38,810」）：迭代单调递增时按迭代计（分割/异常），迭代每 epoch 重置时按分数 epoch 计（`epoch-1+iter/totalIter`，1 基日志），缺 `totalIter` 时退化为行序号。悬浮提示显示真实 epoch 与 iteration。
 - **Console Output** 卡片显示 `autotrain-console.log` 的尾部，运行中每 5 秒按 `offset` 追加（不会显示半行）；「Load earlier」向前翻页，搜索框对整文件做大小写不敏感行搜索（`line N: text`），另有整文件下载链接。`Found inf or nan` 行标黄、Traceback/Error 标红。更新前启动的任务没有该文件，卡片回退显示解析日志行。AMP 溢出会在图表上方给出「AMP loss-scale overflow」告警（本次运行的溢出次数与 loss scale 变化）。
 - 一次运行的**最后一次评估**（通常也是最好的一次）依赖进程退出时的日志 flush，这条路径已专门处理，不会丢。
 
@@ -238,7 +245,7 @@
 
 ### 8.3 Infer
 
-输入可以是单张图或整个目录，指定输出目录。**Inference Results** 以缩略图网格展示结果，点开看大图（Detection Result 面板）。
+输入可以是单张图或整个目录，指定输出目录。输入/输出路径旁的文件夹按钮打开服务器路径选择器（浏览的是**服务器**文件系统，接口 `GET /api/fs/browse`），也可手填绝对路径。**Inference Results** 以缩略图网格展示结果，点开看大图（Detection Result 面板）。
 
 几个已经处理好的坑：
 
@@ -266,9 +273,11 @@
 
 ## 9. Annotation（仅 admin）
 
-内置的**旋转框 + 结构关键点标注**工具，面向 slider ABS / tapring 等生产定位：
+内置的**旋转框 + 结构关键点标注**工具，面向 slider ABS / tapring 等生产定位。页面分两个标签：**Annotation sets**（管理，默认）和 **Editor**（标注）。
 
-- 水平框两点绘制、旋转矩形三点绘制，支持数值调整、实例拖动、缩放和平移。
+- 水平框两点绘制、旋转矩形三点绘制，支持数值调整、实例拖动、缩放和平移。缩放快捷键：`+`/`−` 步进、`0` 适配、`1` 100%、`Ctrl/⌘ + =/-/0` 等价（阻止浏览器整页缩放），`Ctrl+滚轮` 以光标为锚点缩放，工具栏按钮以视口中心为锚点。
+- Annotation sets 标签页按 Active / Archived / All 过滤并搜索，表格含图片、实例、类别数、状态、最后保存时间和自动归档倒计时；操作：打开进编辑器、改名、归档/激活、导出 JSON、删除（不删源图片）。**最后保存超过 7 天的集合自动归档**（懒归档，在列举/读取时写入 `<id>.meta.json` 边车）；每次保存会重新激活并重置计时。数据集导入与「打开已保存项目」只显示 active 集合。
+- 「导入定位标注」的 `detect` 任务把轴对齐框导出为标准 COCO 检测数据集（可选 TorchDet / PaddleDetection 框架），旋转框转包围盒并提示数量。
 - 关键点按名称与实例关联，区分可见、遮挡但位置确定、无法确定；支持单点拖动。
 - 可配置类别/关键点模板，50 步撤销/重做，按采集批次设置 train/val/test，确认已完成标注或负样本。
 - 导入标准两点 Labelme 矩形和旋转矩形，保留关键点关联；任意透视四边形不会被错误转换为 OBB。
@@ -276,9 +285,9 @@
 - **检查 OBB/Pose 数据**提示漏标、越界、类别覆盖和组级泄漏；配套 CLI 生成训练目录，并提供独立的训练/验证/推理/导出入口。
 
 完整标注规范、详细计划与运行命令见 [LOCALIZATION_WORKFLOW.md](LOCALIZATION_WORKFLOW.md)。
-**TorchOBB / TorchPose 已接入 Training Jobs**：Datasets 的“导入定位标注”创建数据集、模型和训练参数，Jobs 使用真实 Python/CUDA 进程训练，Validation 执行评估、推理和模型导出。漏标关键点不能当成不可见点导入 Pose。
+**TorchOBB / TorchPose 已接入 Training Jobs**：Datasets 的“导入定位标注”创建数据集（可选同时创建模型和训练参数配置），Jobs 使用真实 Python/CUDA 进程训练，Validation 执行评估、推理和模型导出。漏标关键点不能当成不可见点导入 Pose。
 
-**模型预测预标注**选择已训练检查点后直接显示预测实例，默认保护已有人工标签。角点/边手柄缩放、黄色手柄旋转（Shift 吸附 15°），支持撤销。结果先待审核，人工逐图确认并保存后可进入训练数据；再次编辑会撤回确认。旧 `/api/annotation/save` 文件仍保留，旧标注可作为 Labelme 文件随原图导入。
+**模型预测预标注**选择已训练检查点后直接显示预测实例（TorchOBB/TorchPose 旋转框/关键点，PaddleDetection 轴对齐检测框），默认保护已有人工标签。角点/边手柄缩放、黄色手柄旋转（Shift 吸附 15°），支持撤销。结果先待审核，人工逐图确认并保存后可进入训练数据；再次编辑会撤回确认。旧 `/api/annotation/save` 文件仍保留，旧标注可作为 Labelme 文件随原图导入。
 
 需要更强的分割标注能力时，用独立的 Python 工具：
 
@@ -341,6 +350,7 @@ Paddle 环境里没有 `torch`，torch 环境里没有 `paddle`，而 anomalib �
 | PaddleSeg 推理报 `UnicodeDecodeError` | TIFF 输入。平台会自动转存 PNG；若失败，手动转好再传 |
 | 异常检测 loss 曲线全是 0 | PatchCore / PaDiM 是内存库方法，没有梯度下降。这是正常的 |
 | Labelme 合并/转换报「image not found」 | `imagePath` 记录的是标注时的原始路径，与上传后文件名常常不同。解析器依次尝试：imgs/（含子目录）按文件名匹配 → 按 JSON 文件名匹配。把图片改成与 JSON 同名即可修复；同名图在多个子目录时需让 `imagePath` 带上目录前缀以消歧 |
+| Monitoring Loss 图早期曲线“看不到” | 旧版 X 轴直接用每 epoch 重置的 `iteration`，刻度挤成一团看似缺早期数据。现已改为分数 epoch 数值轴；悬浮显示「Epoch N · iter i/total」 |
 | Monitoring 出现「Non-finite values detected」告警 | 训练日志打印了 NaN/Inf（loss、mIoU、逐类别数组等）。这些点在图上被略过；训练很可能已发散——降低学习率、关闭 AMP，或检查标注数据 |
 | Console 显示 `Found inf or nan, current scale is …` | AMP 梯度溢出（Paddle AMP 自动把 loss scale 减半，该步被跳过）。早期偶尔几次正常；反复出现说明梯度持续溢出——降学习率、检查标注/box，或关 AMP。Monitoring 的「AMP loss-scale overflow」告警会汇总次数与 scale 变化 |
 | 停止训练后任务显示 failed | 旧版本行为。当前版本手动停止会写 `stopped` |

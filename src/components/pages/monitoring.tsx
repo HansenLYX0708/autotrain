@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { isDetection } from '@/lib/frameworks'
-import { decimateMinMax } from '@/lib/chart-decimate'
+import { decimateMinMax, chartXAxis } from '@/lib/chart-decimate'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -705,29 +705,72 @@ export function MonitoringPage() {
 
   // Prepare chart data. Very long runs are min/max-decimated so tens of
   // thousands of points don't stall recharts — peaks are preserved per bucket.
-  const lossChartFull = logs
+  // The numeric x value is computed over the full series BEFORE decimation so
+  // the axis domain spans the whole run. `chartXAxis` picks the unit from the
+  // data: monotonic iterations keep the raw iteration, per-epoch-resetting
+  // iterations become fractional epochs, missing totalIter falls back to the
+  // row index.
+  const lossRowsBase = logs
     .filter(log => log.loss !== null)
     .map(log => ({
       iteration: log.iteration,
       epoch: log.epoch,
+      totalIter: log.totalIter,
       loss: log.loss,
       lossCls: log.lossCls,
       lossIou: log.lossIou,
       lossDfl: log.lossDfl,
       lossL1: log.lossL1,
     }))
+  const lossXAxis = chartXAxis(lossRowsBase)
+  const lossChartFull = lossRowsBase.map((r, i) => ({ ...r, x: lossXAxis.x(r, i) }))
   const lossChartData = decimateMinMax(lossChartFull, (r) => r.loss, 4000)
   const lossDecimated = lossChartData.length < lossChartFull.length
 
-  const lrChartFull = logs
+  const lrRowsBase = logs
     .filter(log => log.learningRate !== null)
     .map(log => ({
       iteration: log.iteration,
       epoch: log.epoch,
+      totalIter: log.totalIter,
       learningRate: log.learningRate,
     }))
+  const lrXAxis = chartXAxis(lrRowsBase)
+  const lrChartFull = lrRowsBase.map((r, i) => ({ ...r, x: lrXAxis.x(r, i) }))
   const lrChartData = decimateMinMax(lrChartFull, (r) => r.learningRate, 4000)
   const lrDecimated = lrChartData.length < lrChartFull.length
+
+  // Axis presentation shared by both charts: real epochs (or iterations) on a
+  // numeric axis, and a tooltip that names the actual epoch/iteration of the
+  // hovered row rather than the fractional x value.
+  function chartTick(axis: { unit: 'iter' | 'epoch' | 'point'; epochBase: number }, rows: { x: number; epoch: number }[]) {
+    const span = rows.length ? rows[rows.length - 1].x - rows[0].x : 0
+    const maxEpoch = rows.length ? Math.max(...rows.map(r => r.epoch)) : 0
+    return (v: number) =>
+      axis.unit === 'epoch'
+        ? (span < 10
+            ? (v + axis.epochBase).toFixed(1)
+            : `E${Math.min(Math.floor(v + 1e-9) + axis.epochBase, maxEpoch)}`)
+        : v.toLocaleString()
+  }
+  function rangeText(unit: 'iter' | 'epoch' | 'point', rows: { epoch: number; iteration: number }[]) {
+    if (!rows.length) return ''
+    const label = unit === 'epoch' ? 'Epoch' : unit === 'iter' ? 'Iter' : 'Point'
+    const first = rows[0]
+    const last = rows[rows.length - 1]
+    const fmt = (r: { epoch: number; iteration: number }) =>
+      (unit === 'epoch' ? r.epoch : r.iteration).toLocaleString()
+    return `${label} ${fmt(first)} → ${fmt(last)} · ${rows.length.toLocaleString()} points`
+  }
+  function tooltipLabel(unit: 'iter' | 'epoch' | 'point') {
+    return (_value: unknown, payload: readonly { payload?: { epoch?: number; iteration?: number; totalIter?: number; x?: number } }[]) => {
+      const row = payload?.[0]?.payload
+      if (!row) return ''
+      if (unit === 'epoch') return `Epoch ${row.epoch} · iter ${row.iteration}/${row.totalIter}`
+      if (unit === 'iter') return `Iter ${(row.iteration ?? 0).toLocaleString()}`
+      return `Point ${row.iteration}`
+    }
+  }
 
   // Segmentation evaluation metrics over successive evaluations
   const segMetricChartData = evaluationLogs
@@ -749,6 +792,15 @@ export function MonitoringPage() {
       mAP: log.mAP,
       mAP50: log.mAP50,
     }))
+  const angleMetricChartData = evaluationLogs.flatMap(log => {
+    try {
+      const metrics = JSON.parse(log.classMetrics || '{}').metrics
+      if (typeof metrics?.['val/angle_mean_deg'] !== 'number') return []
+      return [{ epoch: log.epoch, mean: metrics['val/angle_mean_deg'], p95: metrics['val/angle_p95_deg'],
+        angleSelection: metrics['selection/angle_mode'] === 1 }]
+    } catch { return [] }
+  })
+  const selectsByAngle = angleMetricChartData.some(row => row.angleSelection)
 
   // Anomaly-detection metrics over successive evaluations. `iteration` is kept
   // as the x-axis label because an anomaly run is measured in steps, and the
@@ -1006,9 +1058,12 @@ export function MonitoringPage() {
             {/* Loss Chart */}
             <Card>
               <CardHeader>
-                <CardTitle>Loss Over Time</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  Loss Over Time
+                  {lossDecimated && <Badge variant="secondary">Sampled</Badge>}
+                </CardTitle>
                 <CardDescription>
-                  Training loss metrics across iterations
+                  Training loss metrics over {lossXAxis.unit === 'epoch' ? 'epochs' : lossXAxis.unit === 'iter' ? 'iterations' : 'points'} — {rangeText(lossXAxis.unit, lossChartFull)}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -1017,12 +1072,15 @@ export function MonitoringPage() {
                     <LineChart data={lossChartData}>
                       <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                       <XAxis
-                        dataKey="iteration"
+                        dataKey="x"
+                        type="number"
+                        domain={['dataMin', 'dataMax']}
                         className="text-xs"
-                        tickFormatter={(value) => value.toLocaleString()}
+                        tickFormatter={chartTick(lossXAxis, lossChartFull)}
+                        label={{ value: lossXAxis.unit === 'epoch' ? 'Epoch' : lossXAxis.unit === 'iter' ? 'Iteration' : 'Point', position: 'insideBottomRight', offset: -5 }}
                       />
                       <YAxis className="text-xs" />
-                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <ChartTooltip content={<ChartTooltipContent labelFormatter={tooltipLabel(lossXAxis.unit)} />} />
                       <Legend />
                       <Line
                         type="monotone"
@@ -1073,7 +1131,7 @@ export function MonitoringPage() {
                 )}
                 {lossDecimated && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Showing {lossChartData.length.toLocaleString()} of {lossChartFull.length.toLocaleString()} points (peaks preserved)
+                    Sampled: showing {lossChartData.length.toLocaleString()} of {lossChartFull.length.toLocaleString()} points (min/max per bucket, first and last points kept). Full data in the console output below.
                   </p>
                 )}
               </CardContent>
@@ -1082,9 +1140,12 @@ export function MonitoringPage() {
             {/* Learning Rate Chart */}
             <Card>
               <CardHeader>
-                <CardTitle>Learning Rate Schedule</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  Learning Rate Schedule
+                  {lrDecimated && <Badge variant="secondary">Sampled</Badge>}
+                </CardTitle>
                 <CardDescription>
-                  Learning rate changes during training
+                  Learning rate over {lrXAxis.unit === 'epoch' ? 'epochs' : lrXAxis.unit === 'iter' ? 'iterations' : 'points'} — {rangeText(lrXAxis.unit, lrChartFull)}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -1093,15 +1154,18 @@ export function MonitoringPage() {
                     <LineChart data={lrChartData}>
                       <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                       <XAxis
-                        dataKey="iteration"
+                        dataKey="x"
+                        type="number"
+                        domain={['dataMin', 'dataMax']}
                         className="text-xs"
-                        tickFormatter={(value) => value.toLocaleString()}
+                        tickFormatter={chartTick(lrXAxis, lrChartFull)}
+                        label={{ value: lrXAxis.unit === 'epoch' ? 'Epoch' : lrXAxis.unit === 'iter' ? 'Iteration' : 'Point', position: 'insideBottomRight', offset: -5 }}
                       />
                       <YAxis
                         className="text-xs"
                         tickFormatter={(value) => value.toExponential(1)}
                       />
-                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <ChartTooltip content={<ChartTooltipContent labelFormatter={tooltipLabel(lrXAxis.unit)} />} />
                       <Legend />
                       <Line
                         type="monotone"
@@ -1120,7 +1184,7 @@ export function MonitoringPage() {
                 )}
                 {lrDecimated && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Showing {lrChartData.length.toLocaleString()} of {lrChartFull.length.toLocaleString()} points (peaks preserved)
+                    Sampled: showing {lrChartData.length.toLocaleString()} of {lrChartFull.length.toLocaleString()} points (min/max per bucket, first and last points kept). Full data in the console output below.
                   </p>
                 )}
               </CardContent>
@@ -1149,7 +1213,7 @@ export function MonitoringPage() {
                 <>
                 <div className="grid gap-4 md:grid-cols-3">
                   <div className="p-4 rounded-lg border bg-muted/50">
-                    <div className="text-sm text-muted-foreground mb-1">Best mAP@0.5:0.95</div>
+                    <div className="text-sm text-muted-foreground mb-1">{selectsByAngle ? 'Best mean angle error (°)' : 'Best mAP@0.5:0.95'}</div>
                     <div className="text-2xl font-bold">
                       {selectedJob?.bestMetric?.toFixed(4) ?? 'N/A'}
                     </div>
@@ -1184,6 +1248,23 @@ export function MonitoringPage() {
               </CardContent>
             </Card>
           )}
+
+          {angleMetricChartData.length > 0 && <Card>
+            <CardHeader>
+              <CardTitle>Raw Prediction Angle Error</CardTitle>
+              <CardDescription>Validation mean / P95 in degrees. Best-checkpoint selection also enforces the configured recall and false-positive limits.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ChartContainer config={{ mean: { label: 'Mean (°)', color: 'var(--chart-1)' }, p95: { label: 'P95 (°)', color: 'var(--chart-2)' } }} className="h-[300px] w-full">
+                <LineChart data={angleMetricChartData}>
+                  <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="epoch" /><YAxis domain={[0, 'auto']} />
+                  <ChartTooltip content={<ChartTooltipContent />} /><Legend />
+                  <Line type="monotone" dataKey="mean" name="Mean (°)" stroke="var(--chart-1)" dot={false} />
+                  <Line type="monotone" dataKey="p95" name="P95 (°)" stroke="var(--chart-2)" dot={false} />
+                </LineChart>
+              </ChartContainer>
+            </CardContent>
+          </Card>}
 
           {/* Anomaly Detection Metrics (TorchAnomaly) */}
           {anomalyMetricChartData.length > 0 && (

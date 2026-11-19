@@ -24,6 +24,7 @@ import {
   Lock,
   AlertCircle,
   BookOpen,
+  UploadCloud,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -55,14 +56,17 @@ import { SettingsPage } from '@/components/pages/settings'
 import { AnnotationPage } from '@/components/pages/annotation'
 import { UserManagementPage } from '@/components/pages/users'
 import { UserManualPage } from '@/components/pages/user-manual'
+import { UploadTasksPage } from '@/components/pages/upload-tasks'
 import { ChangePasswordDialog } from '@/components/change-password-dialog'
 import { AuthProvider } from '@/contexts/auth-context'
+import { UploadManagerProvider, useUploadManager } from '@/contexts/upload-manager'
 
 // 基础导航（所有用户可见）
 const navigation = [
   { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
   { id: 'projects', name: 'Projects', icon: FolderKanban },
   { id: 'datasets', name: 'Datasets', icon: Database },
+  { id: 'uploads', name: 'Upload Tasks', icon: UploadCloud },
   { id: 'models', name: 'Models', icon: Cpu },
   { id: 'training', name: 'Configurations', icon: PlayCircle },
   { id: 'jobs', name: 'Jobs', icon: ListTodo },
@@ -80,6 +84,7 @@ const pageComponents: Record<string, React.ComponentType> = {
   dashboard: DashboardPage,
   projects: ProjectsPage,
   datasets: DatasetsPage,
+  uploads: UploadTasksPage,
   models: ModelsPage,
   training: TrainingPage,
   jobs: JobsPage,
@@ -98,6 +103,17 @@ function AppContent() {
   const [showManual, setShowManual] = useState(false)
   const { setTheme, theme } = useTheme()
   const { user, isLoading, isAuthenticated, logout } = useAuth()
+  const { activeCount: activeUploadCount } = useUploadManager()
+
+  // Other pages request navigation via a DOM event (e.g. "open Upload Tasks").
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail
+      if (typeof detail === 'string' && pageComponents[detail]) setCurrentPage(detail)
+    }
+    window.addEventListener('autotrain:navigate', handler)
+    return () => window.removeEventListener('autotrain:navigate', handler)
+  }, [])
   
   // System status states
   const [systemStatus, setSystemStatus] = useState<'ready' | 'occupied' | 'busy' | 'error' | 'partial'>('ready')
@@ -261,6 +277,9 @@ function AppContent() {
                     >
                       <item.icon className="w-5 h-5 flex-shrink-0" />
                       {!sidebarCollapsed && <span>{item.name}</span>}
+                      {item.id === 'uploads' && activeUploadCount > 0 && (
+                        <Badge variant="secondary" className="ml-auto">{activeUploadCount}</Badge>
+                      )}
                     </button>
                   </TooltipTrigger>
                   {sidebarCollapsed && (
@@ -505,7 +524,9 @@ function AppContent() {
 export default function Home() {
   return (
     <AuthProvider>
-      <AppContent />
+      <UploadManagerProvider>
+        <AppContent />
+      </UploadManagerProvider>
     </AuthProvider>
   )
 }

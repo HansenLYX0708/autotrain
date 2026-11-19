@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { notFoundOrDenied, requireOwnedScope } from '@/lib/auth';
+import { resolveDatasetRoot } from '@/lib/dataset-paths';
 
 /**
  * Fields a client may change on a dataset.
@@ -74,6 +75,12 @@ export async function GET(
           },
           take: 10,
         },
+        user: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
       },
     });
 
@@ -88,9 +95,15 @@ export async function GET(
       );
     }
 
+    const systemConfig = await db.systemConfig.findFirst();
+    const userDatabasePath = (systemConfig as any)?.userDatabasePath;
+
     return NextResponse.json({
       success: true,
-      data: dataset,
+      data: {
+        ...dataset,
+        resolvedDatasetDir: resolveDatasetRoot(dataset.datasetDir, userDatabasePath, dataset.user?.username),
+      },
     });
   } catch (error) {
     console.error('Error fetching dataset:', error);

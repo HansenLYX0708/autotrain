@@ -136,6 +136,25 @@ export interface TrainingParams {
   // Data pipeline ----------------------------------------------------------
   trainBatchSize: number;
   evalBatchSize: number;
+  /** Ultralytics nominal batch size used for gradient accumulation. */
+  localizationNominalBatchSize: number;
+  /** AutoTrain inscribed rotation range (±deg, no padding); 0 disables it. */
+  localizationInscribedDegrees: number;
+  /** Probability a train image gets inscribed-rotated. */
+  localizationInscribedProb: number;
+  /** Ultralytics geometric augmentation: random rotation range (±degrees). */
+  localizationDegrees: number;
+  /** Horizontal flip probability (OBB only; pose flips need flip_idx). */
+  localizationFlipLR: number;
+  /** Vertical flip probability (OBB only). */
+  localizationFlipUD: number;
+  /** OBB geometric consistency and angle constraint; 0 keeps the original loss. */
+  obbAngleWeight: number;
+  obbSelectionMetric: 'map' | 'angle';
+  obbSelectionMinRecall: number;
+  obbSelectionMaxFalsePositives: number;
+  /** Native localization options without dedicated form controls. */
+  localizationTrainExtras: Record<string, unknown>;
   workerNum: number;
   imageWidth: number;
   imageHeight: number;
@@ -223,6 +242,17 @@ export const DEFAULT_TRAINING_PARAMS: TrainingParams = {
 
   trainBatchSize: 8,
   evalBatchSize: 2,
+  localizationNominalBatchSize: 64,
+  localizationInscribedDegrees: 0,
+  localizationInscribedProb: 0.5,
+  localizationDegrees: 180,
+  localizationFlipLR: 0,
+  localizationFlipUD: 0,
+  obbAngleWeight: 0,
+  obbSelectionMetric: 'map',
+  obbSelectionMinRecall: 0.9,
+  obbSelectionMaxFalsePositives: 2,
+  localizationTrainExtras: {},
   workerNum: 4,
   imageWidth: 640,
   imageHeight: 640,
@@ -424,8 +454,8 @@ const ANOMALY_FIELDS: TrainingFieldKey[] = [
 ];
 
 export const TRAINING_FIELD_SUPPORT: Record<ConfigFramework, Set<TrainingFieldKey>> = {
-  TorchOBB: new Set(['epochs', 'trainBatchSize', 'imageWidth', 'workerNum', 'optimizerType', 'baseLr', 'momentum', 'weightDecay', 'warmupEpochs', 'scheduler', 'snapshotEpoch', 'useAmp', 'useGpu', 'logIter']),
-  TorchPose: new Set(['epochs', 'trainBatchSize', 'imageWidth', 'workerNum', 'optimizerType', 'baseLr', 'momentum', 'weightDecay', 'warmupEpochs', 'scheduler', 'snapshotEpoch', 'useAmp', 'useGpu', 'logIter']),
+  TorchOBB: new Set(['epochs', 'trainBatchSize', 'localizationNominalBatchSize', 'localizationDegrees', 'localizationInscribedDegrees', 'localizationInscribedProb', 'localizationFlipLR', 'localizationFlipUD', 'localizationTrainExtras', 'obbAngleWeight', 'obbSelectionMetric', 'obbSelectionMinRecall', 'obbSelectionMaxFalsePositives', 'imageWidth', 'workerNum', 'optimizerType', 'baseLr', 'momentum', 'weightDecay', 'warmupEpochs', 'scheduler', 'snapshotEpoch', 'useAmp', 'useGpu', 'logIter']),
+  TorchPose: new Set(['epochs', 'trainBatchSize', 'localizationNominalBatchSize', 'localizationDegrees', 'localizationTrainExtras', 'imageWidth', 'workerNum', 'optimizerType', 'baseLr', 'momentum', 'weightDecay', 'warmupEpochs', 'scheduler', 'snapshotEpoch', 'useAmp', 'useGpu', 'logIter']),
   PaddleDetection: new Set(DETECTION_FIELDS),
   PaddleClas: new Set(CLAS_FIELDS),
   PaddleSeg: new Set(SEG_FIELDS),
@@ -865,7 +895,7 @@ export function generateTrainingYaml(
   params: TrainingParams,
   configName = 'Training Config',
 ): string {
-  if (isLocalization(framework)) return localizationTrainingYaml(params);
+  if (isLocalization(framework)) return localizationTrainingYaml(framework, params);
   switch (CONFIG_SCHEMA[framework]) {
     case 'classification':
       return generateClasYaml(params, configName);
@@ -947,7 +977,7 @@ export function parseTrainingParams(
 
   switch (CONFIG_SCHEMA[framework]) {
     case 'localization':
-      return parseLocalizationTraining(doc);
+      return parseLocalizationTraining(doc, framework);
     case 'segmentation':
       parseSeg(doc, out);
       break;

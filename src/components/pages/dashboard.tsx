@@ -70,6 +70,8 @@ interface GpuEnvironmentCheck {
     paddleSeg: boolean
     torch: boolean
     torchvision: boolean
+    anomalib?: boolean
+    ultralytics?: boolean
   }
 }
 
@@ -767,6 +769,8 @@ export function DashboardPage() {
                               ['PaddleSeg', gpuEnv.frameworks.paddleSeg],
                               ['torch', gpuEnv.frameworks.torch],
                               ['torchvision', gpuEnv.frameworks.torchvision],
+                              ['anomalib', gpuEnv.frameworks.anomalib],
+                              ['ultralytics', gpuEnv.frameworks.ultralytics],
                             ] as [string, boolean][]).map(([label, ok]) => (
                               <Badge
                                 key={label}

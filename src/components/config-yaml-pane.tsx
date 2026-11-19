@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { AlertCircle, Code, Copy, Pencil, RotateCcw, TriangleAlert } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
+import { copyText } from '@/lib/browser-safe'
 
 export interface ConfigIssue {
   level: 'error' | 'warning'
@@ -75,8 +76,10 @@ export function ConfigYamlPane({
             variant="ghost"
             size="sm"
             onClick={() => {
-              navigator.clipboard.writeText(yaml)
-              toast({ title: 'YAML copied to clipboard' })
+              copyText(yaml).then((ok) => {
+                if (ok) toast({ title: 'YAML copied to clipboard' })
+                else toast({ title: 'Copy failed', variant: 'destructive' })
+              })
             }}
           >
             <Copy className="w-4 h-4 mr-1" />

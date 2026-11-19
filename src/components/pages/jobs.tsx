@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { buildTrainCommand } from '@/lib/job-commands'
 import { isAnomaly, isTorch } from '@/lib/frameworks'
+import { copyText } from '@/lib/browser-safe'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -1198,8 +1199,10 @@ export function JobsPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => {
                               if (job.command) {
-                                navigator.clipboard.writeText(job.command)
-                                toast({ title: 'Command copied' })
+                                copyText(job.command).then((ok) => {
+                                  if (ok) toast({ title: 'Command copied' })
+                                  else toast({ title: 'Copy failed', variant: 'destructive' })
+                                })
                               }
                             }}>
                               <Copy className="w-4 h-4 mr-2" />
@@ -1273,8 +1276,10 @@ export function JobsPage() {
                                   className="absolute top-2 right-2 h-6"
                                   onClick={() => {
                                     if (job.command) {
-                                      navigator.clipboard.writeText(job.command)
-                                      toast({ title: 'Command copied' })
+                                      copyText(job.command).then((ok) => {
+                                        if (ok) toast({ title: 'Command copied' })
+                                        else toast({ title: 'Copy failed', variant: 'destructive' })
+                                      })
                                     }
                                   }}
                                 >

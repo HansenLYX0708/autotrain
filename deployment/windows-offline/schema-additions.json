@@ -1,0 +1,9 @@
+[
+  {
+    "table": "UploadTask",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"UploadTask\" (\"id\" TEXT NOT NULL PRIMARY KEY, \"userId\" TEXT NOT NULL, \"source\" TEXT NOT NULL, \"datasetName\" TEXT NOT NULL, \"format\" TEXT NOT NULL, \"sourcePath\" TEXT, \"targetDir\" TEXT NOT NULL, \"status\" TEXT NOT NULL DEFAULT 'pending', \"totalFiles\" INTEGER NOT NULL DEFAULT 0, \"doneFiles\" INTEGER NOT NULL DEFAULT 0, \"totalBytes\" BIGINT NOT NULL DEFAULT 0, \"doneBytes\" BIGINT NOT NULL DEFAULT 0, \"overwrite\" BOOLEAN NOT NULL DEFAULT false, \"error\" TEXT, \"createdAt\" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, \"updatedAt\" DATETIME NOT NULL, \"completedAt\" DATETIME, CONSTRAINT \"UploadTask_userId_fkey\" FOREIGN KEY (\"userId\") REFERENCES \"User\" (\"id\") ON DELETE CASCADE ON UPDATE CASCADE)",
+      "CREATE INDEX IF NOT EXISTS \"UploadTask_userId_createdAt_idx\" ON \"UploadTask\"(\"userId\", \"createdAt\")"
+    ]
+  }
+]
