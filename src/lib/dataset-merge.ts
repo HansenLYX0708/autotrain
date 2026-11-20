@@ -530,7 +530,7 @@ export async function planDatasetMerge(opts: {
     plan.classes = classes
     plan.duplicates = await findDuplicates(files)
     Object.assign(newDataset, {
-      datasetDir: path.join(container, slug).replace(/\\/g, '/'),
+      datasetDir: managedRoot,
       trainImagePath: 'data/train', trainAnnoPath: 'data/annotations/instance_train.json',
       evalImagePath: 'data/val', evalAnnoPath: 'data/annotations/instance_val.json',
       numClasses: classes.union.length,

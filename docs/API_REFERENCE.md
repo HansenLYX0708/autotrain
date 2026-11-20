@@ -341,6 +341,7 @@ GET 的 `kind=eval` 参数只返回带检测、分割或异常检测验证指标
 查询参数：`maxBytes`（默认 256 KB，夹取 4 KB..1 MB）。模式：
 
 - `download=1`：整文件流式下载，`text/plain; charset=utf-8`，`Content-Disposition: attachment; filename="<任务名 slug>-console.log"`。
+- `summary=1`：轻量探测，只返回 `{ available: true, size, amp }`，不含 `text`。前端「Load console」关闭时用它维持文件大小显示与 AMP 告警。
 - `q=<text>`：整文件大小写不敏感子串搜索，返回 `{ available, path, size, matches: [{line, text}], totalMatches, truncated, amp }`（matches 上限 1000，行号 1 起）。
 - `offset=<字节>`：从偏移量正向读。运行中的任务绝不返回半行；任务结束后含 EOF 处的未闭合行（`includePartial`）。
 - `before=<字节>`：返回以该偏移结尾的一段，用于「Load earlier」向前翻。

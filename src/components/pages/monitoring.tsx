@@ -342,7 +342,9 @@ export function MonitoringPage() {
   // Console Output card. `consoleStart/End` are byte offsets into
   // autotrain-console.log bracketing the loaded `consoleText` window, so the
   // live tail and "Load earlier" can resume without re-downloading anything.
+  const [consoleEnabled, setConsoleEnabled] = useState(false)
   const [consoleAvailable, setConsoleAvailable] = useState<boolean | null>(null)
+  const [consoleFileExists, setConsoleFileExists] = useState<boolean | null>(null)
   const [consoleText, setConsoleText] = useState('')
   const [consoleStart, setConsoleStart] = useState(0)
   const [consoleSize, setConsoleSize] = useState(0)
@@ -362,6 +364,7 @@ export function MonitoringPage() {
   const consoleStartRef = useRef(0)
   const consoleEndRef = useRef(0)
   const consoleLoadedRef = useRef(false)
+  const consoleEnabledRef = useRef(false)
   const prevStatusRef = useRef<string | undefined>(undefined)
 
   // Fetch training jobs
@@ -502,6 +505,47 @@ export function MonitoringPage() {
     }
   }, [loadFallbackLogs])
 
+  // Lightweight probe used while the console is switched off: existence +
+  // size + AMP summary so the header description and AMP banner stay live
+  // without downloading any console text.
+  const loadConsoleSummary = useCallback(async (jobId: string, signal?: AbortSignal) => {
+    try {
+      const response = await fetch(`/api/training-jobs/${jobId}/console?summary=1`, { signal })
+      if (!response.ok) return
+      const r = await response.json()
+      setConsoleFileExists(Boolean(r.available))
+      setConsoleSize(r.size ?? 0)
+      setConsoleAmp(r.amp ?? null)
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return
+      console.error('Failed to load console summary:', error)
+    }
+  }, [])
+
+  // "Load console" switch. ON loads the tail (with the old-job fallback);
+  // OFF frees the loaded window but keeps the AMP summary.
+  const toggleConsole = (on: boolean) => {
+    setConsoleEnabled(on)
+    consoleEnabledRef.current = on
+    setConsoleText('')
+    consoleStartRef.current = 0
+    consoleEndRef.current = 0
+    consoleLoadedRef.current = false
+    setConsoleStart(0)
+    setConsoleHasEarlier(false)
+    setFbLogs([])
+    setFbPage(0)
+    setFbTotalPages(1)
+    setSearchResults(null)
+    setSearchQuery('')
+    if (!selectedJobId) return
+    if (on) {
+      void loadConsoleTail(selectedJobId)
+    } else {
+      setConsoleAvailable(null)
+    }
+  }
+
   // Live tail while running: fetch from the last known end offset. The server
   // never returns a partial line for a running job, so appending is safe.
   const appendConsole = useCallback(async (jobId: string) => {
@@ -615,6 +659,7 @@ export function MonitoringPage() {
     setLogsError(null)
     logCursorRef.current = null
     setConsoleAvailable(null)
+    setConsoleFileExists(null)
     setConsoleText('')
     setConsoleAmp(null)
     setConsoleSize(0)
@@ -635,7 +680,11 @@ export function MonitoringPage() {
       try {
         await loadFullLogs(selectedJobId, controller.signal)
         if (controller.signal.aborted) return
-        await loadConsoleTail(selectedJobId, controller.signal)
+        if (consoleEnabledRef.current) {
+          await loadConsoleTail(selectedJobId, controller.signal)
+        } else {
+          await loadConsoleSummary(selectedJobId, controller.signal)
+        }
         if (controller.signal.aborted) return
         setLogsError(null)
       } catch (error) {
@@ -647,7 +696,7 @@ export function MonitoringPage() {
       }
     })()
     return () => controller.abort()
-  }, [selectedJobId, loadFullLogs, loadConsoleTail])
+  }, [selectedJobId, loadFullLogs, loadConsoleTail, loadConsoleSummary])
 
   // Polling while the selected job is running (or pending, so a job started
   // from elsewhere transitions into live monitoring without a reload): job
@@ -662,7 +711,11 @@ export function MonitoringPage() {
       try {
         await fetchJobs()
         await loadIncrementalLogs(selectedJobId)
-        await appendConsole(selectedJobId)
+        if (consoleEnabledRef.current) {
+          await appendConsole(selectedJobId)
+        } else {
+          await loadConsoleSummary(selectedJobId)
+        }
       } catch {
         // Keep polling — a dropped request should not stop live updates.
       } finally {
@@ -671,7 +724,7 @@ export function MonitoringPage() {
     }
     const interval = setInterval(tick, 5000)
     return () => clearInterval(interval)
-  }, [autoRefresh, selectedJobId, selectedJob?.status, fetchJobs, loadIncrementalLogs, appendConsole])
+  }, [autoRefresh, selectedJobId, selectedJob?.status, fetchJobs, loadIncrementalLogs, appendConsole, loadConsoleSummary])
 
   // When the job leaves `running`, do one final incremental fetch so the last
   // lines and the run footer are not missed between polls.
@@ -682,10 +735,14 @@ export function MonitoringPage() {
     if (prev === 'running' && current && current !== 'running' && selectedJobId) {
       ;(async () => {
         await loadIncrementalLogs(selectedJobId)
-        await appendConsole(selectedJobId)
+        if (consoleEnabledRef.current) {
+          await appendConsole(selectedJobId)
+        } else {
+          await loadConsoleSummary(selectedJobId)
+        }
       })()
     }
-  }, [selectedJob?.status, selectedJobId, loadIncrementalLogs, appendConsole])
+  }, [selectedJob?.status, selectedJobId, loadIncrementalLogs, appendConsole, loadConsoleSummary])
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -1499,17 +1556,31 @@ export function MonitoringPage() {
                 <div>
                   <CardTitle>Console Output</CardTitle>
                   <CardDescription>
-                    {consoleAvailable
-                      ? `${formatBytes(consoleSize)} · ${
-                          consoleStart > 0 ? `showing from byte ${consoleStart.toLocaleString()}` : 'full file'
-                        }`
-                      : consoleAvailable === false
-                        ? 'Parsed training log entries'
-                        : 'Loading console output…'}
+                    {consoleEnabled
+                      ? consoleAvailable
+                        ? `${formatBytes(consoleSize)} · ${
+                            consoleStart > 0 ? `showing from byte ${consoleStart.toLocaleString()}` : 'full file'
+                          }`
+                        : consoleAvailable === false
+                          ? 'Parsed training log entries'
+                          : 'Loading console output…'
+                      : consoleFileExists === null
+                        ? ''
+                        : consoleFileExists
+                          ? `${formatBytes(consoleSize)} available`
+                          : 'No console file for this run'}
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-4">
-                  {consoleAvailable && (
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="console-enabled" className="text-sm">Load console</Label>
+                    <Switch
+                      id="console-enabled"
+                      checked={consoleEnabled}
+                      onCheckedChange={toggleConsole}
+                    />
+                  </div>
+                  {consoleEnabled && consoleAvailable && (
                     <>
                       <div className="relative">
                         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -1548,27 +1619,36 @@ export function MonitoringPage() {
                           </Button>
                         )
                       )}
-                      <a
-                        href={`/api/training-jobs/${selectedJob.id}/console?download=1`}
-                        title="Download full log"
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        <Download className="h-4 w-4" />
-                      </a>
                     </>
                   )}
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="auto-scroll" className="text-sm">Auto Scroll</Label>
-                    <Switch
-                      id="auto-scroll"
-                      checked={autoScroll}
-                      onCheckedChange={setAutoScroll}
-                    />
-                  </div>
+                  {(consoleAvailable || consoleFileExists) && (
+                    <a
+                      href={`/api/training-jobs/${selectedJob.id}/console?download=1`}
+                      title="Download full log"
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <Download className="h-4 w-4" />
+                    </a>
+                  )}
+                  {consoleEnabled && (
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="auto-scroll" className="text-sm">Auto Scroll</Label>
+                      <Switch
+                        id="auto-scroll"
+                        checked={autoScroll}
+                        onCheckedChange={setAutoScroll}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </CardHeader>
             <CardContent>
+              {!consoleEnabled ? (
+                <div className="text-sm text-muted-foreground">
+                  Console output is not loaded. Turn on “Load console” to view it.
+                </div>
+              ) : (
               <ScrollArea className="h-[400px] w-full rounded-md border bg-muted/30" ref={logContainerRef}>
                 {consoleAvailable === false ? (
                   <div className="p-4 font-mono text-xs space-y-1">
@@ -1640,6 +1720,7 @@ export function MonitoringPage() {
                 )}
                 <ScrollBar orientation="vertical" />
               </ScrollArea>
+              )}
             </CardContent>
           </Card>
         </>

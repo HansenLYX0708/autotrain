@@ -27,6 +27,7 @@ const MAX_MAX_BYTES = 1024 * 1024;
  *
  * Modes (query):
  *   download=1        stream the whole file as an attachment
+ *   summary=1         existence + size + AMP summary only (no text)
  *   q=<text>          case-insensitive line search over the whole file
  *   offset=<bytes>    forward read for live-tailing a running job
  *   before=<bytes>    backwards read for "Load earlier"
@@ -111,6 +112,11 @@ export async function GET(
 
     const amp = await readAmpSummary(file);
     const size = fs.statSync(file).size;
+
+    // Lightweight probe for a console reader that is switched off.
+    if (searchParams.get("summary") === "1") {
+      return NextResponse.json({ available: true, size, amp });
+    }
 
     // Full-file search.
     const q = searchParams.get("q");

@@ -31,6 +31,8 @@ export function MergeDatasetsDialog({ datasets, onMerged }: { datasets: DatasetR
   const [selected, setSelected] = useState<string[]>([])
   const [name, setName] = useState('')
   const [projectId, setProjectId] = useState('')
+  const [projectFilter, setProjectFilter] = useState('')
+  const [page, setPage] = useState(1)
   const [allowMismatch, setAllowMismatch] = useState(false)
   const [preview, setPreview] = useState<Preview | null>(null)
 
@@ -45,9 +47,17 @@ export function MergeDatasetsDialog({ datasets, onMerged }: { datasets: DatasetR
   const reason = (d: DatasetRow) =>
     effectiveFormat(d) !== (first ? effectiveFormat(first) : '') ? 'different format' : framework(d) !== (first ? framework(first) : '') ? 'different framework' : ''
   const projects = [...new Map(datasets.filter(d => framework(d) === (first ? framework(first) : '')).map(d => [d.projectId, d.project?.name ?? d.projectId])).entries()]
+  const filterProjects = [...new Map(datasets.map(d => [d.projectId, d.project?.name ?? d.projectId])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+  const selectedRows = selected.map(id => datasets.find(d => d.id === id)).filter((d): d is DatasetRow => Boolean(d))
+  const filtered = datasets.filter(d => d.format !== 'labelme' && (!projectFilter || d.projectId === projectFilter))
+  const pageSize = 10
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const pageRows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   useEffect(() => {
-    if (!open) { setSelected([]); setName(''); setProjectId(''); setPreview(null); setAllowMismatch(false) }
+    if (!open) { setSelected([]); setName(''); setProjectId(''); setPreview(null); setAllowMismatch(false); setProjectFilter(''); setPage(1) }
   }, [open])
   useEffect(() => { setPreview(null) }, [selected, name, projectId])
 
@@ -87,8 +97,22 @@ export function MergeDatasetsDialog({ datasets, onMerged }: { datasets: DatasetR
       <fieldset disabled={busy} className="space-y-4">
         <div className="space-y-1">
           <Label>Select datasets (the first one defines the class order)</Label>
+          <div className="flex flex-wrap items-center gap-1">
+            {selectedRows.length === 0 && <span className="text-xs text-muted-foreground">None selected</span>}
+            {selectedRows.map((d, i) => (
+              <span key={d.id} className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs">
+                #{i + 1} {d.name} · {d.project?.name ?? d.projectId}
+                <button type="button" onClick={() => toggle(d.id)} className="text-muted-foreground hover:text-foreground">×</button>
+              </span>
+            ))}
+          </div>
+          <select className="h-10 w-full rounded border bg-background px-3" value={projectFilter}
+            onChange={e => { setProjectFilter(e.target.value); setPage(1) }}>
+            <option value="">All projects</option>
+            {filterProjects.map(([id, pname]) => <option key={id} value={id}>{pname}</option>)}
+          </select>
           <div className="max-h-56 overflow-y-auto rounded border p-2 space-y-1">
-            {datasets.filter(d => d.format !== 'labelme').map(d => {
+            {pageRows.map(d => {
               const picked = selected.includes(d.id)
               const ok = picked || compatible(d)
               return <label key={d.id} className={`flex items-center gap-2 text-sm ${ok ? '' : 'opacity-50'}`}>
@@ -97,6 +121,11 @@ export function MergeDatasetsDialog({ datasets, onMerged }: { datasets: DatasetR
                 <span className="text-xs text-muted-foreground">{FORMAT_NAME[effectiveFormat(d)] ?? effectiveFormat(d)}{!ok && !picked ? ` · ${reason(d)}` : ''}</span>
               </label>
             })}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Prev</Button>
+            <span className="text-xs text-muted-foreground">Page {currentPage} / {pageCount} · {filtered.length} datasets</span>
+            <Button type="button" variant="outline" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Next</Button>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4">

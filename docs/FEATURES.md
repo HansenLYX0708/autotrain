@@ -94,7 +94,7 @@
 - **Convert Labelme**：
   - → **COCO**：多边形/矩形标注转 COCO JSON。图片匹配走 `src/lib/labelme-images.ts` 共享规则：先按 `imagePath` 文件名在 `imgs/`（含子目录、大小写不敏感）查找，重名时用 `imagePath` 的尾部目录消歧；找不到再按 **JSON 文件名**回退（`5A3B.json` ↔ `5A3B.jpg`，图片被改名成与 JSON 同名时常用这条）；带 BOM 的 JSON 也能解析。训练或验证分区为空会报错；已有输出目录不会被覆盖。
   - → **PaddleSeg**：产出官方 `labelme2seg` / Pascal VOC 风格布局。掩码是 **8-bit 索引色 PNG**——调色板索引即 class id，所以 PaddleSeg/PIL 读到的是可直接训练的二维标签图，而任何图片查看器都能看到亮色伪彩（纯灰度 0..N-1 在肉眼看来和全黑没区别）。类别顺序完全确定：0 恒为 `_background_`，1..N 按文件名排序扫描时首次出现的顺序。多边形按 even-odd 扫描线填充，**后面的形状覆盖前面的**（形状顺序即 z-order）。
-- **合并数据集**：把 ≥2 个同格式、同框架的数据集合并为**新**数据集（源不修改，各源保留自己的 train/val/test 划分，文件名加 `源名__` 前缀）。支持 COCO、PaddleSeg、YOLOOBB、YOLOPose、AnomalyFolder；格式为空的旧行按项目框架推断。COCO/OBB 类别按名合并（不一致需勾选确认），PaddleSeg `class_names.txt` 与 Pose `keypointNames` 必须一致；跨源相同内容的文件会被拒绝。预览给出每源每划分计数、类别差异与重复清单。
+- **合并数据集**：把 ≥2 个同格式、同框架的数据集合并为**新**数据集（源不修改，各源保留自己的 train/val/test 划分，文件名加 `源名__` 前缀）。支持 COCO、PaddleSeg、YOLOOBB、YOLOPose、AnomalyFolder；格式为空的旧行按项目框架推断。COCO/OBB 类别按名合并（不一致需勾选确认），PaddleSeg `class_names.txt` 与 Pose `keypointNames` 必须一致；跨源相同内容的文件会被拒绝。预览给出每源每划分计数、类别差异与重复清单。选择列表可按项目筛选并分页（每页 10 条），已选数据集以标签形式固定显示在列表上方、跨筛选与翻页保持可见；合并结果的根目录以绝对路径存储。
 - **生成旋转增广数据集**：对 YOLOOBB 数据集做离线内切旋转增广（仅训练集，`<stem>__rot<序号>_±角` 命名并继承组/划分），生成新数据集并在 `augment-report.json` 记录 kept/shrunk/dropped。注意：在此类数据集上再开在线内切旋转等于旋转两次。
 - **Merge Labelme**：把一批新的 labelme 标注合并进既有 COCO 数据集，可指定 `trainRatio` / `valRatio`。合并前有 **Verify** 步骤，先给出影响预览再决定是否执行：
   - 训练集 / 验证集图片数的「合并前 → 合并后」及增量
@@ -225,7 +225,7 @@
 - 评估点比训练点稀疏很多（按 `save_interval` / `snapshotEpoch` 触发），指标折线天然是阶梯状。
 - Monitoring 载入任务的**完整**日志历史（`fields=compact` 翻完所有页，之后用 `afterTimestamp`/`afterId` 游标增量追加），验证行直接从其中筛出；图表超过 4000 点会按 min/max 抽稀（峰值保留），卡片标题出现「Sampled」徽标并在图下注明「Sampled: showing N of M points … Full data in the console output below」。
 - Loss / LR 图的 X 轴是数值轴并标注覆盖范围（描述行形如「Epoch 1 → 200 · 14,800 points」或「Iter 310 → 38,810」）：迭代单调递增时按迭代计（分割/异常），迭代每 epoch 重置时按分数 epoch 计（`epoch-1+iter/totalIter`，1 基日志），缺 `totalIter` 时退化为行序号。悬浮提示显示真实 epoch 与 iteration。
-- **Console Output** 卡片显示 `autotrain-console.log` 的尾部，运行中每 5 秒按 `offset` 追加（不会显示半行）；「Load earlier」向前翻页，搜索框对整文件做大小写不敏感行搜索（`line N: text`），另有整文件下载链接。`Found inf or nan` 行标黄、Traceback/Error 标红。更新前启动的任务没有该文件，卡片回退显示解析日志行。AMP 溢出会在图表上方给出「AMP loss-scale overflow」告警（本次运行的溢出次数与 loss scale 变化）。
+- **Console Output** 卡片默认**不加载**控制台输出：卡片右上角的「Load console」开关打开后才读取文件尾部，运行中每 5 秒按 `offset` 追加（不会显示半行）；关闭状态下只通过 `summary=1` 探测文件是否存在及其大小（AMP 溢出告警照常显示）；「Load earlier」向前翻页，搜索框对整文件做大小写不敏感行搜索（`line N: text`），另有整文件下载链接。`Found inf or nan` 行标黄、Traceback/Error 标红。更新前启动的任务没有该文件，卡片回退显示解析日志行。AMP 溢出会在图表上方给出「AMP loss-scale overflow」告警（本次运行的溢出次数与 loss scale 变化）。
 - 一次运行的**最后一次评估**（通常也是最好的一次）依赖进程退出时的日志 flush，这条路径已专门处理，不会丢。
 
 ---
